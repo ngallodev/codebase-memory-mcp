@@ -480,8 +480,8 @@ func (s *Store) archLayers(project string) ([]PackageLayer, error) {
 		return nil, err
 	}
 
-	// Check which packages have Route nodes
-	routePkgs := map[string]bool{}
+	// Count Route nodes per package
+	routePkgCount := map[string]int{}
 	routeRows, err := s.q.Query(`SELECT qualified_name FROM nodes WHERE project=? AND label='Route'`, project)
 	if err != nil {
 		return nil, err
@@ -492,7 +492,7 @@ func (s *Store) archLayers(project string) ([]PackageLayer, error) {
 		if err := routeRows.Scan(&qn); err != nil {
 			return nil, err
 		}
-		routePkgs[qnToPackage(qn)] = true
+		routePkgCount[qnToPackage(qn)]++
 	}
 	if err := routeRows.Err(); err != nil {
 		return nil, err
@@ -533,25 +533,25 @@ func (s *Store) archLayers(project string) ([]PackageLayer, error) {
 	for pkg := range entryPkgs {
 		allPkgs[pkg] = true
 	}
-	for pkg := range routePkgs {
+	for pkg := range routePkgCount {
 		allPkgs[pkg] = true
 	}
 
 	var result []PackageLayer
 	for pkg := range allPkgs {
-		layer, reason := classifyLayer(pkg, fanIn[pkg], fanOut[pkg], routePkgs[pkg], entryPkgs[pkg])
+		layer, reason := classifyLayer(pkg, fanIn[pkg], fanOut[pkg], routePkgCount[pkg], entryPkgs[pkg])
 		result = append(result, PackageLayer{Name: pkg, Layer: layer, Reason: reason})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result, nil
 }
 
-func classifyLayer(_ string, in, out int, hasRoutes, hasEntryPoints bool) (layer, reason string) {
+func classifyLayer(_ string, in, out, routeCount int, hasEntryPoints bool) (layer, reason string) {
 	if hasEntryPoints && out > 0 && in == 0 {
 		return "entry", "has entry points, only outbound calls"
 	}
-	if hasRoutes {
-		return "api", "has HTTP route definitions"
+	if routeCount > 0 {
+		return "api", fmt.Sprintf("has %d HTTP route definitions", routeCount)
 	}
 	if in > out && in > 3 {
 		return "core", fmt.Sprintf("high fan-in (%d in, %d out)", in, out)

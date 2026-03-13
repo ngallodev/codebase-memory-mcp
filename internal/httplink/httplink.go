@@ -375,14 +375,30 @@ func (l *Linker) discoverRoutes(rootPath string) []RouteHandler {
 		// C# ASP.NET: check attribute decorators
 		routes = append(routes, extractASPNetRoutes(f)...)
 
-		// Source-based route discovery (Go gin, Express.js, PHP Laravel, Kotlin Ktor)
+		// Source-based route discovery — guarded by language/extension to prevent false
+		// positives when non-target-language files contain similar method-call syntax
+		// (e.g. Python dict.get("key") matching Go/Ktor route regexes).
 		if f.FilePath != "" && f.StartLine > 0 && f.EndLine > 0 {
 			source := readSourceLines(rootPath, f.FilePath, f.StartLine, f.EndLine)
 			if source != "" {
-				routes = append(routes, extractGoRoutes(f, source)...)
-				routes = append(routes, extractExpressRoutes(f, source)...)
-				routes = append(routes, extractLaravelRoutes(f, source)...)
-				routes = append(routes, extractKtorRoutes(f, source)...)
+				isGo := strings.HasSuffix(f.FilePath, ".go")
+				isKotlin := strings.HasSuffix(f.FilePath, ".kt") || strings.HasSuffix(f.FilePath, ".kts")
+				isJSTS := strings.HasSuffix(f.FilePath, ".js") || strings.HasSuffix(f.FilePath, ".ts") ||
+					strings.HasSuffix(f.FilePath, ".mjs") || strings.HasSuffix(f.FilePath, ".mts") ||
+					strings.HasSuffix(f.FilePath, ".jsx") || strings.HasSuffix(f.FilePath, ".tsx")
+				isPHP := strings.HasSuffix(f.FilePath, ".php")
+				if isGo {
+					routes = append(routes, extractGoRoutes(f, source)...)
+				}
+				if isJSTS {
+					routes = append(routes, extractExpressRoutes(f, source)...)
+				}
+				if isPHP {
+					routes = append(routes, extractLaravelRoutes(f, source)...)
+				}
+				if isKotlin {
+					routes = append(routes, extractKtorRoutes(f, source)...)
+				}
 			}
 		}
 

@@ -175,6 +175,11 @@ func (p *Pipeline) Run() error {
 	if p.Mode == discover.ModeFast {
 		discoverOpts.MaxFileSize = 512 * 1024 // 512KB cutoff in fast mode
 	}
+	// Auto-discover .cgrignore at the repo root if present
+	cgrignore := filepath.Join(p.RepoPath, ".cgrignore")
+	if _, statErr := os.Stat(cgrignore); statErr == nil {
+		discoverOpts.IgnoreFile = cgrignore
+	}
 	files, err := discover.Discover(p.ctx, p.RepoPath, discoverOpts)
 	if err != nil {
 		return fmt.Errorf("discover: %w", err)

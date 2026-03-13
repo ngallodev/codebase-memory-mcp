@@ -25,7 +25,7 @@ var IGNORE_PATTERNS = map[string]bool{
 	"__pycache__": true, "bin": true, "bower_components": true,
 	"build": true, "coverage": true, "dist": true, "env": true,
 	"htmlcov": true, "node_modules": true, "obj": true, "out": true,
-	"Pods": true, "site-packages": true, "target": true, "temp": true,
+	"output": true, "Pods": true, "site-packages": true, "target": true, "temp": true,
 	"tmp": true, "vendor": true, "venv": true,
 }
 
@@ -76,6 +76,7 @@ var fastIgnoreDirs = map[string]bool{
 	"__fixtures__": true, "__test__": true,
 	"docs": true, "doc": true, "documentation": true,
 	"examples": true, "example": true, "samples": true, "sample": true,
+	"sample_data": true, "sample_output": true,
 	"assets": true, "static": true, "public": true, "media": true,
 	"third_party": true, "thirdparty": true, "3rdparty": true, "external": true,
 	"migrations": true, "seeds": true,
