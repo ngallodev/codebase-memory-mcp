@@ -228,7 +228,19 @@ static bool has_suffix(const char *s, const char *suffix) {
 static bool is_jsts_file(const char *path) {
     // NOLINTNEXTLINE(readability-implicit-bool-conversion)
     return has_suffix(path, ".js") || has_suffix(path, ".ts") || has_suffix(path, ".mjs") ||
-           has_suffix(path, ".mts") || has_suffix(path, ".tsx");
+           has_suffix(path, ".mts") || has_suffix(path, ".jsx") || has_suffix(path, ".tsx");
+}
+
+static bool is_go_file(const char *path) {
+    return path && has_suffix(path, ".go");
+}
+
+static bool is_php_file(const char *path) {
+    return path && has_suffix(path, ".php");
+}
+
+static bool is_kotlin_file(const char *path) {
+    return path && (has_suffix(path, ".kt") || has_suffix(path, ".kts"));
 }
 
 /* ── Route discovery ───────────────────────────────────────────── */
@@ -264,21 +276,27 @@ static int discover_node_routes(const cbm_gbuf_node_t *n, const cbm_pipeline_ctx
     if (n->file_path && n->start_line > 0 && n->end_line > 0 && total < max_out) {
         char *source = read_source_lines(ctx, n->file_path, n->start_line, n->end_line);
         if (source) {
-            int nr = cbm_extract_go_routes(n->name, n->qualified_name, source, out + total,
+            int nr = 0;
+            if (is_go_file(n->file_path)) {
+                nr = cbm_extract_go_routes(n->name, n->qualified_name, source, out + total,
                                            max_out - total);
-            total += nr;
-
-            nr = cbm_extract_express_routes(n->name, n->qualified_name, source, out + total,
-                                            max_out - total);
-            total += nr;
-
-            nr = cbm_extract_laravel_routes(n->name, n->qualified_name, source, out + total,
-                                            max_out - total);
-            total += nr;
-
-            nr = cbm_extract_ktor_routes(n->name, n->qualified_name, source, out + total,
-                                         max_out - total);
-            total += nr;
+                total += nr;
+            }
+            if (is_jsts_file(n->file_path) && total < max_out) {
+                nr = cbm_extract_express_routes(n->name, n->qualified_name, source, out + total,
+                                                max_out - total);
+                total += nr;
+            }
+            if (is_php_file(n->file_path) && total < max_out) {
+                nr = cbm_extract_laravel_routes(n->name, n->qualified_name, source, out + total,
+                                                max_out - total);
+                total += nr;
+            }
+            if (is_kotlin_file(n->file_path) && total < max_out) {
+                nr = cbm_extract_ktor_routes(n->name, n->qualified_name, source, out + total,
+                                             max_out - total);
+                total += nr;
+            }
 
             free(source);
         }
@@ -294,7 +312,7 @@ static int discover_module_routes(const cbm_gbuf_node_t *mod, const cbm_pipeline
         return 0;
     }
 
-    bool is_php = has_suffix(mod->file_path, ".php");
+    bool is_php = is_php_file(mod->file_path);
     bool is_js = is_jsts_file(mod->file_path);
     if (!is_php && !is_js) {
         return 0;
@@ -365,7 +383,7 @@ static void resolve_fastapi_prefixes(cbm_pipeline_ctx_t *ctx, cbm_route_handler_
             char var[128];
             char module[256];
         } import_entry_t;
-        import_entry_t imports[64] = {{0}};
+        import_entry_t imports[64] = {0};
         int import_count = 0;
 
         const char *p = source;
@@ -506,7 +524,7 @@ static void resolve_express_prefixes(cbm_pipeline_ctx_t *ctx, cbm_route_handler_
             char var[128];
             char module[256];
         } import_entry_t;
-        import_entry_t imports[64] = {{0}};
+        import_entry_t imports[64] = {0};
         int import_count = 0;
 
         const char *p = source;
@@ -739,7 +757,7 @@ static void resolve_cross_file_group_prefixes(cbm_pipeline_ctx_t *ctx, cbm_route
                 char var[128];
                 char prefix[256];
             } var_prefix_t;
-            var_prefix_t var_pfx[16] = {{0}};
+            var_prefix_t var_pfx[16] = {0};
             int var_count = 0;
 
             p = caller_source;

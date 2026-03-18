@@ -46,12 +46,35 @@ static bool is_manifest_file(const char *basename) {
     return false;
 }
 
+static bool contains_case_insensitive(const char *haystack, const char *needle) {
+    if (!haystack || !needle) {
+        return false;
+    }
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0) {
+        return true;
+    }
+    for (const char *p = haystack; *p; p++) {
+        if (tolower((unsigned char)*p) != tolower((unsigned char)needle[0])) {
+            continue;
+        }
+        size_t i = 1;
+        while (i < needle_len && p[i] &&
+               tolower((unsigned char)p[i]) == tolower((unsigned char)needle[i])) {
+            i++;
+        }
+        if (i == needle_len) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool is_dep_section(const char *s) {
     static const char *secs[] = {"dependencies",     "devdependencies",    "peerdependencies",
                                  "dev-dependencies", "build-dependencies", NULL};
     for (int i = 0; secs[i]; i++) {
-        // NOLINTNEXTLINE(misc-include-cleaner) — strcasestr provided by standard header
-        if (strcasestr(s, secs[i]) != NULL) {
+        if (contains_case_insensitive(s, secs[i])) {
             return true;
         }
     }

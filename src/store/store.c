@@ -2954,7 +2954,7 @@ static int arch_packages(cbm_store_t *s, const char *project, cbm_architecture_i
     return CBM_STORE_OK;
 }
 
-static void classify_layer(const char *pkg, int in, int out_deg, bool has_routes,
+static void classify_layer(const char *pkg, int in, int out_deg, int route_count,
                            // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                            bool has_entry_points, const char **layer, const char **reason) {
     static CBM_TLS char reason_buf[128];
@@ -2963,9 +2963,11 @@ static void classify_layer(const char *pkg, int in, int out_deg, bool has_routes
         *reason = "has entry points, only outbound calls";
         return;
     }
-    if (has_routes) {
+    if (route_count > 0) {
         *layer = "api";
-        *reason = "has HTTP route definitions";
+        snprintf(reason_buf, sizeof(reason_buf), "has %d HTTP route definition%s", route_count,
+                 route_count == 1 ? "" : "s");
+        *reason = reason_buf;
         return;
     }
     if (in > out_deg && in > 3) {
@@ -3001,7 +3003,9 @@ static int arch_layers(cbm_store_t *s, const char *project, cbm_architecture_inf
 
     /* Check which packages have Route nodes */
     char *route_pkgs[32];
+    int route_counts[32];
     int nrpkgs = 0;
+    memset(route_counts, 0, sizeof(route_counts));
     {
         const char *sql = "SELECT qualified_name FROM nodes WHERE project=?1 AND label='Route'";
         sqlite3_stmt *stmt = NULL;
@@ -3009,7 +3013,21 @@ static int arch_layers(cbm_store_t *s, const char *project, cbm_architecture_inf
         bind_text(stmt, 1, project);
         while (sqlite3_step(stmt) == SQLITE_ROW && nrpkgs < 32) {
             const char *qn = (const char *)sqlite3_column_text(stmt, 0);
-            route_pkgs[nrpkgs++] = heap_strdup(cbm_qn_to_package(qn));
+            const char *pkg = cbm_qn_to_package(qn);
+            int idx = -1;
+            for (int i = 0; i < nrpkgs; i++) {
+                if (strcmp(route_pkgs[i], pkg) == 0) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx >= 0) {
+                route_counts[idx]++;
+                continue;
+            }
+            route_pkgs[nrpkgs] = heap_strdup(pkg);
+            route_counts[nrpkgs] = 1;
+            nrpkgs++;
         }
         sqlite3_finalize(stmt);
     }
@@ -3106,10 +3124,11 @@ static int arch_layers(cbm_store_t *s, const char *project, cbm_architecture_inf
     out->layers = calloc(npkgs, sizeof(cbm_package_layer_t));
     out->layer_count = npkgs;
     for (int i = 0; i < npkgs; i++) {
-        bool has_route = false, has_entry = false;
+        int route_count = 0;
+        bool has_entry = false;
         for (int j = 0; j < nrpkgs; j++) {
             if (strcmp(all_pkgs[i], route_pkgs[j]) == 0) {
-                has_route = true;
+                route_count = route_counts[j];
                 break;
             }
         }
@@ -3121,7 +3140,8 @@ static int arch_layers(cbm_store_t *s, const char *project, cbm_architecture_inf
         }
         const char *layer;
         const char *reason;
-        classify_layer(all_pkgs[i], fan_in[i], fan_out[i], has_route, has_entry, &layer, &reason);
+        classify_layer(all_pkgs[i], fan_in[i], fan_out[i], route_count, has_entry, &layer,
+                       &reason);
         out->layers[i].name = all_pkgs[i]; /* transfer ownership */
         out->layers[i].layer = heap_strdup(layer);
         out->layers[i].reason = heap_strdup(reason);
@@ -3430,7 +3450,7 @@ static int arch_file_tree(cbm_store_t *s, const char *project, cbm_architecture_
 
 int cbm_louvain(const int64_t *nodes, int node_count, const cbm_louvain_edge_t *edges,
                 int edge_count, cbm_louvain_result_t **out, int *out_count) {
-    if (node_count == 0) {
+    if (node_count <= 0) {
         *out = NULL;
         *out_count = 0;
         return CBM_STORE_OK;
@@ -3441,9 +3461,9 @@ int cbm_louvain(const int64_t *nodes, int node_count, const cbm_louvain_edge_t *
     /* Build adjacency: edge weights */
     int wcap = edge_count > 0 ? edge_count : 1;
     int wn = 0;
-    int *wsi = malloc(wcap * sizeof(int));
-    int *wdi = malloc(wcap * sizeof(int));
-    double *ww = malloc(wcap * sizeof(double));
+    int *wsi = malloc((size_t)wcap * sizeof(int));
+    int *wdi = malloc((size_t)wcap * sizeof(int));
+    double *ww = malloc((size_t)wcap * sizeof(double));
 
     /* Map node IDs to indices */
     for (int e = 0; e < edge_count; e++) {
@@ -3537,7 +3557,7 @@ int cbm_louvain(const int64_t *nodes, int node_count, const cbm_louvain_edge_t *
 
     if (total_weight == 0) {
         /* No edges: each node in its own community */
-        cbm_louvain_result_t *result = malloc(n * sizeof(cbm_louvain_result_t));
+        cbm_louvain_result_t *result = malloc((size_t)n * sizeof(cbm_louvain_result_t));
         for (int i = 0; i < n; i++) {
             result[i].node_id = nodes[i];
             result[i].community = i;
@@ -3649,7 +3669,7 @@ int cbm_louvain(const int64_t *nodes, int node_count, const cbm_louvain_edge_t *
     }
 
     /* Build result */
-    cbm_louvain_result_t *result = malloc(n * sizeof(cbm_louvain_result_t));
+    cbm_louvain_result_t *result = malloc((size_t)n * sizeof(cbm_louvain_result_t));
     for (int i = 0; i < n; i++) {
         result[i].node_id = nodes[i];
         result[i].community = community[i];

@@ -326,6 +326,7 @@ TEST(arch_layers) {
     for (int i = 0; i < info.layer_count; i++) {
         if (strcmp(info.layers[i].name, "handler") == 0) {
             ASSERT_STR_EQ(info.layers[i].layer, "api");
+            ASSERT_TRUE(strstr(info.layers[i].reason, "1 HTTP route definition") != NULL);
         }
     }
 

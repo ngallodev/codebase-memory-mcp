@@ -290,6 +290,9 @@ static void compute_call_depth(int n, const int *es, const int *ed, int ne, cons
                                int *depth) {
     for (int i = 0; i < n; i++)
         depth[i] = -1;
+    if (n <= 0) {
+        return;
+    }
     int *q = malloc((size_t)n * sizeof(int));
     int head = 0, tail = 0;
     if (!q)

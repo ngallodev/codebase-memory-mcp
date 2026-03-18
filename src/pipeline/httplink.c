@@ -987,17 +987,15 @@ int cbm_extract_go_routes(const char *name, const char *qn, const char *source,
             /* Check if we've passed a chi Route() match end */
             while (next_chi < nchi && i >= chi_matches[next_chi].end_pos) {
                 pending = true;
-                strncpy(pending_prefix, chi_matches[next_chi].prefix, sizeof(pending_prefix) - 1);
-                pending_prefix[sizeof(pending_prefix) - 1] = '\0';
+                snprintf(pending_prefix, sizeof(pending_prefix), "%s", chi_matches[next_chi].prefix);
                 next_chi++;
             }
 
             if (i < src_len && source[i] == '{') {
                 brace_depth++;
                 if (pending && chi_top < 32) {
-                    strncpy(chi_stack[chi_top].prefix, pending_prefix,
-                            sizeof(chi_stack[chi_top].prefix) - 1);
-                    chi_stack[chi_top].prefix[sizeof(chi_stack[chi_top].prefix) - 1] = '\0';
+                    snprintf(chi_stack[chi_top].prefix, sizeof(chi_stack[chi_top].prefix), "%s",
+                             pending_prefix);
                     chi_stack[chi_top].depth = brace_depth;
                     chi_top++;
                     pending = false;
@@ -1072,8 +1070,7 @@ int cbm_extract_go_routes(const char *name, const char *qn, const char *source,
             if (strcmp(receiver, gin_groups[g].var) == 0) {
                 char full_path[512];
                 snprintf(full_path, sizeof(full_path), "%s%s", gin_groups[g].prefix, r->path);
-                strncpy(r->path, full_path, sizeof(r->path) - 1);
-                r->path[sizeof(r->path) - 1] = '\0';
+                snprintf(r->path, sizeof(r->path), "%s", full_path);
                 gin_applied = true;
                 break;
             }
@@ -1083,8 +1080,7 @@ int cbm_extract_go_routes(const char *name, const char *qn, const char *source,
         if (!gin_applied && route_chi_prefix[ri][0]) {
             char full_path[512];
             snprintf(full_path, sizeof(full_path), "%s%s", route_chi_prefix[ri], r->path);
-            strncpy(r->path, full_path, sizeof(r->path) - 1);
-            r->path[sizeof(r->path) - 1] = '\0';
+            snprintf(r->path, sizeof(r->path), "%s", full_path);
         }
 
         strncpy(r->function_name, name ? name : "", sizeof(r->function_name) - 1);

@@ -305,10 +305,10 @@ static bool check_changes(project_state_t *s) {
     if (git_head(s->root_path, head, sizeof(head)) == 0) {
         if (s->last_head[0] != '\0' && strcmp(head, s->last_head) != 0) {
             /* HEAD moved — commit, checkout, pull */
-            strncpy(s->last_head, head, sizeof(s->last_head) - 1);
+            snprintf(s->last_head, sizeof(s->last_head), "%s", head);
             return true;
         }
-        strncpy(s->last_head, head, sizeof(s->last_head) - 1);
+        snprintf(s->last_head, sizeof(s->last_head), "%s", head);
     }
 
     /* Check working tree */

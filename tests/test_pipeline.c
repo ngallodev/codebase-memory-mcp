@@ -2727,6 +2727,37 @@ TEST(httplink_linker_fastapi_prefix) {
     PASS();
 }
 
+TEST(httplink_python_dict_access_does_not_create_routes) {
+    const char *files[] = {"worker.py"};
+    const char *contents[] = {"def normalize(payload):\n"
+                              "    created = payload.get(\"create_time\")\n"
+                              "    status = payload.get(\"status\")\n"
+                              "    return created or status\n"};
+    if (setup_lang_repo(files, contents, 1) != 0)
+        SKIP("tmpdir");
+    char db[512];
+    snprintf(db, sizeof(db), "%s/test.db", g_lang_tmpdir);
+    cbm_pipeline_t *p = cbm_pipeline_new(g_lang_tmpdir, db, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_EQ(cbm_pipeline_run(p), 0);
+
+    cbm_store_t *s = cbm_store_open_path(db);
+    ASSERT_NOT_NULL(s);
+    const char *proj = cbm_pipeline_project_name(p);
+
+    cbm_node_t *routes = NULL;
+    int rc = 0;
+    ASSERT_EQ(cbm_store_find_nodes_by_label(s, proj, "Route", &routes, &rc), CBM_STORE_OK);
+    ASSERT_EQ(rc, 0);
+
+    if (routes)
+        cbm_store_free_nodes(routes, rc);
+    cbm_store_close(s);
+    cbm_pipeline_free(p);
+    teardown_lang_repo();
+    PASS();
+}
+
 TEST(httplink_linker_express_prefix) {
     /* Port of TestExpressPrefix:
      * app.use("/api/orders", orderRouter)
@@ -4775,6 +4806,7 @@ SUITE(pipeline) {
     RUN_TEST(httplink_linker_async_dispatch);
     RUN_TEST(httplink_linker_extract_async_call_sites);
     RUN_TEST(httplink_linker_fastapi_prefix);
+    RUN_TEST(httplink_python_dict_access_does_not_create_routes);
     RUN_TEST(httplink_linker_express_prefix);
     RUN_TEST(httplink_linker_same_service_skip);
     /* Enrichment helpers */

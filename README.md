@@ -638,9 +638,9 @@ docs/api/
 
 `.cbmignore` stacks on top of `.gitignore` — patterns in `.cbmignore` are additive exclusions. This is useful for files that should be in git but don't need to be in the code graph (e.g., generated code, large data fixtures, vendored docs).
 
-### 4. `.cgrignore` (legacy, backward-compatible)
+### 4. `.cgrignore` (legacy)
 
-The older `.cgrignore` format is still supported. It uses simpler `filepath.Match` glob patterns (one per line). If you have an existing `.cgrignore`, it will continue to work alongside `.cbmignore`.
+The C rewrite no longer auto-loads legacy `.cgrignore` files. Rename existing rules to `.cbmignore` to keep the same project-local exclusion behavior.
 
 ## Persistence
 

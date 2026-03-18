@@ -371,8 +371,7 @@ int cbm_scan_project_env_urls(const char *root_path, cbm_env_binding_t *out, int
                     continue;
                 }
                 if (stack_top < 256) {
-                    strncpy(path_stack[stack_top], full_path, sizeof(path_stack[0]) - 1);
-                    path_stack[stack_top][sizeof(path_stack[0]) - 1] = '\0';
+                    snprintf(path_stack[stack_top], sizeof(path_stack[0]), "%s", full_path);
                     stack_top++;
                 }
                 continue;
