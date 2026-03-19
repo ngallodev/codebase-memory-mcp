@@ -690,9 +690,12 @@ TEST(httplink_route_extraction_negative_cases) {
         "func processOrder(order Order) error {\n\treturn nil\n}\n",
         "function calculate(x, y) {\n\treturn x + y;\n}\n",
         "def transform_data(data):\n    return data.upper()\n",
+        "conv = data.get(\"create_time\")\n",
+        "conv[\"update_time\"] = ts\n",
+        "val := m[\"message\"]\n",
     };
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 6; i++) {
         /* Python */
         n = cbm_extract_python_routes("fn", "proj.fn", NULL, 0, routes, 8);
         ASSERT_EQ(n, 0);
@@ -709,6 +712,11 @@ TEST(httplink_route_extraction_negative_cases) {
         n = cbm_extract_laravel_routes("fn", "proj.fn", sources[i], routes, 8);
         ASSERT_EQ(n, 0);
     }
+
+    /* expressRouteRe legitimately matches allowlisted receivers only. */
+    n = cbm_extract_express_routes("fn", "proj.fn", "app.set(\"view engine\", \"pug\")", routes, 8);
+    ASSERT_EQ(n, 0);
+
     PASS();
 }
 
