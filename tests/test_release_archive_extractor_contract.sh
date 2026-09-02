@@ -35,11 +35,8 @@ extractor = root / "scripts" / "ci" / "extract-release-archives.sh"
 UNIX = ("linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64",
         "linux-amd64-portable", "linux-arm64-portable")
 WINDOWS = ("windows-amd64", "windows-arm64")
-MCPB = ("darwin-amd64", "darwin-arm64", "linux-amd64-portable",
-        "linux-arm64-portable", "windows-amd64", "windows-arm64")
-ARCHIVES = tuple(f"codebase-memory-mcp-{t}.tar.gz" for t in UNIX) + \
-           tuple(f"codebase-memory-mcp-{t}.zip" for t in WINDOWS) + \
-           tuple(f"codebase-memory-mcp-{t}.mcpb" for t in MCPB)
+ARCHIVES = tuple(f"codebase-memory-cli-{t}.tar.gz" for t in UNIX) + \
+           tuple(f"codebase-memory-cli-{t}.zip" for t in WINDOWS)
 
 # Deliberately byte-IDENTICAL across every archive: the extractor must collapse
 # them to one scan object each, or the gate pays to scan the same bytes 8 times
@@ -83,7 +80,7 @@ def members(archive):
             "server/LICENSE": SHARED_LICENSE,
             "server/THIRD_PARTY_NOTICES.md": SHARED_NOTICES,
         }
-    binary = "codebase-memory-mcp.exe" if windows else "codebase-memory-mcp"
+    binary = "codebase-memory-cli.exe" if windows else "codebase-memory-cli"
     installer = "install.ps1" if windows else "install.sh"
     return {
         binary: binary_bytes,
@@ -147,8 +144,8 @@ def read_manifest(path, marker):
 # ── 1. The happy path: exact matrix in, exact bundle out ────────────────────
 good = build_matrix(fixtures / "good" / "archives")
 out = fixtures / "good" / "scan"
-result = run_extractor(good, out, "--expect-archives=14", "--expect-binaries=14",
-                       "--expect-runtime-files=42")
+result = run_extractor(good, out, "--expect-archives=8", "--expect-binaries=8",
+                       "--expect-runtime-files=24")
 if result.returncode != 0:
     fail(f"exact release matrix was rejected: {result.stdout[-600:]}{result.stderr[-600:]}")
 else:
@@ -161,8 +158,8 @@ else:
     set_meta, scan_set = read_manifest(out / "scan-set.tsv", "cbm-release-scan-set-v2")
 
     # Every member of every archive is covered — 14 containers x 4 members.
-    if len(assoc) != 56:
-        fail(f"association manifest must cover all 56 extracted members, got {len(assoc)}")
+    if len(assoc) != 32:
+        fail(f"association manifest must cover all 32 extracted members, got {len(assoc)}")
 
     # An archive container must never be scanned as if it were a member.
     if any(row["member"] in ARCHIVES for row in assoc):
@@ -176,14 +173,13 @@ else:
                 if row["member"] in ("LICENSE", "server/LICENSE")}
     if len(licences) != 1:
         fail(f"14 byte-identical LICENSE members must map to ONE scan object, got {len(licences)}")
-    # 14 binary MEMBERS but 8 distinct byte sequences: each .mcpb repackages
-    # its source archive's binary, and the gate must not scan those bytes twice.
+    # Each release archive contributes one distinct binary member.
     binaries = {row["scan_path"] for row in assoc if row["kind"] == "binary"}
     if len(binaries) != 8:
         fail(f"8 distinct binaries must stay 8 scan objects, got {len(binaries)}")
     binary_members = [row for row in assoc if row["kind"] == "binary"]
-    if len(binary_members) != 14:
-        fail(f"14 binary members must all be associated, got {len(binary_members)}")
+    if len(binary_members) != 8:
+        fail(f"8 binary members must all be associated, got {len(binary_members)}")
 
     # The counts the gate reads back must agree with the rows.
     if assoc_meta.get("associations") != len(assoc):
@@ -217,48 +213,9 @@ for label, kwargs, expect in (
 short = fixtures / "short" / "archives"
 short.mkdir(parents=True)
 write_archive(short, ARCHIVES[0])
-result = run_extractor(short, fixtures / "short" / "scan", "--expect-archives=14")
+result = run_extractor(short, fixtures / "short" / "scan", "--expect-archives=8")
 if result.returncode == 0:
-    fail("extractor accepted a 1-archive matrix under --expect-archives=14")
-
-# ── 3. MCPB manifest contract — a structurally broken bundle must not ship ──
-BROKEN_MCPB = "codebase-memory-mcp-darwin-arm64.mcpb"
-
-
-def rewrite_mcpb(directory, manifest_bytes):
-    entries = members(BROKEN_MCPB)
-    entries["manifest.json"] = manifest_bytes
-    with zipfile.ZipFile(directory / BROKEN_MCPB, "w") as zf:
-        for name, data in entries.items():
-            zf.writestr(name, data)
-
-
-# Case directories use SHORT slugs: the staged scan-object name embeds the
-# fixture path plus a 64-hex digest, and a descriptive directory name pushes
-# the total past Windows' 260-char MAX_PATH — os.replace then fails before
-# the contract error under test can fire.
-for label, slug, manifest_bytes, expect in (
-    ("unparseable manifest.json", "m1", b"{not json", "not valid JSON"),
-    ("manifest without a version", "m2",
-     make_manifest("server/codebase-memory-mcp").replace(b'"version": "0.0.0-test", ', b""),
-     "lacks a version"),
-    ("manifest entry_point outside the bundle", "m3",
-     make_manifest("server/other-binary"),
-     "not a member"),
-    ("manifest command not targeting the entry_point", "m4",
-     make_manifest("server/codebase-memory-mcp").replace(
-         b'${__dirname}/server/codebase-memory-mcp', b"/usr/bin/env"),
-     "does not target the entry_point"),
-):
-    case = fixtures / slug
-    bad = build_matrix(case / "archives")
-    rewrite_mcpb(case / "archives", manifest_bytes)
-    result = run_extractor(bad, case / "scan")
-    if result.returncode == 0:
-        fail(f"extractor accepted a bundle with {label}")
-    elif expect not in (result.stdout + result.stderr):
-        fail(f"{label} was rejected without naming the contract: "
-             f"{(result.stdout + result.stderr)[-300:]}")
+    fail("extractor accepted a 1-archive matrix under --expect-archives=8")
 
 if failures:
     print("RELEASE ARCHIVE EXTRACTOR CONTRACT VIOLATED:")
@@ -267,7 +224,6 @@ if failures:
     sys.exit(1)
 
 print("release archive extractor contract OK "
-      "(14-container matrix incl. 6 MCPB bundles, 56 member associations, "
-      "dedup exact incl. bundle/archive binary collapse, fail-closed on "
-      "surplus/missing members, short matrices and broken MCPB manifests)")
+      "(8-container CLI matrix, 32 member associations, dedup exact, "
+      "fail-closed on surplus/missing members and short matrices)")
 PY
