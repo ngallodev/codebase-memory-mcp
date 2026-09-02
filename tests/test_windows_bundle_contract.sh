@@ -73,7 +73,7 @@ def yaml_run_blocks(text: str) -> list[str]:
     return blocks
 
 
-binary = "codebase-memory-mcp.exe"
+binary = "codebase-memory-cli.exe"
 payload = "codebase-memory-mcp.payload.exe"
 windows_archive_names = (binary, "LICENSE", "install.ps1", "THIRD_PARTY_NOTICES.md")
 
