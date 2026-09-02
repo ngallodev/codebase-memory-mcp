@@ -55,15 +55,11 @@ RESULT_FIELDS = (
     "microsoft_engine_version", "microsoft_engine_update", "virustotal_url",
 )
 ARCHIVES = tuple(
-    f"codebase-memory-mcp-{target}.tar.gz"
+    f"codebase-memory-cli-{target}.tar.gz"
     for target in TARGETS if not target.startswith("windows-")
 ) + tuple(
-    f"codebase-memory-mcp-{target}.zip"
+    f"codebase-memory-cli-{target}.zip"
     for target in TARGETS if target.startswith("windows-")
-) + tuple(
-    f"codebase-memory-mcp-{target}.mcpb"
-    for target in TARGETS
-    if target.startswith(("darwin-", "windows-")) or target.endswith("-portable")
 )
 
 
@@ -106,7 +102,7 @@ def write_tsv(path: pathlib.Path, marker: str, metadata: dict[str, object],
 
 
 def candidate_bytes(target: str, variant: str) -> bytes:
-    linked = f"codebase-memory-mcp:{target}:same-linker-output\n".encode()
+    linked = f"codebase-memory-cli:{target}:same-linker-output\n".encode()
     suffix = {
         "unstripped": b"debug-and-local-symbols\n",
         "debug-stripped": b"local-symbols-only\n",
@@ -124,7 +120,7 @@ def make_artifacts(directory: pathlib.Path, *, reverse: bool = False) -> dict[tu
         rows = []
         source_hash = digest(candidate_bytes(target, "unstripped"))
         for variant in VARIANTS:
-            name = "codebase-memory-mcp.exe" if target.startswith("windows-") else "codebase-memory-mcp"
+            name = "codebase-memory-cli.exe" if target.startswith("windows-") else "codebase-memory-cli"
             data = candidate_bytes(target, variant)
             objects[target, variant] = data
             path = artifact / variant / name
@@ -218,8 +214,8 @@ def replace_candidate_with_symlink(path: pathlib.Path) -> None:
     binary.chmod(0o700)
     binary.unlink()
     target = provenances[1].parent / "unstripped" / (
-        "codebase-memory-mcp.exe" if "windows" in str(provenances[1])
-        else "codebase-memory-mcp"
+        "codebase-memory-cli.exe" if "windows" in str(provenances[1])
+        else "codebase-memory-cli"
     )
     binary.symlink_to(target)
 
@@ -321,7 +317,7 @@ for row in selections:
     require(row["decision"] == expected_decision,
             f"truth-table decision reason wrong for {target}: {row['decision']!r}")
     chosen = next(c for c in candidates if c["target"] == target and c["variant"] == expected[target])
-    path = selected / "selected" / target / ("codebase-memory-mcp.exe" if target.startswith("windows-") else "codebase-memory-mcp")
+    path = selected / "selected" / target / ("codebase-memory-cli.exe" if target.startswith("windows-") else "codebase-memory-cli")
     require(path.read_bytes() == candidate_data[target, expected[target]], f"wrong selected bytes for {target}")
     require(row["selected_sha256"] == chosen["sha256"], f"selection hash wrong for {target}")
 
@@ -382,10 +378,10 @@ for row in selections:
     target = row["target"]
     archive_for[target] = candidate_data[target, row["selected_variant"]]
 for name in ARCHIVES:
-    target = next(target for target in TARGETS if name.startswith(f"codebase-memory-mcp-{target}."))
+    target = next(target for target in TARGETS if name.startswith(f"codebase-memory-cli-{target}."))
     destination = archives / target / ("mcpb" if name.endswith(".mcpb") else "archive") / name
     destination.parent.mkdir(parents=True, exist_ok=True)
-    binary_name = "codebase-memory-mcp.exe" if target.startswith("windows-") else "codebase-memory-mcp"
+    binary_name = "codebase-memory-cli.exe" if target.startswith("windows-") else "codebase-memory-cli"
     member = f"server/{binary_name}" if name.endswith(".mcpb") else binary_name
     if name.endswith((".zip", ".mcpb")):
         with zipfile.ZipFile(destination, "w") as handle:
@@ -415,44 +411,43 @@ def expect_verify_failure(label: str, mutate) -> None:
     require(result.returncode != 0, f"archive verifier accepted {label}")
 
 
-expect_verify_failure("missing", lambda path: next(path.rglob("*.mcpb")).unlink())
+expect_verify_failure("missing", lambda path: next(path.rglob("codebase-memory-cli-linux-amd64.tar.gz")).unlink())
 expect_verify_failure("surplus", lambda path: (path / "surplus.zip").write_bytes(b"not allowed"))
 
 
 def mutate_zip(path: pathlib.Path) -> None:
-    archive = next(path.rglob("codebase-memory-mcp-windows-amd64.zip"))
+    archive = next(path.rglob("codebase-memory-cli-windows-amd64.zip"))
     with zipfile.ZipFile(archive, "w") as handle:
-        handle.writestr("codebase-memory-mcp.exe", b"mutated-selected-binary")
+        handle.writestr("codebase-memory-cli.exe", b"mutated-selected-binary")
 
 
 expect_verify_failure("mutation", mutate_zip)
 
 
 def remove_unix_executable_mode(path: pathlib.Path) -> None:
-    archive = next(path.rglob("codebase-memory-mcp-darwin-arm64.mcpb"))
-    with zipfile.ZipFile(archive, "r") as handle:
-        entries = [(info, handle.read(info)) for info in handle.infolist()]
-    with zipfile.ZipFile(archive, "w") as handle:
-        for info, payload in entries:
-            if info.filename == "server/codebase-memory-mcp":
-                info.create_system = 3
-                info.external_attr = (stat.S_IFREG | 0o644) << 16
-            handle.writestr(info, payload)
+    archive = next(path.rglob("codebase-memory-cli-darwin-arm64.tar.gz"))
+    with tarfile.open(archive, "r:gz") as handle:
+        entries = [(member, handle.extractfile(member).read()) for member in handle.getmembers()]
+    with tarfile.open(archive, "w:gz") as handle:
+        for member, payload in entries:
+            member.mode = 0o644 if member.name == "codebase-memory-cli" else member.mode
+            member.size = len(payload)
+            handle.addfile(member, io.BytesIO(payload))
 
 
 expect_verify_failure("unix-executable-mode", remove_unix_executable_mode)
 
 
 def wrong_target(path: pathlib.Path) -> None:
-    archive = next(path.rglob("codebase-memory-mcp-linux-amd64.tar.gz"))
+    archive = next(path.rglob("codebase-memory-cli-linux-amd64.tar.gz"))
     with tarfile.open(archive, "w:gz") as handle:
         data = archive_for["linux-arm64"]
-        info = tarfile.TarInfo("codebase-memory-mcp")
+        info = tarfile.TarInfo("codebase-memory-cli")
         info.size = len(data)
         handle.addfile(info, io.BytesIO(data))
 
 
 expect_verify_failure("wrong-target", wrong_target)
 
-print("PASS: exact candidate staging, exhaustive VT truth table, fail-closed selection, deterministic evidence, dry-run marking, and 14-container reconciliation")
+print("PASS: exact candidate staging, exhaustive VT truth table, fail-closed selection, deterministic evidence, dry-run marking, and 8-container reconciliation")
 PY
