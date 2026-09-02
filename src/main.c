@@ -33,7 +33,7 @@
 #include "operations/operation.h"
 #include "operations/reliability_events.h"
 #include "pipeline/pipeline.h"
-#include "mcp/index_supervisor.h"
+#include "operations/index_supervisor.h"
 #include "cli/cli.h"
 #include "cli/progress_sink.h"
 #include "foundation/constants.h"
@@ -565,6 +565,9 @@ static const cbm_cli_command_alias_t CLI_COMMAND_ALIASES[] = {
     {"changes", "detect_changes", NULL, NULL, "Show changed files and impact"},
     {"source-search", "search_code", "--pattern", "PATTERN", "Search source text with graph context"},
     {"outline", "get_file_outline", "--file-path", "PATH", "List indexed symbols in a source file"},
+    {"delete-project", "delete_project", "--project", "PROJECT", "Delete an indexed project"},
+    {"compare", "compare_graphs", NULL, NULL, "Compare two indexed project snapshots"},
+    {"ingest-traces", "ingest_traces", NULL, NULL, "Accept runtime trace observations"},
 };
 
 static const cbm_cli_command_alias_t *cli_command_alias_find(const char *command) {

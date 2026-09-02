@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "mcp/index_supervisor.h"
+#include "operations/index_supervisor.h"
 
 /* ── Forward declarations ─────────────────────────────────────── */
 
@@ -161,6 +161,11 @@ void cbm_mcp_server_free(cbm_mcp_server_t *srv);
 
 /* Set external watcher reference (for auto-index registration). Not owned. */
 void cbm_mcp_server_set_watcher(cbm_mcp_server_t *srv, struct cbm_watcher *w);
+
+/* Transitional host-state release used by neutral destructive operations while
+ * MCP session state is being retired. Releases any open store for project and
+ * removes its watcher subscription; it does not acquire mutation authority. */
+void cbm_mcp_server_detach_project(cbm_mcp_server_t *srv, const char *project);
 
 /* Set external config store reference (for auto_index setting). Not owned. */
 void cbm_mcp_server_set_config(cbm_mcp_server_t *srv, struct cbm_config *cfg);

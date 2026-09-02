@@ -24,7 +24,7 @@
 #include "foundation/sha256.h"
 #include "cli/client_adapter.h"
 #include "mcp/mcp.h" // cbm_mcp_tool_input_schema — CLI flag parser + per-tool --help
-#include "mcp/index_supervisor.h"
+#include "operations/index_supervisor.h"
 
 /* CLI buffer size constants. */
 enum {

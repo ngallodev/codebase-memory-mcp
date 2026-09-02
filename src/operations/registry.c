@@ -17,6 +17,10 @@ static const cbm_operation_descriptor_t k_operations[] = {
     {CBM_OPERATION_CHANGES, "changes", "detect_changes", "Map repository changes to their indexed impact", true, true},
     {CBM_OPERATION_SOURCE_SEARCH, "source-search", "search_code", "Search indexed source text with graph enrichment", true, true},
     {CBM_OPERATION_FILE_OUTLINE, "outline", "get_file_outline", "List indexed symbols in a source file", true, true},
+    {CBM_OPERATION_COMPARE, "compare", "compare_graphs", "Compare two indexed project snapshots", false, true},
+    {CBM_OPERATION_DELETE_PROJECT, "delete-project", "delete_project", "Delete an indexed project", true, false},
+    {CBM_OPERATION_INDEX, "index", "index_repository", "Index a repository", false, false},
+    {CBM_OPERATION_INGEST_TRACES, "ingest-traces", "ingest_traces", "Accept runtime trace observations", false, true},
 };
 
 const cbm_operation_descriptor_t *cbm_operation_descriptor(cbm_operation_id_t id) {

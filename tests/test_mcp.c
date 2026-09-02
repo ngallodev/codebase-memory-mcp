@@ -15,7 +15,7 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 #include <cli/cli.h>
-#include <mcp/index_supervisor.h> /* spawn-count hook — #845 in-process guard */
+#include <operations/index_supervisor.h> /* spawn-count hook — #845 in-process guard */
 #include <mcp/mcp.h>
 #include <mcp/mcp_internal.h>
 #include <pipeline/pipeline.h>

@@ -12,7 +12,7 @@
 
 #include "daemon/runtime.h"
 #include "daemon/project_lock.h"
-#include "mcp/index_supervisor.h"
+#include "operations/index_supervisor.h"
 #include "mcp/mcp.h"
 
 #include <stdbool.h>

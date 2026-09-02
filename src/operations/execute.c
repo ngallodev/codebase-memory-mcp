@@ -1,5 +1,6 @@
 #include "operations/operation.h"
 #include "operations/read.h"
+#include "operations/mutation.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,9 @@ cbm_operation_result_t cbm_operation_execute(cbm_operation_context_t *context,
     const char *json = args_json ? args_json : "{}";
     if (cbm_read_operation_supported(operation)) {
         return cbm_read_operation_execute(operation, json, context ? context->runtime : NULL);
+    }
+    if (cbm_mutation_operation_supported(operation)) {
+        return cbm_mutation_operation_execute(operation, json, context ? context->runtime : NULL);
     }
     if (!context || !context->backend) {
         return cbm_operation_result_copy("operation backend unavailable", true);

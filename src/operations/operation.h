@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,6 +24,10 @@ typedef enum cbm_operation_id {
     CBM_OPERATION_CHANGES,
     CBM_OPERATION_SOURCE_SEARCH,
     CBM_OPERATION_FILE_OUTLINE,
+    CBM_OPERATION_COMPARE,
+    CBM_OPERATION_DELETE_PROJECT,
+    CBM_OPERATION_INDEX,
+    CBM_OPERATION_INGEST_TRACES,
 } cbm_operation_id_t;
 
 typedef struct cbm_operation_descriptor {
@@ -45,12 +50,58 @@ typedef cbm_operation_result_t (*cbm_operation_backend_fn)(void *context,
 
 typedef bool (*cbm_operation_cancelled_fn)(void *context);
 typedef bool (*cbm_operation_command_allowed_fn)(void *context, const char *command);
+typedef bool (*cbm_operation_mutation_begin_fn)(void *context, const char *project);
+typedef void (*cbm_operation_mutation_end_fn)(void *context, const char *project);
+typedef void (*cbm_operation_project_detach_fn)(void *context, const char *project);
+typedef cbm_operation_result_t (*cbm_operation_index_execute_fn)(void *context, const char *root_path,
+                                                                 const char *args_json);
+typedef cbm_operation_result_t (*cbm_operation_cross_repo_execute_fn)(void *context,
+                                                                       const char *root_path,
+                                                                       const char *args_json);
+typedef void (*cbm_operation_project_invalidate_fn)(void *context, const char *project);
 
 typedef struct cbm_operation_runtime {
     cbm_operation_cancelled_fn cancelled;
     void *cancelled_context;
     cbm_operation_command_allowed_fn command_allowed;
     void *command_allowed_context;
+
+    /* Mutating operations require an explicit host-provided authority. A successful
+     * begin owns the project until the paired end call. Daemon hosts map this to
+     * their logical reservation plus native per-project lease; compatibility hosts
+     * may adapt an equivalent coordinator but must not silently run uncoordinated. */
+    cbm_operation_mutation_begin_fn mutation_begin;
+    cbm_operation_mutation_end_fn mutation_end;
+    void *mutation_context;
+
+    /* Release host-owned project handles/subscriptions while the mutation lease is
+     * held, before a destructive project operation removes published artifacts. */
+    cbm_operation_project_detach_fn project_detach;
+    void *project_detach_context;
+
+    /* Indexing is coordinated by the daemon job registry. The neutral operation
+     * delegates admission/coalescing to this host callback; the contained worker
+     * executes the physical pipeline separately. */
+    cbm_operation_index_execute_fn index_execute;
+    void *index_execute_context;
+
+    /* Transitional special-mode bridge. Ordinary repository indexing is fully
+     * neutral; cross-repository intelligence remains a separate mutation until
+     * its own extraction is complete. */
+    cbm_operation_cross_repo_execute_fn cross_repo_execute;
+    void *cross_repo_execute_context;
+
+    /* Host/session policy required by the physical index worker. These values
+     * are borrowed for the synchronous operation call. */
+    const char *session_root;
+    const char *allowed_root;
+    bool allowed_root_policy_set;
+    atomic_int *cancel_flag;
+
+    /* Drop a host-owned cached store after the pipeline publishes a new
+     * generation. Unlike project_detach, this must not unregister watchers. */
+    cbm_operation_project_invalidate_fn project_invalidate;
+    void *project_invalidate_context;
 
     /* Optional bounded-execution overrides. These are primarily useful for
      * deterministic integration/evaluation seams, but live at the neutral

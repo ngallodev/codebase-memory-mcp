@@ -8,7 +8,7 @@
 #include "foundation/compat_fs.h"
 #include "foundation/platform.h"
 #include "foundation/profile.h"
-#include "mcp/index_supervisor.h"
+#include "operations/index_supervisor.h"
 
 #include <stdbool.h>
 #include <stdint.h>

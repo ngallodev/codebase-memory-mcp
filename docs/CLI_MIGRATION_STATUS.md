@@ -1,8 +1,8 @@
 # Codebase Memory CLI Migration — Plan and Status
 
 **Updated:** 2026-09-02  
-**Current implementation target:** CP39 consolidated read-extraction checkpoint  
-**Checkpoint note:** the attempted CP38 download was not usable and is not relied upon. Its `detect_changes` implementation work is incorporated into this consolidated state.  
+**Current authoritative baseline:** latest complete consolidated source attached to the project sources page
+**Checkpoint policy:** prior overlay/checkpoint archives are historical only and are not replayed or used to reconstruct repository state.
 **Direction:** CLI-first code intelligence with a protocol-neutral operation API and coordination daemon; MCP is transitional compatibility only and must ultimately disappear.
 
 Status markers: **COMPLETE**, **PARTIAL**, **REMAINING**, **BLOCKED/EXTERNAL**.
@@ -12,7 +12,7 @@ Status markers: **COMPLETE**, **PARTIAL**, **REMAINING**, **BLOCKED/EXTERNAL**.
 - **COMPLETE** Product executable and user-facing direction are `codebase-memory-cli` / `codebase-memory-cli.exe`.
 - **COMPLETE** No-argument invocation is CLI help; unknown commands fail as CLI errors rather than starting MCP stdio.
 - **COMPLETE** Canonical exploration loop exists for `index`, `projects`, `status`, `search`, `snippet`, `trace`, and `coverage`.
-- **COMPLETE** Neutral graph/source commands now also include `schema`, `query`, `architecture`, `changes`, `source-search`, and `outline`.
+- **COMPLETE** Neutral graph/source commands now also include `schema`, `query`, `architecture`, `changes`, `source-search`, `outline`, and `compare`.
 - **COMPLETE** Existing cache/index/database naming and persisted compatibility-sensitive internals remain unchanged.
 - **PARTIAL** Legacy installer/release cleanup remains where MCP-era ownership/removal compatibility is still required.
 
@@ -31,7 +31,8 @@ Status markers: **COMPLETE**, **PARTIAL**, **REMAINING**, **BLOCKED/EXTERNAL**.
 - **COMPLETE (CP37)** `get_architecture` -> `architecture`
 - **COMPLETE (consolidated CP39 implementation)** `detect_changes` -> `changes`
 - **COMPLETE (consolidated CP39 implementation)** `search_code` -> `source-search`
-- **COMPLETE (consolidated CP39 implementation)** `get_file_outline` -> `outline`
+- **COMPLETE** `get_file_outline` -> `outline`
+- **COMPLETE** `compare_graphs` -> `compare`
 
 For migrated operations, the authoritative implementation lives under `src/operations/`; MCP routes through a compatibility adapter and must not own a duplicate handler body.
 
@@ -44,16 +45,16 @@ For migrated operations, the authoritative implementation lives under `src/opera
 
 ### Remaining read-only audit
 
-- **REMAINING — next:** classify and, if appropriate, neutralize `compare_graphs`.
-- **REMAINING:** inspect any additional read-only business logic still authoritative in `src/mcp/` before declaring the read migration closed.
+- **COMPLETE:** the authoritative MCP-handler audit found no remaining ordinary read-analysis handler after `compare_graphs` moved to the neutral layer.
+- **REMAINING:** continue auditing incidental read helpers only as dependent mutation/admin handlers move; do not create duplicate neutral implementations.
 
 ### Administrative / mutating operations
 
-- **REMAINING:** project deletion.
+- **COMPLETE:** project deletion -> `delete-project`; authoritative behavior now lives under `src/operations/mutation.*`, preserves path/alias/tail project resolution through the shared neutral resolver, and refuses uncoordinated execution.
 - **REMAINING:** ADR management.
-- **REMAINING:** trace ingestion.
+- **COMPLETE:** trace ingestion -> `ingest-traces`; current behavior is explicitly non-mutating (counts/accepts supplied observations and reports that runtime edge creation is not yet implemented), so it now lives in the neutral read/administrative operation layer rather than MCP.
 - **REMAINING:** cross-repository/index mutations and cross-repository mode handling.
-- **REMAINING:** indexing behavior still coupled to MCP/application state.
+- **COMPLETE:** ordinary repository indexing now executes through the neutral `index` operation, including path/project resolution, workspace authorization, pipeline execution, artifact bootstrap, coverage/skip reporting, dump verification, and canonical response construction. Daemon admission/coalescing and supervised-worker containment remain preserved. The special `cross-repo-intelligence` mode is intentionally still a separate transitional callback until cross-repository mutation is extracted.
 
 Rule during extraction: preserve behavior first, route all consumers to the neutral implementation, verify parity, delete the legacy body, and only then simplify.
 
@@ -63,7 +64,7 @@ Rule during extraction: preserve behavior first, route all consumers to the neut
 - **PARTIAL:** legacy `REQUEST_MCP` / `REQUEST_TOOL` compatibility paths remain and must shrink as operations migrate.
 - **COMPLETE/PRESERVED:** existing SQLite WAL, busy handling, project mutation leases/locks, worker supervision, staging/atomic publication, cancellation cleanup, and index-job coalescing remain in place.
 - **COMPLETE (consolidated CP39 implementation):** long-running neutral reads receive daemon request cancellation without routing through MCP.
-- **PARTIAL:** the intended single authoritative same-project mutation path is substantially represented by existing coordination mechanisms, but all remaining mutating commands still need to be audited as MCP is removed.
+- **PARTIAL, materially advanced:** neutral mutation operations now require explicit runtime authority. Daemon-backed deletion maps that authority to the existing cancellable logical reservation plus native per-project lease; indexing/ADR/trace/cross-repo still require migration.
 - **REMAINING:** retire MCP/tool request vocabulary when no valuable behavior depends on it.
 - **REMAINING:** remove MCP session concepts from daemon/application state after dependent UI/hooks/runtime paths are neutralized.
 
@@ -98,10 +99,9 @@ Rule during extraction: preserve behavior first, route all consumers to the neut
 
 ## 7. MCP subsystem retirement
 
-- **PARTIAL, materially advanced:** the principal read-heavy handlers identified in the handoff have moved out of MCP and their legacy handler bodies have been removed.
-- **PARTIAL:** MCP still owns compare/admin/mutation business logic and compatibility/runtime surfaces.
-- **REMAINING:** classify/migrate or deliberately retire `compare_graphs`.
-- **REMAINING:** move indexing, deletion, ADR, trace-ingestion, and cross-repository behavior to explicit neutral/admin/mutation boundaries.
+- **COMPLETE for read-analysis business logic:** all ordinary read-heavy handlers identified in the handoff, plus file outline and graph comparison, now live under `src/operations/`; MCP is only a compatibility adapter for them.
+- **PARTIAL:** MCP still owns cross-repository mode, ADR management, auto-index/session compatibility lifecycle, and transport/runtime compatibility surfaces. Project deletion and ordinary repository indexing are neutralized, and the index worker supervisor is no longer under `src/mcp/`.
+- **REMAINING:** move ADR and cross-repository behavior to explicit neutral/admin/mutation boundaries; later retire MCP-owned auto-index/session compatibility lifecycle with the broader session cleanup.
 - **REMAINING:** remove MCP tool registry/schema ownership after all useful operations are neutral.
 - **REMAINING:** remove JSON-RPC framing and `tools/list` / `tools/call`.
 - **REMAINING:** remove MCP prompts and stdio frontend.
@@ -109,7 +109,7 @@ Rule during extraction: preserve behavior first, route all consumers to the neut
 - **REMAINING:** remove MCP-only installer/release surfaces once legacy owned-config cleanup is no longer required.
 - **REMAINING:** delete `src/mcp/` only after it owns no application business logic.
 
-Current authoritative handler bodies still present in `src/mcp/mcp.c` after this read-extraction slice are: `compare_graphs`, project deletion, cross-repository mode, indexing, ADR management, and trace ingestion.
+Current authoritative application handler bodies still present in `src/mcp/mcp.c` are: cross-repository mode and ADR management. MCP still contains compatibility/session auto-index orchestration, but ordinary `index_repository` pipeline/response ownership has moved to `src/operations/index.*`.
 
 ## 8. Release readiness
 
@@ -126,30 +126,23 @@ Current authoritative handler bodies still present in `src/mcp/mcp.c` after this
   4. Native Windows validation evidence must be reviewed.
   5. Final high-value end-to-end/concurrency/recovery/release verification remains.
 
-## 9. Checkpoint history
+## 9. Consolidated-source policy
 
-- **CP29 — COMPLETE:** daemon `REQUEST_OPERATION` semantics and assurance-event vocabulary.
-- **CP30 — COMPLETE:** `doctor` foundation.
-- **CP31 — COMPLETE:** bounded reliability-event history / doctor aggregation.
-- **CP32 — COMPLETE:** initial multi-process concurrency evaluation harness.
-- **CP33 — COMPLETE:** writer and daemon crash/recovery evaluation.
-- **CP34 — COMPLETE:** WAL/long-reader and generation/publication evaluation.
-- **CP35 — COMPLETE:** native Windows validation workflow and Windows-specific evaluation runner.
-- **CP36 — COMPLETE:** graph schema and graph query moved to neutral operations; generic compact output moved out of MCP.
-- **CP37 — COMPLETE:** architecture analysis moved to the neutral operation layer; MCP is an adapter for `get_architecture`.
-- **CP38 — NOT RELIED UPON AS AN ARTIFACT:** attempted delivery was unavailable; its `detect_changes` implementation work is incorporated into the current consolidated state.
-- **CP39 — CURRENT IMPLEMENTATION TARGET:** consolidate `detect_changes`, source search, neutral command execution/cancellation, and file outline into one valid cumulative checkpoint.
+- **COMPLETE:** the latest complete project-source archive is the sole implementation baseline.
+- **COMPLETE:** prior CP/overlay artifacts are disposable history and must not be replayed to reconstruct source state.
+- **COMPLETE:** this status document is reconciled to the actual consolidated tree rather than inferred from old checkpoint labels.
 
 ## 10. Immediate planned sequence
 
-1. Finish and validate the **CP39 consolidated read-extraction** state; do not depend on the failed CP38 archive.
-2. Audit `compare_graphs` and any remaining read-only MCP logic; neutralize where it remains product behavior worth keeping.
-3. Reconcile results from native Windows validation; fix platform-specific locking/cancellation/publication defects before release.
-4. Formalize/audit the mutation boundary and extract indexing, delete, ADR, trace-ingestion, and cross-repository behavior without weakening existing coordination guarantees.
-5. Shrink daemon compatibility paths and remove MCP session/tool semantics.
-6. Clean installer/release surfaces and delete MCP only when it owns no application logic.
-7. Complete benchmark/baseline tooling and run the high-value end-to-end/concurrency/recovery/release verification appropriate for the milestone.
+1. **COMPLETE:** neutral mutation-authority contract mapped to the daemon's existing logical reservation + native project lease machinery.
+2. **COMPLETE:** project deletion migrated as the first bounded administrative mutation, including legacy project argument/path/tail compatibility.
+3. **COMPLETE:** ordinary indexing extraction: neutral ingress, physical pipeline/response implementation, and worker supervisor are outside MCP while daemon coalescing, worker containment, cancellation, staging/publication, and rebuild classification remain preserved.
+4. Reconcile results from native Windows validation; fix platform-specific locking/cancellation/publication defects before release.
+5. Extract ADR and cross-repository behavior without weakening existing coordination guarantees. Trace ingestion is already neutralized at its current non-mutating behavior.
+6. Shrink daemon compatibility paths and remove MCP session/tool semantics.
+7. Clean installer/release surfaces and delete MCP only when it owns no application logic.
+8. Complete benchmark/baseline tooling and run the high-value end-to-end/concurrency/recovery/release verification appropriate for the milestone.
 
 ## 11. Drift assessment
 
-**On target, with intentional sequencing skew and one corrected seam.** Runtime Assurance and concurrency work was front-loaded before the second read-heavy extraction group. The current extraction exposed subprocess cancellation/supervision as an MCP-owned implementation dependency; instead of duplicating or weakening it, that bounded-command runtime was moved to the neutral operation layer. This is consistent with the target architecture and reduces hidden MCP ownership. The priority should now shift from read extraction to the remaining compare/admin/mutation boundary rather than broadening assurance further, except where real Windows validation exposes defects.
+**On target, with intentional sequencing skew and one corrected seam.** Runtime Assurance and concurrency work was front-loaded before the second read-heavy extraction group. The current extraction exposed subprocess cancellation/supervision as an MCP-owned implementation dependency; instead of duplicating or weakening it, that bounded-command runtime was moved to the neutral operation layer. This is consistent with the target architecture and reduces hidden MCP ownership. The read-analysis extraction is now closed. The priority shifts to making mutation authority explicit at the neutral operation boundary and migrating administrative writes without weakening the daemon/project-lock guarantees, except where real Windows validation exposes defects.

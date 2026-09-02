@@ -299,8 +299,8 @@ STORE_SRCS = src/store/store.c
 CYPHER_SRCS = src/cypher/cypher.c
 
 # MCP server module (new)
-MCP_SRCS = src/mcp/mcp.c src/mcp/index_supervisor.c
-OPERATION_SRCS = src/operations/registry.c src/operations/reliability_events.c src/operations/execute.c src/operations/command_runner.c src/operations/read.c src/operations/coverage.c src/operations/snippet.c src/operations/search.c src/operations/trace.c src/operations/schema.c src/operations/query.c src/operations/architecture.c src/operations/changes.c src/operations/source_search.c src/operations/file_outline.c src/operations/compact_out.c
+MCP_SRCS = src/mcp/mcp.c
+OPERATION_SRCS = src/operations/registry.c src/operations/reliability_events.c src/operations/execute.c src/operations/mutation.c src/operations/index.c src/operations/project_arg.c src/operations/index_supervisor.c src/operations/command_runner.c src/operations/read.c src/operations/coverage.c src/operations/snippet.c src/operations/search.c src/operations/trace.c src/operations/trace_ingest.c src/operations/schema.c src/operations/query.c src/operations/architecture.c src/operations/changes.c src/operations/source_search.c src/operations/file_outline.c src/operations/compare.c src/operations/compact_out.c
 
 # Shared MCP daemon coordination and local transport
 DAEMON_SRCS = \

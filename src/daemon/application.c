@@ -15,7 +15,7 @@
 #include "foundation/sha256.h"
 #include "foundation/subprocess.h"
 #include "foundation/workspace.h"
-#include "mcp/index_supervisor.h"
+#include "operations/index_supervisor.h"
 #include "mcp/mcp.h"
 #include "mcp/mcp_internal.h"
 #include "operations/operation.h"
@@ -215,6 +215,11 @@ static char *application_auto_index_args(const char *root_path);
 static cbm_daemon_application_job_t *application_job_subscribe_locked(
     cbm_daemon_application_t *application, const char *project_key, const char *root_path,
     const char *args_json, application_job_subscribe_status_t *status_out);
+static bool application_mutation_begin_internal(cbm_daemon_application_t *application,
+                                                cbm_daemon_application_session_t *session,
+                                                const char *project_key, bool wait);
+static char *application_index_execute(void *context, const char *root_path,
+                                       const char *args_json);
 
 static atomic_bool g_application_fail_next_job_thread_start_for_test = ATOMIC_VAR_INIT(false);
 
@@ -279,11 +284,66 @@ static bool application_operation_cancelled(void *context) {
     return cancelled;
 }
 
+static bool application_operation_mutation_begin(void *context, const char *project) {
+    cbm_daemon_application_session_t *session = context;
+    return session &&
+           application_mutation_begin_internal(session->application, session, project, true);
+}
+
+static void application_operation_mutation_end(void *context, const char *project) {
+    cbm_daemon_application_session_t *session = context;
+    if (session) {
+        cbm_daemon_application_project_mutation_end(session->application, project);
+    }
+}
+
+static void application_operation_project_detach(void *context, const char *project) {
+    cbm_daemon_application_session_t *session = context;
+    if (session && session->mcp) {
+        cbm_mcp_server_detach_project(session->mcp, project);
+    }
+}
+
+static cbm_operation_result_t application_operation_index_execute(void *context,
+                                                                   const char *root_path,
+                                                                   const char *args_json) {
+    cbm_daemon_application_session_t *session = context;
+    char *envelope = application_index_execute(session, root_path, args_json);
+    if (!envelope) {
+        return cbm_operation_result_copy(
+            "{\"error\":\"daemon index coordinator could not start the operation\"}", true);
+    }
+
+    yyjson_doc *doc = yyjson_read(envelope, strlen(envelope), 0);
+    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
+    yyjson_val *error_value = yyjson_is_obj(root) ? yyjson_obj_get(root, "isError") : NULL;
+    bool is_error = yyjson_is_bool(error_value) && yyjson_get_bool(error_value);
+    yyjson_val *content = yyjson_is_obj(root) ? yyjson_obj_get(root, "content") : NULL;
+    yyjson_val *first = yyjson_is_arr(content) ? yyjson_arr_get_first(content) : NULL;
+    yyjson_val *text_value = yyjson_is_obj(first) ? yyjson_obj_get(first, "text") : NULL;
+    const char *text = yyjson_is_str(text_value) ? yyjson_get_str(text_value) : NULL;
+    cbm_operation_result_t result = text
+                                        ? cbm_operation_result_copy(text, is_error)
+                                        : cbm_operation_result_copy(
+                                              "{\"error\":\"index coordinator returned an invalid result\"}",
+                                              true);
+    if (doc) yyjson_doc_free(doc);
+    free(envelope);
+    return result;
+}
+
 static cbm_operation_context_t application_operation_context(
     cbm_daemon_application_session_t *session, cbm_operation_runtime_t *runtime) {
     memset(runtime, 0, sizeof(*runtime));
     runtime->cancelled = application_operation_cancelled;
     runtime->cancelled_context = session;
+    runtime->mutation_begin = application_operation_mutation_begin;
+    runtime->mutation_end = application_operation_mutation_end;
+    runtime->mutation_context = session;
+    runtime->project_detach = application_operation_project_detach;
+    runtime->project_detach_context = session;
+    runtime->index_execute = application_operation_index_execute;
+    runtime->index_execute_context = session;
     cbm_operation_context_t context = {.runtime = runtime};
     return context;
 }

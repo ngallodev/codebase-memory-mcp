@@ -18,7 +18,7 @@
 #include "foundation/platform.h"
 #include "foundation/secure_random.h"
 #include "foundation/sha256.h"
-#include "mcp/index_supervisor.h"
+#include "operations/index_supervisor.h"
 #include "store/store.h"
 #include "ui/config.h"
 #include "ui/embedded_assets.h"

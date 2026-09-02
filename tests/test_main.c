@@ -20,7 +20,7 @@ int tf_skip_count = 0;
 #include "daemon/runtime.h"        /* bounded worker response probe */
 #include "daemon/ipc.h"            /* Windows private-lock re-exec probe */
 #include "daemon/version_cohort.h" /* Windows crash-turnover re-exec probe */
-#include "mcp/index_supervisor.h"  /* cbm_index_set_worker_role */
+#include "operations/index_supervisor.h"  /* cbm_index_set_worker_role */
 #include "mcp/mcp.h"               /* cbm_mcp_handle_tool — act as a real worker */
 #include "ui/http_server.h"       /* deleted-self executable probe */
 #include <sqlite3.h>
