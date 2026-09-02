@@ -268,6 +268,26 @@ static bool application_request_cancelled_locked(const cbm_daemon_application_se
              session->request_cancel_token == session->active_request_token));
 }
 
+static bool application_operation_cancelled(void *context) {
+    cbm_daemon_application_session_t *session = (cbm_daemon_application_session_t *)context;
+    if (!session || !session->application) {
+        return false;
+    }
+    cbm_mutex_lock(&session->application->mutex);
+    bool cancelled = session->application->stopping || application_request_cancelled_locked(session);
+    cbm_mutex_unlock(&session->application->mutex);
+    return cancelled;
+}
+
+static cbm_operation_context_t application_operation_context(
+    cbm_daemon_application_session_t *session, cbm_operation_runtime_t *runtime) {
+    memset(runtime, 0, sizeof(*runtime));
+    runtime->cancelled = application_operation_cancelled;
+    runtime->cancelled_context = session;
+    cbm_operation_context_t context = {.runtime = runtime};
+    return context;
+}
+
 static uint64_t application_deadline_after(uint32_t timeout_ms) {
     uint64_t now = cbm_now_ms();
     return now > UINT64_MAX - timeout_ms ? UINT64_MAX : now + timeout_ms;
@@ -2570,7 +2590,8 @@ static cbm_daemon_runtime_application_status_t application_operation_request(
         free(args);
         return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
     }
-    cbm_operation_context_t context = {0};
+    cbm_operation_runtime_t runtime = {0};
+    cbm_operation_context_t context = application_operation_context(session, &runtime);
     cbm_operation_result_t result = cbm_operation_execute(&context, operation->id, args);
     free(args);
     if (!result.payload) {
@@ -2612,7 +2633,8 @@ static cbm_daemon_runtime_application_status_t application_tool_request(
     char *response = NULL;
     const cbm_operation_descriptor_t *operation = cbm_operation_find(tool);
     if (operation) {
-        cbm_operation_context_t context = {0};
+        cbm_operation_runtime_t runtime = {0};
+        cbm_operation_context_t context = application_operation_context(session, &runtime);
         cbm_operation_result_t result = cbm_operation_execute(&context, operation->id, args);
         if (result.payload) {
             response = cbm_mcp_text_result(result.payload, result.is_error);

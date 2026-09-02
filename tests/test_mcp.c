@@ -11,7 +11,7 @@
 #include "../src/foundation/platform.h" /* cbm_file_size */
 #include "../src/foundation/subprocess.h"
 #include "../src/foundation/workspace.h"
-#include "../src/mcp/compact_out.h"
+#include "../src/operations/compact_out.h"
 #include "test_framework.h"
 #include "test_helpers.h"
 #include <cli/cli.h>

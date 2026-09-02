@@ -559,6 +559,12 @@ static const cbm_cli_command_alias_t CLI_COMMAND_ALIASES[] = {
     {"snippet", "get_code_snippet", "--qualified-name", "SYMBOL", "Read source for a symbol"},
     {"coverage", "check_index_coverage", "--paths", "PATH", "Check index coverage for a path"},
     {"projects", "list_projects", NULL, NULL, "List indexed projects"},
+    {"schema", "get_graph_schema", NULL, NULL, "Describe graph labels and relationships"},
+    {"query", "query_graph", "--query", "QUERY", "Run a graph query"},
+    {"architecture", "get_architecture", NULL, NULL, "Describe indexed architecture"},
+    {"changes", "detect_changes", NULL, NULL, "Show changed files and impact"},
+    {"source-search", "search_code", "--pattern", "PATTERN", "Search source text with graph context"},
+    {"outline", "get_file_outline", "--file-path", "PATH", "List indexed symbols in a source file"},
 };
 
 static const cbm_cli_command_alias_t *cli_command_alias_find(const char *command) {

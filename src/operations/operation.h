@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,6 +17,12 @@ typedef enum cbm_operation_id {
     CBM_OPERATION_SEARCH,
     CBM_OPERATION_SNIPPET,
     CBM_OPERATION_TRACE,
+    CBM_OPERATION_SCHEMA,
+    CBM_OPERATION_QUERY,
+    CBM_OPERATION_ARCHITECTURE,
+    CBM_OPERATION_CHANGES,
+    CBM_OPERATION_SOURCE_SEARCH,
+    CBM_OPERATION_FILE_OUTLINE,
 } cbm_operation_id_t;
 
 typedef struct cbm_operation_descriptor {
@@ -36,9 +43,28 @@ typedef cbm_operation_result_t (*cbm_operation_backend_fn)(void *context,
                                                             cbm_operation_id_t operation,
                                                             const char *args_json);
 
+typedef bool (*cbm_operation_cancelled_fn)(void *context);
+typedef bool (*cbm_operation_command_allowed_fn)(void *context, const char *command);
+
+typedef struct cbm_operation_runtime {
+    cbm_operation_cancelled_fn cancelled;
+    void *cancelled_context;
+    cbm_operation_command_allowed_fn command_allowed;
+    void *command_allowed_context;
+
+    /* Optional bounded-execution overrides. These are primarily useful for
+     * deterministic integration/evaluation seams, but live at the neutral
+     * operation boundary so read operations never depend on MCP server state. */
+    size_t command_output_limit_override;
+    const char *command_override;
+    uint64_t command_timeout_override_ms;
+    bool command_timeout_override_set;
+} cbm_operation_runtime_t;
+
 typedef struct cbm_operation_context {
     void *backend_context;
     cbm_operation_backend_fn backend;
+    const cbm_operation_runtime_t *runtime;
 } cbm_operation_context_t;
 
 const cbm_operation_descriptor_t *cbm_operation_descriptor(cbm_operation_id_t id);

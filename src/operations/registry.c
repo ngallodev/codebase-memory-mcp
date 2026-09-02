@@ -11,6 +11,12 @@ static const cbm_operation_descriptor_t k_operations[] = {
     {CBM_OPERATION_SNIPPET, "snippet", "get_code_snippet", "Read an indexed source snippet",
      true, true},
     {CBM_OPERATION_TRACE, "trace", "trace_path", "Trace indexed relationships", true, true},
+    {CBM_OPERATION_SCHEMA, "schema", "get_graph_schema", "Describe graph labels, relationships, and properties", true, true},
+    {CBM_OPERATION_QUERY, "query", "query_graph", "Execute a graph query", true, true},
+    {CBM_OPERATION_ARCHITECTURE, "architecture", "get_architecture", "Describe indexed architecture", true, true},
+    {CBM_OPERATION_CHANGES, "changes", "detect_changes", "Map repository changes to their indexed impact", true, true},
+    {CBM_OPERATION_SOURCE_SEARCH, "source-search", "search_code", "Search indexed source text with graph enrichment", true, true},
+    {CBM_OPERATION_FILE_OUTLINE, "outline", "get_file_outline", "List indexed symbols in a source file", true, true},
 };
 
 const cbm_operation_descriptor_t *cbm_operation_descriptor(cbm_operation_id_t id) {

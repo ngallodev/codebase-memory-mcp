@@ -1,5 +1,5 @@
 /* compact_out.c — tree-format emission helpers. See compact_out.h for the contract. */
-#include "mcp/compact_out.h"
+#include "operations/compact_out.h"
 
 #include <ctype.h>
 #include <stdio.h>

@@ -3,6 +3,12 @@
 #include "operations/snippet.h"
 #include "operations/search.h"
 #include "operations/trace.h"
+#include "operations/schema.h"
+#include "operations/query.h"
+#include "operations/architecture.h"
+#include "operations/changes.h"
+#include "operations/source_search.h"
+#include "operations/file_outline.h"
 
 #include "foundation/platform.h"
 #include "foundation/compat_fs.h"
@@ -434,11 +440,16 @@ static cbm_operation_result_t execute_status(const char *args_json) {
 bool cbm_read_operation_supported(cbm_operation_id_t operation) {
     return operation == CBM_OPERATION_PROJECTS || operation == CBM_OPERATION_STATUS ||
            operation == CBM_OPERATION_COVERAGE || operation == CBM_OPERATION_SEARCH ||
-           operation == CBM_OPERATION_SNIPPET || operation == CBM_OPERATION_TRACE;
+           operation == CBM_OPERATION_SNIPPET || operation == CBM_OPERATION_TRACE ||
+           operation == CBM_OPERATION_SCHEMA || operation == CBM_OPERATION_QUERY ||
+           operation == CBM_OPERATION_ARCHITECTURE || operation == CBM_OPERATION_CHANGES ||
+           operation == CBM_OPERATION_SOURCE_SEARCH || operation == CBM_OPERATION_FILE_OUTLINE;
 }
 
 cbm_operation_result_t cbm_read_operation_execute(cbm_operation_id_t operation,
-                                                  const char *args_json) {
+                                                  const char *args_json,
+                                                  const cbm_operation_runtime_t *runtime) {
+    (void)runtime;
     if (operation == CBM_OPERATION_PROJECTS) {
         return execute_projects(args_json);
     }
@@ -456,6 +467,24 @@ cbm_operation_result_t cbm_read_operation_execute(cbm_operation_id_t operation,
     }
     if (operation == CBM_OPERATION_TRACE) {
         return cbm_trace_operation_execute(args_json);
+    }
+    if (operation == CBM_OPERATION_SCHEMA) {
+        return cbm_schema_operation_execute(args_json);
+    }
+    if (operation == CBM_OPERATION_QUERY) {
+        return cbm_query_operation_execute(args_json);
+    }
+    if (operation == CBM_OPERATION_ARCHITECTURE) {
+        return cbm_architecture_operation_execute(args_json);
+    }
+    if (operation == CBM_OPERATION_CHANGES) {
+        return cbm_changes_operation_execute(args_json, runtime);
+    }
+    if (operation == CBM_OPERATION_SOURCE_SEARCH) {
+        return cbm_source_search_operation_execute(args_json, runtime);
+    }
+    if (operation == CBM_OPERATION_FILE_OUTLINE) {
+        return cbm_file_outline_operation_execute(args_json, runtime);
     }
     return cbm_operation_result_copy("native read operation not implemented", true);
 }
