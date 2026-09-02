@@ -27,6 +27,7 @@ Options:
   --out-dir DIR                output directory (default: repository root)
 
 Environment:
+The product parses 162 languages via vendored tree-sitter grammars.
 Targets are the eight existing release products:
   linux/{amd64,arm64,amd64-portable,arm64-portable}
   darwin/{amd64,arm64}

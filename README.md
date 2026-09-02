@@ -158,7 +158,7 @@ Release scanning policy: Microsoft `!ml` tolerance is the only tolerated detecti
 
 ## Indexing and language support
 
-The existing indexing engine is intentionally unchanged by the CLI-first migration. It includes:
+The existing indexing engine is intentionally unchanged by the CLI-first migration. It parses 162 languages and includes:
 
 - tree-sitter-based extraction across the project’s supported grammar set;
 - hybrid LSP semantic enrichment for selected languages;
