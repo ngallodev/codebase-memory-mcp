@@ -31,6 +31,7 @@
 #include "daemon/version_cohort.h"
 #include "mcp/mcp.h"
 #include "operations/operation.h"
+#include "operations/reliability_events.h"
 #include "pipeline/pipeline.h"
 #include "mcp/index_supervisor.h"
 #include "cli/cli.h"
@@ -112,6 +113,7 @@ static atomic_int g_shutdown = 0;
 static cbm_daemon_runtime_client_t *g_daemon_client = NULL;
 
 static uint64_t main_deadline_after(uint32_t timeout_ms);
+static int main_run_doctor(int argc, char **argv);
 
 static bool main_session_context(const char *preferred_root, char root_out[MAIN_PATH_CAP],
                                  char allowed_out[MAIN_PATH_CAP], const char **allowed_out_ptr);
@@ -1167,6 +1169,7 @@ static void print_help(void) {
     printf("  codebase-memory-cli update [-y|-n]\n");
     printf("  codebase-memory-cli config <list|get|set|reset>\n");
     printf("  codebase-memory-cli daemon <start|stop|status>\n");
+    printf("  codebase-memory-cli doctor [--deep] [--json]\n");
     printf("\nGlobal:\n");
     printf("  --version    Print version\n");
     printf("  --help       Print this help\n");
@@ -1304,6 +1307,9 @@ static int handle_subcommand(int argc, char **argv, cbm_project_lock_manager_t *
         }
         if (strcmp(argv[i], "allow-root") == 0) {
             return main_run_allow_root(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+        }
+        if (strcmp(argv[i], "doctor") == 0) {
+            return main_run_doctor(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
         }
         const cbm_cli_command_alias_t *alias = cli_command_alias_find(argv[i]);
         if (alias) {
@@ -1539,6 +1545,211 @@ static cbm_daemon_ipc_endpoint_t *main_daemon_endpoint_new(void) {
                                      sizeof(seam_runtime_parent), NULL);
 #endif
     return cbm_daemon_bootstrap_endpoint_new(runtime_parent);
+}
+
+
+static bool main_doctor_db_name(const char *name) {
+    if (!name) {
+        return false;
+    }
+    size_t len = strlen(name);
+    return len > 3U && strcmp(name + len - 3U, ".db") == 0 && name[0] != '_';
+}
+
+typedef struct {
+    size_t discovered;
+    size_t readable;
+    size_t unreadable;
+    size_t healthy;
+    size_t transient;
+    size_t corrupt;
+} main_doctor_store_summary_t;
+
+static main_doctor_store_summary_t main_doctor_scan_stores(const char *cache_dir, bool deep) {
+    main_doctor_store_summary_t summary = {0};
+    cbm_dir_t *dir = cache_dir ? cbm_opendir(cache_dir) : NULL;
+    if (!dir) {
+        return summary;
+    }
+    cbm_dirent_t *entry = NULL;
+    while ((entry = cbm_readdir(dir)) != NULL) {
+        if (!main_doctor_db_name(entry->name)) {
+            continue;
+        }
+        summary.discovered++;
+        char path[MAIN_PATH_CAP];
+        if (snprintf(path, sizeof(path), "%s/%s", cache_dir, entry->name) >= (int)sizeof(path)) {
+            summary.unreadable++;
+            continue;
+        }
+        cbm_store_t *store = cbm_store_open_path_query(path);
+        if (!store) {
+            summary.unreadable++;
+            continue;
+        }
+        summary.readable++;
+        cbm_project_t *projects = NULL;
+        int project_count = 0;
+        if (!deep) {
+            if (cbm_store_list_projects(store, &projects, &project_count) == CBM_STORE_OK &&
+                project_count > 0) {
+                summary.healthy++;
+            } else {
+                summary.unreadable++;
+            }
+            cbm_store_free_projects(projects, project_count);
+        } else {
+            cbm_integrity_verdict_t verdict = cbm_store_check_integrity_verdict(store);
+            if (verdict == CBM_INTEGRITY_OK) {
+                summary.healthy++;
+            } else if (verdict == CBM_INTEGRITY_TRANSIENT) {
+                summary.transient++;
+            } else {
+                summary.corrupt++;
+            }
+        }
+        cbm_store_close(store);
+    }
+    cbm_closedir(dir);
+    return summary;
+}
+
+static int main_run_doctor(int argc, char **argv) {
+    bool deep = false;
+    bool json = false;
+    for (int i = 0; i < argc; ++i) {
+        if (strcmp(argv[i], "--deep") == 0) {
+            deep = true;
+        } else if (strcmp(argv[i], "--json") == 0 || strcmp(argv[i], "--format=json") == 0) {
+            json = true;
+        } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            printf("doctor — inspect Codebase Memory runtime health without repairing it\\n\\n");
+            printf("Usage:\\n  codebase-memory-cli doctor [--deep] [--json]\\n\\n");
+            printf("--deep performs an expensive integrity verdict for each project database.\\n");
+            printf("BUSY/LOCKED integrity outcomes are reported as transient, never corrupt.\\n");
+            return EXIT_SUCCESS;
+        } else {
+            (void)fprintf(stderr, "error: unknown doctor option: %s\\n", argv[i]);
+            return EXIT_FAILURE;
+        }
+    }
+
+    const char *cache = cbm_resolve_cache_dir();
+    bool cache_present = cache && cache[0] && cbm_is_dir(cache);
+    bool cache_secure = cache_present && cbm_daemon_ipc_private_directory_secure(cache);
+    main_doctor_store_summary_t stores = main_doctor_scan_stores(cache, deep);
+    cbm_reliability_summary_t reliability = {0};
+    (void)cbm_reliability_read_summary(cache_present ? cache : NULL, 0, &reliability);
+
+    cbm_daemon_build_identity_t identity = {0};
+    main_build_identity_status_t identity_status =
+        cache_present ? main_build_identity(&identity) : MAIN_BUILD_IDENTITY_CACHE_RESOLVE;
+    bool identity_ok = identity_status == MAIN_BUILD_IDENTITY_OK;
+    cbm_daemon_runtime_status_t daemon_status = {0};
+    bool daemon_running = false;
+    bool daemon_probe_ok = false;
+    cbm_daemon_ipc_endpoint_t *endpoint = identity_ok ? main_daemon_endpoint_new() : NULL;
+    if (endpoint) {
+        daemon_probe_ok = cbm_daemon_runtime_request_status(endpoint, &identity,
+                                                            MAIN_CONNECT_TIMEOUT_MS,
+                                                            &daemon_status);
+        daemon_running = daemon_probe_ok;
+        cbm_daemon_ipc_endpoint_free(endpoint);
+    }
+
+    bool store_ok = stores.unreadable == 0 && stores.corrupt == 0;
+    bool healthy = cache_present && cache_secure && identity_ok && store_ok;
+    const char *overall = healthy ? (stores.transient ? "busy" : "healthy") : "degraded";
+    if (stores.corrupt) {
+        overall = "corrupt";
+    }
+
+    if (json) {
+        yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+        yyjson_mut_val *root = doc ? yyjson_mut_obj(doc) : NULL;
+        yyjson_mut_val *build = doc ? yyjson_mut_obj(doc) : NULL;
+        yyjson_mut_val *cache_obj = doc ? yyjson_mut_obj(doc) : NULL;
+        yyjson_mut_val *daemon = doc ? yyjson_mut_obj(doc) : NULL;
+        yyjson_mut_val *store = doc ? yyjson_mut_obj(doc) : NULL;
+        yyjson_mut_val *events = doc ? yyjson_mut_obj(doc) : NULL;
+        yyjson_mut_val *event_counts = doc ? yyjson_mut_obj(doc) : NULL;
+        if (!doc || !root || !build || !cache_obj || !daemon || !store || !events ||
+            !event_counts) {
+            if (doc) yyjson_mut_doc_free(doc);
+            (void)fprintf(stderr, "error: doctor result allocation failed\\n");
+            return EXIT_FAILURE;
+        }
+        yyjson_mut_doc_set_root(doc, root);
+        yyjson_mut_obj_add_bool(doc, root, "ok", healthy && stores.transient == 0 && stores.corrupt == 0);
+        yyjson_mut_obj_add_strcpy(doc, root, "status", overall);
+        yyjson_mut_obj_add_bool(doc, root, "deep", deep);
+        yyjson_mut_obj_add_strcpy(doc, build, "version", CBM_VERSION);
+        yyjson_mut_obj_add_bool(doc, build, "identity_ok", identity_ok);
+        yyjson_mut_obj_add_strcpy(doc, build, "identity_status", main_build_identity_status_name(identity_status));
+        yyjson_mut_obj_add_val(doc, root, "build", build);
+        yyjson_mut_obj_add_strcpy(doc, cache_obj, "path", cache ? cache : "");
+        yyjson_mut_obj_add_bool(doc, cache_obj, "present", cache_present);
+        yyjson_mut_obj_add_bool(doc, cache_obj, "secure", cache_secure);
+        yyjson_mut_obj_add_val(doc, root, "cache", cache_obj);
+        yyjson_mut_obj_add_bool(doc, daemon, "reachable", daemon_running);
+        yyjson_mut_obj_add_bool(doc, daemon, "probe_ok", daemon_probe_ok);
+        if (daemon_running) {
+            yyjson_mut_obj_add_uint(doc, daemon, "pid", daemon_status.daemon_pid);
+            yyjson_mut_obj_add_uint(doc, daemon, "clients", daemon_status.committed_clients);
+            yyjson_mut_obj_add_bool(doc, daemon, "stopping", daemon_status.stopping);
+            yyjson_mut_obj_add_strcpy(doc, daemon, "version", daemon_status.semantic_version);
+        }
+        yyjson_mut_obj_add_val(doc, root, "daemon", daemon);
+        yyjson_mut_obj_add_uint(doc, store, "databases", stores.discovered);
+        yyjson_mut_obj_add_uint(doc, store, "readable", stores.readable);
+        yyjson_mut_obj_add_uint(doc, store, "unreadable", stores.unreadable);
+        yyjson_mut_obj_add_uint(doc, store, deep ? "integrity_ok" : "schema_readable", stores.healthy);
+        yyjson_mut_obj_add_uint(doc, store, "transient", stores.transient);
+        yyjson_mut_obj_add_uint(doc, store, "corrupt", stores.corrupt);
+        yyjson_mut_obj_add_val(doc, root, "store", store);
+        yyjson_mut_obj_add_uint(doc, events, "files_scanned", reliability.files_scanned);
+        yyjson_mut_obj_add_uint(doc, events, "records", reliability.records);
+        yyjson_mut_obj_add_uint(doc, events, "malformed_records", reliability.malformed_records);
+        yyjson_mut_obj_add_bool(doc, events, "truncated", reliability.truncated);
+        for (int event = 0; event < CBM_RELIABILITY_EVENT_COUNT; ++event) {
+            if (reliability.counts[event] == 0) continue;
+            yyjson_mut_obj_add_uint(doc, event_counts, cbm_reliability_event_name(event),
+                                   reliability.counts[event]);
+        }
+        yyjson_mut_obj_add_val(doc, events, "counts", event_counts);
+        yyjson_mut_obj_add_val(doc, root, "reliability_events", events);
+        char *encoded = yyjson_mut_write(doc, 0, NULL);
+        yyjson_mut_doc_free(doc);
+        if (!encoded) {
+            (void)fprintf(stderr, "error: doctor result encoding failed\\n");
+            return EXIT_FAILURE;
+        }
+        printf("%s\\n", encoded);
+        free(encoded);
+    } else {
+        printf("Codebase Memory doctor: %s%s\\n", overall, deep ? " (deep)" : "");
+        printf("  build:  %s (%s)\\n", CBM_VERSION, main_build_identity_status_name(identity_status));
+        printf("  cache:  %s [%s, %s]\\n", cache ? cache : "unresolved",
+               cache_present ? "present" : "missing", cache_secure ? "private" : "unsafe/unverified");
+        if (daemon_running) {
+            printf("  daemon: reachable, pid=%u, clients=%u%s\\n", daemon_status.daemon_pid,
+                   daemon_status.committed_clients, daemon_status.stopping ? ", stopping" : "");
+        } else {
+            printf("  daemon: not reachable (optional for direct reads)\\n");
+        }
+        printf("  store:  %zu database(s), %zu readable, %zu unreadable",
+               stores.discovered, stores.readable, stores.unreadable);
+        if (deep) {
+            printf(", %zu integrity-ok, %zu transient/busy, %zu corrupt",
+                   stores.healthy, stores.transient, stores.corrupt);
+        }
+        printf("\\n");
+        if (!deep) {
+            printf("  hint:   use 'codebase-memory-cli doctor --deep' for explicit integrity verification\\n");
+        }
+    }
+
+    return stores.corrupt || !healthy ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 
 static bool main_local_cli_feedback_enabled(int argc, char **argv) {

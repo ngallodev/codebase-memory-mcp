@@ -300,7 +300,7 @@ CYPHER_SRCS = src/cypher/cypher.c
 
 # MCP server module (new)
 MCP_SRCS = src/mcp/mcp.c src/mcp/index_supervisor.c src/mcp/compact_out.c
-OPERATION_SRCS = src/operations/registry.c src/operations/execute.c src/operations/read.c src/operations/coverage.c src/operations/snippet.c src/operations/search.c src/operations/trace.c
+OPERATION_SRCS = src/operations/registry.c src/operations/reliability_events.c src/operations/execute.c src/operations/read.c src/operations/coverage.c src/operations/snippet.c src/operations/search.c src/operations/trace.c
 
 # Shared MCP daemon coordination and local transport
 DAEMON_SRCS = \

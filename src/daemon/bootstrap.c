@@ -166,6 +166,7 @@ cbm_daemon_process_role_t cbm_daemon_process_role(int argc, char *const argv[]) 
          * project, so it needs no daemon. Listed here rather than routed through
          * the daemon so enrolling a root cannot depend on daemon state. */
         "allow-root",
+        "doctor",
     };
     static const char *const cli_commands[] = {
         "index", "status", "search", "trace", "snippet", "coverage", "projects",
