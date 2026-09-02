@@ -32,7 +32,7 @@ arm64 | aarch64 | ARM64) GOARCH=arm64 ;;
 esac
 
 TARGET="$GOOS-$GOARCH"
-BINARY_NAME=codebase-memory-mcp
+BINARY_NAME=codebase-memory-cli
 [[ "$GOOS" == windows ]] && BINARY_NAME+=.exe
 INPUT="$FIX/$BINARY_NAME"
 
