@@ -618,7 +618,7 @@ require(bool(windows_smoke), "_smoke.yml must contain the smoke-windows job")
 vm_smoke = read("test-infrastructure/vm/vm-smoke.sh")
 smoke_local = read("scripts/smoke-local.sh")
 require(
-    'scripts/smoke-test.sh "$SMOKE_DIR/codebase-memory-mcp.exe"' in vm_smoke,
+    'scripts/smoke-test.sh "$SMOKE_DIR/codebase-memory-cli.exe"' in vm_smoke,
     f"Windows smoke wrapper must execute the canonical {binary}",
 )
 require(
@@ -636,7 +636,7 @@ require(
         for needle in (
             'PROFILE_ROOT="$(cygpath -u "$USERPROFILE")"',
             'SMOKE_DIR="$(mktemp -d "$PROFILE_ROOT/cbm-vm-smoke.XXXXXX")"',
-            'cp "$BINARY_SRC" "$SMOKE_DIR/codebase-memory-mcp.exe"',
+            'cp "$BINARY_SRC" "$SMOKE_DIR/codebase-memory-cli.exe"',
             'CBM_CACHE_DIR="$(cygpath -m "$SMOKE_DIR/cache")"',
             'SMOKE_TEMP_ROOT="$SMOKE_DIR"',
         )
@@ -655,8 +655,8 @@ require(
         needle in windows_release_version_blocks[0]
         for needle in (
             'PROFILE_ROOT="$(cygpath -u "$USERPROFILE")"',
-            'cp "$ARTIFACT_DIR/codebase-memory-mcp.exe" "$LAUNCH_DIR/"',
-            '"$LAUNCH_DIR/codebase-memory-mcp.exe" --version',
+            'cp "$ARTIFACT_DIR/codebase-memory-cli.exe" "$LAUNCH_DIR/"',
+            '"$LAUNCH_DIR/codebase-memory-cli.exe" --version',
         )
     ),
     "Windows release version checks must execute the single binary beneath the current "
@@ -682,7 +682,7 @@ require(
 windows_release_security_blocks = [
     re.sub(r"\s+", " ", re.sub(r"\\\s*\n\s*", " ", block)).strip()
     for block in smoke_blocks
-    if 'scripts/security-install.sh "$SECURITY_DIR/codebase-memory-mcp.exe"' in block
+    if 'scripts/security-install.sh "$SECURITY_DIR/codebase-memory-cli.exe"' in block
 ]
 require(
     len(windows_release_security_blocks) == 1
@@ -691,9 +691,9 @@ require(
         for needle in (
             'PROFILE_ROOT="$(cygpath -u "$USERPROFILE")"',
             'SECURITY_DIR="$(mktemp -d "$PROFILE_ROOT/cbm-release-security.XXXXXX")"',
-            'cp "$ARTIFACT_DIR/codebase-memory-mcp.exe" "$SECURITY_DIR/"',
+            'cp "$ARTIFACT_DIR/codebase-memory-cli.exe" "$SECURITY_DIR/"',
             'TMPDIR="$SECURITY_DIR" '
-            'scripts/security-install.sh "$SECURITY_DIR/codebase-memory-mcp.exe"',
+            'scripts/security-install.sh "$SECURITY_DIR/codebase-memory-cli.exe"',
         )
     ),
     "Windows release install audit must execute the single binary beneath the current "
