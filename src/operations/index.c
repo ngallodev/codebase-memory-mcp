@@ -1,4 +1,5 @@
 #include "operations/index.h"
+#include "operations/cross_repo.h"
 #include "operations/index_supervisor.h"
 #include "operations/project_arg.h"
 
@@ -486,12 +487,7 @@ cbm_operation_result_t cbm_index_operation_execute(const char *args_json,
     char *mode = index_string_arg(json, "mode");
     if (mode && !strcmp(mode, "cross-repo-intelligence")) {
         free(mode);
-        if (!runtime || !runtime->cross_repo_execute) {
-            free(repo_path);
-            return index_text_error("cross-repository indexing mode is unavailable for this execution path");
-        }
-        cbm_operation_result_t out = runtime->cross_repo_execute(runtime->cross_repo_execute_context,
-                                                                 repo_path, json);
+        cbm_operation_result_t out = cbm_cross_repo_operation_execute(repo_path, json, runtime);
         free(repo_path);
         return out;
     }

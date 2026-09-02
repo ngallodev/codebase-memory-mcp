@@ -1,8 +1,8 @@
 # Codebase Memory CLI Migration — Plan and Status
 
 **Updated:** 2026-09-02  
-**Current authoritative baseline:** latest complete consolidated source attached to the project sources page
-**Checkpoint policy:** prior overlay/checkpoint archives are historical only and are not replayed or used to reconstruct repository state.
+**Current authoritative baseline:** latest complete consolidated source attached to the project sources page  
+**Checkpoint policy:** prior overlay/checkpoint archives are historical only and are not replayed or used to reconstruct repository state.  
 **Direction:** CLI-first code intelligence with a protocol-neutral operation API and coordination daemon; MCP is transitional compatibility only and must ultimately disappear.
 
 Status markers: **COMPLETE**, **PARTIAL**, **REMAINING**, **BLOCKED/EXTERNAL**.
@@ -51,9 +51,9 @@ For migrated operations, the authoritative implementation lives under `src/opera
 ### Administrative / mutating operations
 
 - **COMPLETE:** project deletion -> `delete-project`; authoritative behavior now lives under `src/operations/mutation.*`, preserves path/alias/tail project resolution through the shared neutral resolver, and refuses uncoordinated execution.
-- **REMAINING:** ADR management.
+- **COMPLETE:** ADR management -> `manage-adr`; ADR get/sections/update/set-sections semantics now live under `src/operations/adr.*`, including legacy-file migration and coordinated writes. The generation-aware store resolver is still supplied through a transitional neutral runtime host seam until store recovery itself leaves MCP.
 - **COMPLETE:** trace ingestion -> `ingest-traces`; current behavior is explicitly non-mutating (counts/accepts supplied observations and reports that runtime edge creation is not yet implemented), so it now lives in the neutral read/administrative operation layer rather than MCP.
-- **REMAINING:** cross-repository/index mutations and cross-repository mode handling.
+- **COMPLETE:** cross-repository intelligence mode now lives in `src/operations/cross_repo.*`; ordinary `index --mode cross-repo-intelligence` invokes it directly through the neutral index operation while preserving ordered multi-project leases, wildcard/target validation, cancellation, partial-result semantics, and edge counters.
 - **COMPLETE:** ordinary repository indexing now executes through the neutral `index` operation, including path/project resolution, workspace authorization, pipeline execution, artifact bootstrap, coverage/skip reporting, dump verification, and canonical response construction. Daemon admission/coalescing and supervised-worker containment remain preserved. The special `cross-repo-intelligence` mode is intentionally still a separate transitional callback until cross-repository mutation is extracted.
 
 Rule during extraction: preserve behavior first, route all consumers to the neutral implementation, verify parity, delete the legacy body, and only then simplify.
@@ -64,7 +64,7 @@ Rule during extraction: preserve behavior first, route all consumers to the neut
 - **PARTIAL:** legacy `REQUEST_MCP` / `REQUEST_TOOL` compatibility paths remain and must shrink as operations migrate.
 - **COMPLETE/PRESERVED:** existing SQLite WAL, busy handling, project mutation leases/locks, worker supervision, staging/atomic publication, cancellation cleanup, and index-job coalescing remain in place.
 - **COMPLETE (consolidated CP39 implementation):** long-running neutral reads receive daemon request cancellation without routing through MCP.
-- **PARTIAL, materially advanced:** neutral mutation operations now require explicit runtime authority. Daemon-backed deletion maps that authority to the existing cancellable logical reservation plus native per-project lease; indexing/ADR/trace/cross-repo still require migration.
+- **PARTIAL, materially advanced:** neutral mutation operations now require explicit runtime authority. Daemon-backed deletion maps that authority to the existing cancellable logical reservation plus native per-project lease; ADR and indexing now use the neutral mutation/runtime boundary; cross-repo remains the substantive mutation migration. Trace ingestion is neutral at its current non-mutating semantics.
 - **REMAINING:** retire MCP/tool request vocabulary when no valuable behavior depends on it.
 - **REMAINING:** remove MCP session concepts from daemon/application state after dependent UI/hooks/runtime paths are neutralized.
 
@@ -100,8 +100,8 @@ Rule during extraction: preserve behavior first, route all consumers to the neut
 ## 7. MCP subsystem retirement
 
 - **COMPLETE for read-analysis business logic:** all ordinary read-heavy handlers identified in the handoff, plus file outline and graph comparison, now live under `src/operations/`; MCP is only a compatibility adapter for them.
-- **PARTIAL:** MCP still owns cross-repository mode, ADR management, auto-index/session compatibility lifecycle, and transport/runtime compatibility surfaces. Project deletion and ordinary repository indexing are neutralized, and the index worker supervisor is no longer under `src/mcp/`.
-- **REMAINING:** move ADR and cross-repository behavior to explicit neutral/admin/mutation boundaries; later retire MCP-owned auto-index/session compatibility lifecycle with the broader session cleanup.
+- **PARTIAL, business-logic extraction complete:** MCP no longer owns authoritative application handler bodies. It still owns the generic generation-aware store recovery/cache host seam used by ADR, auto-index/session compatibility lifecycle, tool registry/schema compatibility, JSON-RPC/stdio transport, and daemon session compatibility surfaces.
+- **REMAINING:** move the generic store recovery/cache host seam out of MCP, then retire MCP-owned auto-index/session compatibility lifecycle, tool registry/schema ownership, JSON-RPC/stdio transport, and daemon MCP-session vocabulary.
 - **REMAINING:** remove MCP tool registry/schema ownership after all useful operations are neutral.
 - **REMAINING:** remove JSON-RPC framing and `tools/list` / `tools/call`.
 - **REMAINING:** remove MCP prompts and stdio frontend.
@@ -109,7 +109,7 @@ Rule during extraction: preserve behavior first, route all consumers to the neut
 - **REMAINING:** remove MCP-only installer/release surfaces once legacy owned-config cleanup is no longer required.
 - **REMAINING:** delete `src/mcp/` only after it owns no application business logic.
 
-Current authoritative application handler bodies still present in `src/mcp/mcp.c` are: cross-repository mode and ADR management. MCP still contains compatibility/session auto-index orchestration, but ordinary `index_repository` pipeline/response ownership has moved to `src/operations/index.*`.
+There are no remaining authoritative `handle_*` application bodies in `src/mcp/mcp.c`. Cross-repository mode and ADR both route through the neutral operation layer. MCP still owns generic store/session/transport compatibility infrastructure that must now be extracted or deleted. MCP still contains compatibility/session auto-index orchestration, but ordinary `index_repository` pipeline/response ownership has moved to `src/operations/index.*`.
 
 ## 8. Release readiness
 
@@ -138,11 +138,11 @@ Current authoritative application handler bodies still present in `src/mcp/mcp.c
 2. **COMPLETE:** project deletion migrated as the first bounded administrative mutation, including legacy project argument/path/tail compatibility.
 3. **COMPLETE:** ordinary indexing extraction: neutral ingress, physical pipeline/response implementation, and worker supervisor are outside MCP while daemon coalescing, worker containment, cancellation, staging/publication, and rebuild classification remain preserved.
 4. Reconcile results from native Windows validation; fix platform-specific locking/cancellation/publication defects before release.
-5. Extract ADR and cross-repository behavior without weakening existing coordination guarantees. Trace ingestion is already neutralized at its current non-mutating behavior.
+5. **ADR + CROSS-REPO COMPLETE.** Neutralize the generic store recovery/cache host seam still supplied by MCP, then shrink/delete remaining MCP session/tool/transport compatibility.
 6. Shrink daemon compatibility paths and remove MCP session/tool semantics.
 7. Clean installer/release surfaces and delete MCP only when it owns no application logic.
 8. Complete benchmark/baseline tooling and run the high-value end-to-end/concurrency/recovery/release verification appropriate for the milestone.
 
 ## 11. Drift assessment
 
-**On target, with intentional sequencing skew and one corrected seam.** Runtime Assurance and concurrency work was front-loaded before the second read-heavy extraction group. The current extraction exposed subprocess cancellation/supervision as an MCP-owned implementation dependency; instead of duplicating or weakening it, that bounded-command runtime was moved to the neutral operation layer. This is consistent with the target architecture and reduces hidden MCP ownership. The read-analysis extraction is now closed. The priority shifts to making mutation authority explicit at the neutral operation boundary and migrating administrative writes without weakening the daemon/project-lock guarantees, except where real Windows validation exposes defects.
+**On target.** Runtime Assurance and concurrency work was front-loaded before the second read-heavy extraction group. Subprocess cancellation/supervision, indexing, ADR, deletion, trace-ingest, and cross-repository behavior have now crossed the neutral operation boundary without leaving duplicate authoritative handlers in MCP. The project is at the intended next phase boundary: remove generic MCP-owned store/session/tool/transport compatibility infrastructure while preserving the daemon coordination and correctness kernel.

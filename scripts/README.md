@@ -17,9 +17,10 @@ codes) and rejects unknown flags with exit 2 + `Please consult --help.`
 
 | leg | entry | what a run gives you |
 |---|---|---|
-| **test** | `test.sh` | DEFAULT = the venue leg: static contracts (Step 0a–0r) + CLEAN ASan+UBSan build + all suites via the parallel harness + prod-binary guards. `--suites a,b` = iteration mode (incremental rebuild, subset, seconds). `--tsan` = the ThreadSanitizer leg. CLANGARM64 gets CI's trap-UBSan flags automatically. |
+| **test** | `test.sh` | DEFAULT = the venue leg: static contracts (Step 0a–0r) + CLEAN ASan+UBSan build + all suites via the parallel harness + prod-binary guards. `--suites a,b` = local iteration mode (dependency-aware incremental rebuild, subset, seconds). `--tsan` = the ThreadSanitizer leg. CLANGARM64 gets CI's trap-UBSan flags automatically. |
 | **package wrappers** | `ci/test-package-wrappers.sh` | Go, npm, and PyPI runtime-set publication/lock suites on the current host. CI runs the same entry on Linux and Windows so both platform lock implementations gate. |
 | **build** | `build.sh` | CLEAN production runtime set (native executable + authenticated integration asset; `--with-ui` adds one content-addressed UI pack). ccache via `env.sh` makes repeats fast; `CCACHE_COMPILERCHECK=content` guarantees a hit is byte-identical to a cold compile — never stale. `--version`, `STATIC=1`, `BUILD_DIR=`. |
+| **build-dev** | `build-dev.sh` | Incremental local production build. Make dependency files plus ccache rebuild only changed or stale translation units; use `build.sh` for CI/release clean builds. |
 | **lint** | `lint.sh` | clang-tidy + cppcheck + clang-format (+ no-skips policy). `--ci` = the CI gate set (no clang-tidy). Drives the same make targets as `make lint`/`lint-ci`. |
 | **smoke (unix)** | `smoke-local.sh` | Stages a full release fixture, serves it on a kernel-assigned port, runs `smoke-test.sh` (ALL phases incl. download/install/update E2E) inside a disposable HOME/XDG/TMP sandbox. `ui` variant makes a missing verified UI pack a FAILURE. `CBM_SMOKE_ARTIFACT_DIR` = smoke an extracted release artifact verbatim (release mode). |
 | **smoke (windows)** | `../test-infrastructure/vm/vm-smoke.sh` | Same verified runtime-set contract on the real Windows VM, plus the user-PATH registry guard (prepare/verify/cleanup). |

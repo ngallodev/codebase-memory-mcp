@@ -1,6 +1,7 @@
 #include "operations/mutation.h"
 #include "operations/project_arg.h"
 #include "operations/index.h"
+#include "operations/adr.h"
 
 #include "foundation/compat_fs.h"
 #include "foundation/constants.h"
@@ -115,7 +116,8 @@ static cbm_operation_result_t execute_delete_project(const char *args_json,
 }
 
 bool cbm_mutation_operation_supported(cbm_operation_id_t operation) {
-    return operation == CBM_OPERATION_DELETE_PROJECT || operation == CBM_OPERATION_INDEX;
+    return operation == CBM_OPERATION_DELETE_PROJECT || operation == CBM_OPERATION_INDEX ||
+           operation == CBM_OPERATION_MANAGE_ADR;
 }
 
 cbm_operation_result_t cbm_mutation_operation_execute(cbm_operation_id_t operation,
@@ -126,6 +128,8 @@ cbm_operation_result_t cbm_mutation_operation_execute(cbm_operation_id_t operati
         return execute_delete_project(args_json, runtime);
     case CBM_OPERATION_INDEX:
         return cbm_index_operation_execute(args_json, runtime);
+    case CBM_OPERATION_MANAGE_ADR:
+        return cbm_adr_operation_execute(args_json, runtime);
     default:
         return cbm_operation_result_copy("unsupported mutation operation", true);
     }

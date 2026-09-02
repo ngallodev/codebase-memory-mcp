@@ -51,7 +51,6 @@ enum {
 #include "cypher/cypher.h"
 #include "discover/discover.h"
 #include "pipeline/pipeline.h"
-#include "pipeline/pass_cross_repo.h"
 #include "git/git_context.h"
 #include "cli/cli.h"
 #include "watcher/watcher.h"
@@ -1441,10 +1440,6 @@ char *cbm_mcp_get_string_arg(const char *args_json, const char *key) {
     }
     yyjson_doc_free(doc);
     return result;
-}
-
-static char *get_project_arg(const char *args_json) {
-    return cbm_operation_project_arg(args_json);
 }
 
 int cbm_mcp_get_int_arg(const char *args_json, const char *key, int default_val) {
@@ -4534,229 +4529,6 @@ static char *get_project_root(cbm_mcp_server_t *srv, const char *project) {
 
 /* ── index_repository ─────────────────────────────────────────── */
 
-static int cross_repo_project_key_compare(const void *left, const void *right) {
-    const char *const *left_key = left;
-    const char *const *right_key = right;
-    return strcmp(*left_key, *right_key);
-}
-
-static unsigned char cross_repo_project_lock_fold(unsigned char ch) {
-    return ch >= 'A' && ch <= 'Z' ? (unsigned char)(ch + ('a' - 'A')) : ch;
-}
-
-/* Match daemon/project_lock.c's OS-key identity exactly: only ASCII A-Z folds.
- * The raw strcmp tie-break gives qsort a total, input-order-independent order
- * while keeping the caller's original project spelling as the lease value. */
-static int cross_repo_project_lock_key_compare_values(const char *left, const char *right) {
-    const unsigned char *left_cursor = (const unsigned char *)left;
-    const unsigned char *right_cursor = (const unsigned char *)right;
-    while (*left_cursor && *right_cursor) {
-        unsigned char left_folded = cross_repo_project_lock_fold(*left_cursor);
-        unsigned char right_folded = cross_repo_project_lock_fold(*right_cursor);
-        if (left_folded != right_folded) {
-            return left_folded < right_folded ? -1 : 1;
-        }
-        left_cursor++;
-        right_cursor++;
-    }
-    if (*left_cursor != *right_cursor) {
-        return *left_cursor ? 1 : -1;
-    }
-    return strcmp(left, right);
-}
-
-static int cross_repo_project_lock_key_compare(const void *left, const void *right) {
-    const char *const *left_key = left;
-    const char *const *right_key = right;
-    return cross_repo_project_lock_key_compare_values(*left_key, *right_key);
-}
-
-static bool cross_repo_project_lock_keys_equivalent(const char *left, const char *right) {
-    const unsigned char *left_cursor = (const unsigned char *)left;
-    const unsigned char *right_cursor = (const unsigned char *)right;
-    while (*left_cursor && *right_cursor) {
-        if (cross_repo_project_lock_fold(*left_cursor) !=
-            cross_repo_project_lock_fold(*right_cursor)) {
-            return false;
-        }
-        left_cursor++;
-        right_cursor++;
-    }
-    return *left_cursor == *right_cursor;
-}
-
-/* Handle mode="cross-repo-intelligence" — extract to reduce complexity. */
-static char *handle_cross_repo_mode(cbm_mcp_server_t *srv, const char *repo_path,
-                                    const char *name_override, const char *args) {
-    if (name_override && name_override[0] && !cbm_validate_project_name(name_override)) {
-        return cbm_mcp_text_result("invalid project name", true);
-    }
-    char *project = name_override && name_override[0] ? heap_strdup(name_override)
-                                                      : cbm_project_name_from_path(repo_path);
-    if (!project) {
-        return cbm_mcp_text_result("cannot derive project name", true);
-    }
-
-    yyjson_doc *jdoc = yyjson_read(args, strlen(args), 0);
-    yyjson_val *jroot = jdoc ? yyjson_doc_get_root(jdoc) : NULL;
-    yyjson_val *tp_arr = jroot ? yyjson_obj_get(jroot, "target_projects") : NULL;
-
-    if (!tp_arr || !yyjson_is_arr(tp_arr) || yyjson_arr_size(tp_arr) == 0) {
-        yyjson_doc_free(jdoc);
-        free(project);
-        return cbm_mcp_text_result(
-            "{\"error\":\"target_projects is required for cross-repo-intelligence mode. "
-            "Use [\\\"*\\\"] for all projects. Run list_projects to see available.\"}",
-            true);
-    }
-
-    size_t target_count = yyjson_arr_size(tp_arr);
-    if (target_count > MCP_MAX_CROSS_REPO_TARGETS) {
-        yyjson_doc_free(jdoc);
-        free(project);
-        return cbm_mcp_text_result("too many cross-repo target projects", true);
-    }
-    int tp_count = (int)target_count;
-    const char **targets = malloc((size_t)tp_count * sizeof(*targets));
-    const char **lease_keys = malloc(((size_t)tp_count + 1U) * sizeof(*lease_keys));
-    if (!targets || !lease_keys) {
-        free(targets);
-        free(lease_keys);
-        yyjson_doc_free(jdoc);
-        free(project);
-        return cbm_mcp_text_result("failed to allocate cross-repo project leases", true);
-    }
-    size_t idx;
-    size_t max;
-    yyjson_val *val;
-    int ti = 0;
-    bool all_projects = false;
-    bool invalid_target = false;
-    yyjson_arr_foreach(tp_arr, idx, max, val) {
-        const char *target = yyjson_is_str(val) ? yyjson_get_str(val) : NULL;
-        if (!target || !target[0] || strlen(target) >= CBM_SZ_256 ||
-            (strcmp(target, "*") != 0 && !cbm_validate_project_name(target))) {
-            invalid_target = true;
-            break;
-        }
-        targets[ti++] = target;
-        all_projects = all_projects || strcmp(target, "*") == 0;
-    }
-    if (invalid_target || ti != tp_count) {
-        free(targets);
-        free(lease_keys);
-        yyjson_doc_free(jdoc);
-        free(project);
-        return cbm_mcp_text_result("target_projects must contain valid project names or '*'", true);
-    }
-    if (all_projects && tp_count != 1) {
-        free(targets);
-        free(lease_keys);
-        yyjson_doc_free(jdoc);
-        free(project);
-        return cbm_mcp_text_result("target_projects wildcard '*' must be the only entry", true);
-    }
-    if (!all_projects) {
-        qsort(targets, (size_t)tp_count, sizeof(*targets), cross_repo_project_key_compare);
-        int unique_count = 0;
-        for (int i = 0; i < tp_count; i++) {
-            if (unique_count == 0 || strcmp(targets[i], targets[unique_count - 1]) != 0) {
-                targets[unique_count++] = targets[i];
-            }
-        }
-        tp_count = unique_count;
-    }
-
-    int lease_count = 0;
-    if (all_projects) {
-        lease_keys[lease_count++] = "*";
-    } else {
-        lease_keys[lease_count++] = project;
-        for (int i = 0; i < tp_count; i++) {
-            lease_keys[lease_count++] = targets[i];
-        }
-        qsort(lease_keys, (size_t)lease_count, sizeof(*lease_keys),
-              cross_repo_project_lock_key_compare);
-        int unique_count = 0;
-        for (int i = 0; i < lease_count; i++) {
-            if (unique_count == 0 || !cross_repo_project_lock_keys_equivalent(
-                                         lease_keys[i], lease_keys[unique_count - 1])) {
-                lease_keys[unique_count++] = lease_keys[i];
-            }
-        }
-        lease_count = unique_count;
-    }
-
-    int held_count = 0;
-    while (held_count < lease_count && mcp_project_mutation_begin(srv, lease_keys[held_count])) {
-        held_count++;
-    }
-    bool cancelled =
-        atomic_load_explicit(&srv->pipeline_cancel_requested, memory_order_acquire) != 0;
-    if (held_count != lease_count || cancelled) {
-        while (held_count > 0) {
-            held_count--;
-            mcp_project_mutation_end(srv, lease_keys[held_count]);
-        }
-        free(targets);
-        free(lease_keys);
-        yyjson_doc_free(jdoc);
-        free(project);
-        return cbm_mcp_text_result("cross-repo operation cancelled or blocked by active indexing",
-                                   true);
-    }
-
-    cbm_cross_repo_result_t result = cbm_cross_repo_match_cancellable(
-        project, targets, tp_count, &srv->pipeline_cancel_requested);
-    while (held_count > 0) {
-        held_count--;
-        mcp_project_mutation_end(srv, lease_keys[held_count]);
-    }
-    free(targets);
-    free(lease_keys);
-    yyjson_doc_free(jdoc);
-
-    if (result.failed) {
-        free(project);
-        return cbm_mcp_text_result(
-            "cross-repo source or target project is missing, invalid, or not indexed", true);
-    }
-
-    int total = result.http_edges + result.async_edges + result.channel_edges + result.grpc_edges +
-                result.graphql_edges + result.trpc_edges;
-    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
-    yyjson_mut_val *root = yyjson_mut_obj(doc);
-    yyjson_mut_doc_set_root(doc, root);
-    yyjson_mut_obj_add_str(doc, root, "status", result.cancelled ? "cancelled" : "success");
-    yyjson_mut_obj_add_str(doc, root, "mode", "cross-repo-intelligence");
-    yyjson_mut_obj_add_strcpy(doc, root, "project", project);
-    if (result.cancelled) {
-        yyjson_mut_obj_add_bool(doc, root, "partial_results", result.partial_results);
-        yyjson_mut_obj_add_str(
-            doc, root, "message",
-            result.partial_results
-                ? "cross-repo operation cancelled with partial results; completed database "
-                  "writes were retained"
-                : "cross-repo operation cancelled before database writes");
-    }
-    yyjson_mut_obj_add_int(doc, root, "projects_scanned", result.projects_scanned);
-    yyjson_mut_obj_add_int(doc, root, "cross_http_calls", result.http_edges);
-    yyjson_mut_obj_add_int(doc, root, "cross_async_calls", result.async_edges);
-    yyjson_mut_obj_add_int(doc, root, "cross_channel", result.channel_edges);
-    yyjson_mut_obj_add_int(doc, root, "cross_grpc_calls", result.grpc_edges);
-    yyjson_mut_obj_add_int(doc, root, "cross_graphql_calls", result.graphql_edges);
-    yyjson_mut_obj_add_int(doc, root, "cross_trpc_calls", result.trpc_edges);
-    yyjson_mut_obj_add_int(doc, root, "total_cross_edges", total);
-    yyjson_mut_obj_add_real(doc, root, "elapsed_ms", result.elapsed_ms);
-
-    char *json = yy_doc_to_str(doc);
-    yyjson_mut_doc_free(doc);
-    free(project);
-    char *out = cbm_mcp_text_result(json, result.cancelled);
-    free(json);
-    return out;
-}
-
 /* Build the response for a worker that crashed/hung/failed without producing a
  * result. The crash is already contained (this process survived); we report it
  * rather than dying. Precise skip-and-continue (quarantine the culprit, index the
@@ -4837,6 +4609,31 @@ static void invalidate_cached_store(cbm_mcp_server_t *srv) {
     }
     free(srv->current_project);
     srv->current_project = NULL;
+}
+
+cbm_store_t *cbm_mcp_server_operation_store_resolve(
+    cbm_mcp_server_t *srv, const char *project, bool mutation_already_held,
+    bool nonblocking_recovery, cbm_operation_store_recovery_status_t *recovery_status) {
+    store_recovery_status_t local = STORE_RECOVERY_NONE;
+    cbm_store_t *store = resolve_store_internal(srv, project, mutation_already_held,
+                                                nonblocking_recovery, &local);
+    if (recovery_status) {
+        *recovery_status = local == STORE_RECOVERY_BUSY
+                               ? CBM_OPERATION_STORE_RECOVERY_BUSY
+                               : local == STORE_RECOVERY_TRY_GUARD_UNAVAILABLE
+                                     ? CBM_OPERATION_STORE_RECOVERY_TRY_GUARD_UNAVAILABLE
+                                     : CBM_OPERATION_STORE_RECOVERY_NONE;
+    }
+    return store;
+}
+
+void cbm_mcp_server_operation_store_invalidate(cbm_mcp_server_t *srv) {
+    invalidate_cached_store(srv);
+}
+
+char *cbm_mcp_server_operation_store_error(cbm_mcp_server_t *srv, const char *project) {
+    (void)srv;
+    return build_no_store_error(project);
 }
 
 /* Resolve a per-supervisor-run temp path <cache_dir>/logs/.supervisor-<pid><suffix>
@@ -5561,501 +5358,6 @@ static __attribute__((unused)) char *build_snippet_response(cbm_mcp_server_t *sr
     return result;
 }
 
-/* ── manage_adr ───────────────────────────────────────────────── */
-
-typedef struct {
-    yyjson_mut_doc *doc;
-    yyjson_mut_val *arr;
-} adr_sections_ctx_t;
-
-static void adr_sections_cb(void *ctx, const cbm_adr_heading_t *h) {
-    adr_sections_ctx_t *c = (adr_sections_ctx_t *)ctx;
-    char hdr[CBM_SZ_1K];
-    snprintf(hdr, sizeof(hdr), "## %.*s", h->name_len, h->name);
-    yyjson_mut_arr_add_strcpy(c->doc, c->arr, hdr);
-}
-
-/* ADR "sections" mode: list the section headings of the ADR.
- *
- * This uses cbm_adr_scan_headings(), the SAME classifier the section-write
- * path splices with. It used to list any '#'-prefixed line, so a '## Foo' in
- * prose — or inside a fenced code block — was reported as a section that no
- * write could target. Two components disagreeing about what a section is was
- * how a section write came to be able to destroy one. */
-static void adr_list_sections_from_content(yyjson_mut_doc *doc, yyjson_mut_val *root_obj,
-                                           const char *content) {
-    yyjson_mut_val *sections = yyjson_mut_arr(doc);
-    adr_sections_ctx_t ctx = {doc, sections};
-    if (content && cbm_adr_scan_headings(content, adr_sections_cb, &ctx) != CBM_STORE_OK) {
-        /* The ambiguity that refuses a section write is reported here too,
-         * rather than answering with a heading list that is quietly partial. */
-        yyjson_mut_obj_add_str(doc, root_obj, "sections_status", "unterminated_code_fence");
-    }
-    yyjson_mut_obj_add_val(doc, root_obj, "sections", sections);
-}
-
-/* Read the legacy file-based ADR (<root>/.codebase-memory/adr.md), used by
- * older versions. Returns a heap buffer (caller frees) or NULL if missing/
- * empty. Kept only to migrate old ADRs into the store (#256). */
-static char *adr_read_legacy_file(const char *root_path) {
-    if (!root_path) {
-        return NULL;
-    }
-    char adr_path[CBM_SZ_4K];
-    snprintf(adr_path, sizeof(adr_path), "%s/.codebase-memory/adr.md", root_path);
-    FILE *fp = cbm_fopen(adr_path, "r");
-    if (!fp) {
-        return NULL;
-    }
-    (void)fseek(fp, 0, SEEK_END);
-    long sz = ftell(fp);
-    if (sz <= 0) {
-        (void)fclose(fp);
-        return NULL;
-    }
-    (void)fseek(fp, 0, SEEK_SET);
-    char *buf = malloc((size_t)sz + SKIP_ONE);
-    if (!buf) {
-        (void)fclose(fp);
-        return NULL;
-    }
-    size_t n = fread(buf, SKIP_ONE, (size_t)sz, fp);
-    buf[n] = '\0';
-    (void)fclose(fp);
-    if (buf[0] == '\0') {
-        free(buf);
-        return NULL;
-    }
-    return buf;
-}
-
-#define ADR_EMPTY_HINT                                                             \
-    "No ADR yet. Create one with manage_adr(mode='update', "                       \
-    "content='## PURPOSE\\n...\\n\\n## STACK\\n...\\n\\n## ARCHITECTURE\\n..."     \
-    "\\n\\n## PATTERNS\\n...\\n\\n## TRADEOFFS\\n...\\n\\n## PHILOSOPHY\\n...'). " \
-    "For guided creation: explore the codebase with get_architecture, "            \
-    "then draft and store. Sections: PURPOSE, STACK, ARCHITECTURE, "               \
-    "PATTERNS, TRADEOFFS, PHILOSOPHY."
-
-/* resolve_store opens file-backed projects query-only. A mutation must release
- * that reader before opening a dedicated writer because atomic publication uses
- * a self-contained DELETE-mode database that switches back to WAL on write. */
-static cbm_store_t *open_adr_store_for_write(cbm_mcp_server_t *srv, cbm_store_t *resolved,
-                                             cbm_store_t **owned_rw) {
-    if (!srv || !resolved || !owned_rw) {
-        return NULL;
-    }
-    const char *resolved_db_path = cbm_store_db_path(resolved);
-    if (!resolved_db_path) {
-        return resolved;
-    }
-    char *rw_path = heap_strdup(resolved_db_path);
-    if (!rw_path) {
-        return NULL;
-    }
-    invalidate_cached_store(srv);
-    *owned_rw = cbm_store_open_path(rw_path);
-    free(rw_path);
-    return *owned_rw;
-}
-
-/* Parsed `section_updates` for mode='set_sections'.
- *
- * mode='update' replaces the whole document, so adding one entry costs a full
- * re-send and the stored ADR is only ever as good as that round-trip. Writing
- * named sections instead leaves the rest of the document as the authority for
- * itself — and, unlike a whole-document append, applying the same request
- * twice yields the same document, so a client that retries after a lost
- * response cannot silently duplicate content. */
-typedef struct {
-    char *keys[PROPS_MAX];
-    char *values[PROPS_MAX];
-    int count;
-    /* Rejection reason, or NULL when the request parsed cleanly. Set means no
-     * store was opened and nothing was written. */
-    const char *status;
-    const char *error;
-} adr_section_updates_t;
-
-static void adr_section_updates_free(adr_section_updates_t *u) {
-    for (int i = 0; i < u->count; i++) {
-        free(u->keys[i]);
-        free(u->values[i]);
-    }
-    u->count = 0;
-}
-
-static bool adr_collect_section_update(adr_section_updates_t *u, yyjson_val *key, yyjson_val *val) {
-    const char *name = yyjson_get_str(key);
-    if (!name || !name[0]) {
-        u->status = "invalid_section_updates";
-        u->error = "'section_updates' keys must be non-empty section names. "
-                   "No ADR write was performed.";
-        return false;
-    }
-    if (!yyjson_is_str(val)) {
-        u->status = "invalid_section_updates";
-        u->error = "'section_updates' values must be strings (the new body for that section). "
-                   "No ADR write was performed.";
-        return false;
-    }
-    const char *body = yyjson_get_str(val);
-    /* An empty body would render a heading with nothing under it — a silent
-     * content deletion wearing the response shape of an update. Clearing a
-     * section is whole-document surgery; that is what mode='update' is for. */
-    if (!body || !body[0]) {
-        u->status = "empty_section_content";
-        u->error = "'section_updates' values must be non-empty; use mode='update' to remove a "
-                   "section. No ADR write was performed.";
-        return false;
-    }
-    if (u->count >= PROPS_MAX) {
-        u->status = "too_many_sections";
-        u->error = "'section_updates' carries more entries than an ADR can hold. "
-                   "No ADR write was performed.";
-        return false;
-    }
-    u->keys[u->count] = heap_strdup(name);
-    u->values[u->count] = heap_strdup(body);
-    if (!u->keys[u->count] || !u->values[u->count]) {
-        free(u->keys[u->count]);
-        free(u->values[u->count]);
-        u->status = "write_error";
-        u->error = "out of memory parsing 'section_updates'. No ADR write was performed.";
-        return false;
-    }
-    u->count++;
-    return true;
-}
-
-static adr_section_updates_t adr_parse_section_updates(const char *args) {
-    adr_section_updates_t u;
-    memset(&u, 0, sizeof(u));
-
-    yyjson_doc *doc = yyjson_read(args, strlen(args), 0);
-    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
-    yyjson_val *updates =
-        (root && yyjson_is_obj(root)) ? yyjson_obj_get(root, "section_updates") : NULL;
-
-    if (!updates) {
-        /* Never fall through to 'get': a caller that meant to write must not
-         * receive a success-shaped read. */
-        u.status = "missing_section_updates";
-        u.error = "mode='set_sections' requires 'section_updates', an object mapping section "
-                  "name to its new body. No ADR write was performed.";
-    } else if (!yyjson_is_obj(updates) || yyjson_obj_size(updates) == 0) {
-        u.status = "invalid_section_updates";
-        u.error = "'section_updates' must be a non-empty object mapping section name to its new "
-                  "body. No ADR write was performed.";
-    } else {
-        size_t idx = 0;
-        size_t max = 0;
-        yyjson_val *key = NULL;
-        yyjson_val *val = NULL;
-        yyjson_obj_foreach(updates, idx, max, key, val) {
-            if (!adr_collect_section_update(&u, key, val)) {
-                adr_section_updates_free(&u);
-                break;
-            }
-        }
-    }
-    yyjson_doc_free(doc);
-    return u;
-}
-
-/* Build the rejection payload for a set_sections request that never reached a
- * store. Caller frees. */
-static char *adr_section_updates_error(const adr_section_updates_t *u) {
-    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
-    yyjson_mut_val *root_obj = yyjson_mut_obj(doc);
-    yyjson_mut_doc_set_root(doc, root_obj);
-    yyjson_mut_obj_add_str(doc, root_obj, "status", u->status);
-    yyjson_mut_obj_add_strcpy(doc, root_obj, "error", u->error);
-    char *json = yy_doc_to_str(doc);
-    yyjson_mut_doc_free(doc);
-    return json;
-}
-
-static char *handle_manage_adr(cbm_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
-    char *mode_str = cbm_mcp_get_string_arg(args, "mode");
-    char *content = cbm_mcp_get_string_arg(args, "content");
-
-    if (!mode_str) {
-        mode_str = heap_strdup("get");
-    }
-
-    /* `sections` used to be advertised as an input argument, but it was never
-     * consumed: mode=update still replaced the whole document. Reject the old
-     * shape explicitly before opening a store so a stale client cannot mistake
-     * a whole-document replacement for a section-scoped update. */
-    bool has_sections_arg = false;
-    yyjson_doc *args_doc = yyjson_read(args, strlen(args), 0);
-    if (args_doc) {
-        yyjson_val *args_root = yyjson_doc_get_root(args_doc);
-        has_sections_arg =
-            args_root && yyjson_is_obj(args_root) && yyjson_obj_get(args_root, "sections") != NULL;
-        yyjson_doc_free(args_doc);
-    }
-    if (has_sections_arg) {
-        free(project);
-        free(mode_str);
-        free(content);
-        return cbm_mcp_text_result(
-            "{\"status\":\"invalid_arguments\",\"error\":\"The sections argument is not an "
-            "update primitive and has been removed. No ADR write was performed.\"}",
-            true);
-    }
-
-    bool set_sections_mode = (strcmp(mode_str, "set_sections") == 0);
-    adr_section_updates_t updates;
-    memset(&updates, 0, sizeof(updates));
-    char section_key_err[CBM_SZ_256] = "";
-    if (set_sections_mode) {
-        updates = adr_parse_section_updates(args);
-        /* Any heading name is writable — the canonical six are a convention,
-         * not a privilege. What is still refused is a name that could not
-         * round-trip through a "## NAME" line (empty, '#'-leading, newline- or
-         * edge-whitespace-bearing, over-long): such a name would scan back as
-         * a different heading or as none, so a second identical write would
-         * append a duplicate instead of being a no-op. */
-        if (!updates.status && cbm_adr_validate_section_keys(
-                                   (const char **)updates.keys, updates.count, section_key_err,
-                                   (int)sizeof(section_key_err)) != CBM_STORE_OK) {
-            adr_section_updates_free(&updates);
-            updates.status = "invalid_section_name";
-            updates.error = section_key_err;
-        }
-        if (updates.status) {
-            /* Reject before taking the project lease or opening a store: a
-             * malformed write must not block an index, and must not read. */
-            char *err = adr_section_updates_error(&updates);
-            adr_section_updates_free(&updates);
-            free(project);
-            free(mode_str);
-            free(content);
-            char *res = cbm_mcp_text_result(err, true);
-            free(err);
-            return res;
-        }
-    }
-
-    /* This classification is load-bearing. A mode missing from it takes no
-     * per-project mutation lease, resolves the store query-only, and never
-     * reaches open_adr_store_for_write — so its write would be attempted
-     * through a read-only handle, concurrently with an active index. */
-    bool write_request =
-        (content && (strcmp(mode_str, "update") == 0 || strcmp(mode_str, "store") == 0)) ||
-        set_sections_mode;
-    bool mutation_held = false;
-    if (write_request && project) {
-        mutation_held = mcp_project_mutation_begin(srv, project);
-        if (!mutation_held) {
-            adr_section_updates_free(&updates);
-            free(project);
-            free(mode_str);
-            free(content);
-            return cbm_mcp_text_result("project operation cancelled or blocked by an active index",
-                                       true);
-        }
-        if (mcp_request_cancelled(srv)) {
-            mcp_project_mutation_end(srv, project);
-            adr_section_updates_free(&updates);
-            free(project);
-            free(mode_str);
-            free(content);
-            return cbm_mcp_text_result("project operation cancelled for this request", true);
-        }
-    }
-
-    /* ADRs are stored in the SQLite store (project_summaries), the SAME
-     * backend the UI /api/adr endpoints use — so writes via the MCP tool and
-     * the UI are visible to each other (#256). */
-    store_recovery_status_t recovery_status = STORE_RECOVERY_NONE;
-    cbm_store_t *resolved =
-        resolve_store_internal(srv, project, mutation_held, !write_request, &recovery_status);
-    if (!resolved) {
-        char *res = NULL;
-        if (recovery_status == STORE_RECOVERY_BUSY) {
-            res = cbm_mcp_text_result("project is busy; retry after indexing", true);
-        } else if (recovery_status == STORE_RECOVERY_TRY_GUARD_UNAVAILABLE) {
-            res =
-                cbm_mcp_text_result("project recovery requires a nonblocking mutation guard", true);
-        } else {
-            char *err = build_no_store_error(project);
-            res = cbm_mcp_text_result(err, true);
-            free(err);
-        }
-        if (mutation_held) {
-            mcp_project_mutation_end(srv, project);
-        }
-        adr_section_updates_free(&updates);
-        free(project);
-        free(mode_str);
-        free(content);
-        return res;
-    }
-
-    cbm_store_t *store = resolved;
-    cbm_store_t *owned_rw = NULL;
-    if (write_request) {
-        store = open_adr_store_for_write(srv, resolved, &owned_rw);
-        if (!store) {
-            if (mutation_held) {
-                mcp_project_mutation_end(srv, project);
-            }
-            adr_section_updates_free(&updates);
-            free(project);
-            free(mode_str);
-            free(content);
-            return cbm_mcp_text_result("failed to open writable ADR store", true);
-        }
-    }
-
-    /* One-time migration: older versions wrote ADRs to a file at
-     * <root>/.codebase-memory/adr.md. A read never waits for the project lease:
-     * it returns the legacy content immediately and attempts migration only if
-     * a nonblocking acquire succeeds. */
-    cbm_adr_t adr;
-    memset(&adr, 0, sizeof(adr));
-    bool have_adr = (cbm_store_adr_get(store, project, &adr) == CBM_STORE_OK);
-    char *legacy = NULL;
-    if (!have_adr && !write_request) {
-        char *root_path = project_root_from_store(store, project);
-        legacy = adr_read_legacy_file(root_path);
-        free(root_path);
-        if (legacy && mcp_project_mutation_try_begin(srv, project)) {
-            if (!mcp_request_cancelled(srv)) {
-                /* A publisher may have completed before the lease was granted.
-                 * File-backed stores must reopen after acquisition and trust
-                 * only that generation. Embedded stores have no publication
-                 * boundary, so retain their live handle. */
-                if (cbm_store_db_path(resolved)) {
-                    invalidate_cached_store(srv);
-                    resolved = NULL;
-                    store = NULL;
-                    resolved = resolve_store_internal(srv, project, true, false, NULL);
-                }
-                if (resolved) {
-                    store = open_adr_store_for_write(srv, resolved, &owned_rw);
-                    if (store) {
-                        have_adr = (cbm_store_adr_get(store, project, &adr) == CBM_STORE_OK);
-                        if (!have_adr &&
-                            cbm_store_adr_store(store, project, legacy) == CBM_STORE_OK) {
-                            have_adr = (cbm_store_adr_get(store, project, &adr) == CBM_STORE_OK);
-                        }
-                    }
-                }
-            }
-            mcp_project_mutation_end(srv, project);
-        }
-    }
-
-    /* A set_sections write must see a legacy file-backed ADR too. The
-     * migration above deliberately runs on the read path only — it must never
-     * block on the lease — so the write path reads the file here, where the
-     * exclusive project lease and a writable store are already held. Merging
-     * onto an empty document instead would silently discard an ADR the user
-     * still has on disk. */
-    char *legacy_seed = NULL;
-    if (set_sections_mode && !have_adr) {
-        char *root_path = project_root_from_store(store, project);
-        legacy_seed = adr_read_legacy_file(root_path);
-        free(root_path);
-    }
-
-    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
-    yyjson_mut_val *root_obj = yyjson_mut_obj(doc);
-    yyjson_mut_doc_set_root(doc, root_obj);
-
-    bool is_error = false;
-    const char *adr_content = have_adr ? adr.content : legacy;
-    if (set_sections_mode) {
-        /* cbm_store_adr_update_sections requires an existing row — its
-         * contract, pinned by TEST(adr_update_no_existing). Seed one when the
-         * project has none, so the mode degrades to a plain create: the legacy
-         * document when there is one, an empty document otherwise. */
-        bool base_present = have_adr;
-        bool seeded_empty = false;
-        if (!base_present) {
-            const char *seed = legacy_seed ? legacy_seed : "";
-            if (cbm_store_adr_store(store, project, seed) == CBM_STORE_OK) {
-                base_present = true;
-                seeded_empty = (legacy_seed == NULL);
-            }
-        }
-        cbm_adr_t updated;
-        memset(&updated, 0, sizeof(updated));
-        int section_rc = base_present ? cbm_store_adr_update_sections(
-                                            store, project, (const char **)updates.keys,
-                                            (const char **)updates.values, updates.count, &updated)
-                                      : CBM_STORE_ERR;
-        if (section_rc == CBM_STORE_OK) {
-            yyjson_mut_obj_add_str(doc, root_obj, "status", "sections_updated");
-            yyjson_mut_obj_add_str(doc, root_obj, "semantics",
-                                   "named_sections_replaced_rest_preserved");
-            yyjson_mut_obj_add_uint(doc, root_obj, "sections_written", (uint64_t)updates.count);
-            /* Callers confirm the write landed without re-fetching the ADR. */
-            yyjson_mut_obj_add_uint(doc, root_obj, "content_length",
-                                    (uint64_t)strlen(updated.content));
-            cbm_store_adr_free(&updated);
-        } else {
-            /* Undo an empty seed. A rejected write must not leave the project
-             * holding a blank ADR where `get` used to answer no_adr. A legacy
-             * seed is a real migration and is kept. */
-            if (seeded_empty) {
-                (void)cbm_store_adr_delete(store, project);
-            }
-            yyjson_mut_obj_add_str(doc, root_obj, "status", "write_error");
-            const char *store_err = cbm_store_error(store);
-            if (store_err && store_err[0]) {
-                yyjson_mut_obj_add_strcpy(doc, root_obj, "error", store_err);
-            }
-            is_error = true;
-        }
-    } else if (write_request) {
-        if (cbm_store_adr_store(store, project, content) == CBM_STORE_OK) {
-            yyjson_mut_obj_add_str(doc, root_obj, "status", "updated");
-            yyjson_mut_obj_add_str(doc, root_obj, "semantics", "whole_document_replaced");
-        } else {
-            yyjson_mut_obj_add_str(doc, root_obj, "status", "write_error");
-            is_error = true;
-        }
-    } else if (strcmp(mode_str, "sections") == 0) {
-        adr_list_sections_from_content(doc, root_obj, adr_content);
-    } else { /* get */
-        if (adr_content) {
-            yyjson_mut_obj_add_strcpy(doc, root_obj, "content", adr_content);
-        } else {
-            yyjson_mut_obj_add_str(doc, root_obj, "content", "");
-            yyjson_mut_obj_add_str(doc, root_obj, "status", "no_adr");
-            yyjson_mut_obj_add_str(doc, root_obj, "adr_hint", ADR_EMPTY_HINT);
-        }
-    }
-
-    char *json = yy_doc_to_str(doc);
-    yyjson_mut_doc_free(doc);
-    if (have_adr) {
-        cbm_store_adr_free(&adr);
-    }
-    if (owned_rw) {
-        cbm_store_close(owned_rw);
-    }
-    if (mutation_held) {
-        mcp_project_mutation_end(srv, project);
-    }
-    adr_section_updates_free(&updates);
-    free(legacy_seed);
-    free(legacy);
-    free(project);
-    free(mode_str);
-    free(content);
-
-    char *result = cbm_mcp_text_result(json, is_error);
-    free(json);
-    return result;
-}
-
 /* ── Tool dispatch ────────────────────────────────────────────── */
 
 static bool mcp_operation_runtime_cancelled(void *context) {
@@ -6071,6 +5373,11 @@ static bool mcp_operation_runtime_command_allowed(void *context, const char *com
 static bool mcp_operation_runtime_mutation_begin(void *context, const char *project) {
     cbm_mcp_server_t *srv = context;
     return srv && srv->mutation_begin && mcp_project_mutation_begin(srv, project);
+}
+
+static bool mcp_operation_runtime_mutation_try_begin(void *context, const char *project) {
+    cbm_mcp_server_t *srv = context;
+    return srv && srv->mutation_try_begin && mcp_project_mutation_try_begin(srv, project);
 }
 
 static void mcp_operation_runtime_mutation_end(void *context, const char *project) {
@@ -6089,29 +5396,6 @@ static void mcp_operation_runtime_project_invalidate(void *context, const char *
     srv->store = NULL;
     free(srv->current_project);
     srv->current_project = NULL;
-}
-
-static cbm_operation_result_t mcp_operation_runtime_cross_repo(void *context,
-                                                               const char *root_path,
-                                                               const char *args_json) {
-    cbm_mcp_server_t *srv = context;
-    char *name = cbm_mcp_get_string_arg(args_json, "name");
-    char *envelope = handle_cross_repo_mode(srv, root_path, name, args_json);
-    free(name);
-    if (!envelope) return cbm_operation_result_copy("cross-repository operation failed", true);
-    yyjson_doc *doc = yyjson_read(envelope, strlen(envelope), 0);
-    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
-    yyjson_val *error_value = yyjson_is_obj(root) ? yyjson_obj_get(root, "isError") : NULL;
-    bool is_error = yyjson_is_bool(error_value) && yyjson_get_bool(error_value);
-    yyjson_val *content = yyjson_is_obj(root) ? yyjson_obj_get(root, "content") : NULL;
-    yyjson_val *first = yyjson_is_arr(content) ? yyjson_arr_get_first(content) : NULL;
-    yyjson_val *text_value = yyjson_is_obj(first) ? yyjson_obj_get(first, "text") : NULL;
-    const char *text = yyjson_is_str(text_value) ? yyjson_get_str(text_value) : NULL;
-    cbm_operation_result_t result = text ? cbm_operation_result_copy(text, is_error)
-                                         : cbm_operation_result_copy("cross-repository operation returned an invalid result", true);
-    if (doc) yyjson_doc_free(doc);
-    free(envelope);
-    return result;
 }
 
 static cbm_operation_result_t mcp_operation_runtime_index_execute(void *context,
@@ -6150,12 +5434,15 @@ static char *mcp_operation_adapter(cbm_mcp_server_t *srv, cbm_operation_id_t ope
         .command_allowed = mcp_operation_runtime_command_allowed,
         .command_allowed_context = srv,
         .mutation_begin = mcp_operation_runtime_mutation_begin,
+        .mutation_try_begin = mcp_operation_runtime_mutation_try_begin,
         .mutation_end = mcp_operation_runtime_mutation_end,
         .mutation_context = srv,
+        .store_resolve = (cbm_operation_store_resolve_fn)cbm_mcp_server_operation_store_resolve,
+        .store_invalidate = (cbm_operation_store_invalidate_fn)cbm_mcp_server_operation_store_invalidate,
+        .store_error = (cbm_operation_store_error_fn)cbm_mcp_server_operation_store_error,
+        .store_context = srv,
         .project_detach = mcp_operation_runtime_project_detach,
         .project_detach_context = srv,
-        .cross_repo_execute = mcp_operation_runtime_cross_repo,
-        .cross_repo_execute_context = srv,
         .session_root = srv ? srv->session_root : NULL,
         .allowed_root = srv ? srv->allowed_root : NULL,
         .allowed_root_policy_set = srv ? srv->allowed_root_policy_set : false,
@@ -6248,7 +5535,7 @@ static char *dispatch_tool(cbm_mcp_server_t *srv, const char *tool_name, const c
         return mcp_operation_adapter(srv, CBM_OPERATION_CHANGES, args_json);
     }
     if (strcmp(tool_name, "manage_adr") == 0) {
-        return handle_manage_adr(srv, args_json);
+        return mcp_operation_adapter(srv, CBM_OPERATION_MANAGE_ADR, args_json);
     }
     if (strcmp(tool_name, "ingest_traces") == 0) {
         return mcp_operation_adapter(srv, CBM_OPERATION_INGEST_TRACES, args_json);

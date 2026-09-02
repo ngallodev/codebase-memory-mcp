@@ -290,6 +290,33 @@ static bool application_operation_mutation_begin(void *context, const char *proj
            application_mutation_begin_internal(session->application, session, project, true);
 }
 
+static bool application_operation_mutation_try_begin(void *context, const char *project) {
+    cbm_daemon_application_session_t *session = context;
+    return session &&
+           application_mutation_begin_internal(session->application, session, project, false);
+}
+
+static cbm_store_t *application_operation_store_resolve(
+    void *context, const char *project, bool mutation_already_held, bool nonblocking_recovery,
+    cbm_operation_store_recovery_status_t *recovery_status) {
+    cbm_daemon_application_session_t *session = context;
+    return session && session->mcp
+               ? cbm_mcp_server_operation_store_resolve(session->mcp, project, mutation_already_held,
+                                                        nonblocking_recovery, recovery_status)
+               : NULL;
+}
+
+static void application_operation_store_invalidate(void *context) {
+    cbm_daemon_application_session_t *session = context;
+    if (session && session->mcp) cbm_mcp_server_operation_store_invalidate(session->mcp);
+}
+
+static char *application_operation_store_error(void *context, const char *project) {
+    cbm_daemon_application_session_t *session = context;
+    return session && session->mcp ? cbm_mcp_server_operation_store_error(session->mcp, project)
+                                   : NULL;
+}
+
 static void application_operation_mutation_end(void *context, const char *project) {
     cbm_daemon_application_session_t *session = context;
     if (session) {
@@ -338,8 +365,13 @@ static cbm_operation_context_t application_operation_context(
     runtime->cancelled = application_operation_cancelled;
     runtime->cancelled_context = session;
     runtime->mutation_begin = application_operation_mutation_begin;
+    runtime->mutation_try_begin = application_operation_mutation_try_begin;
     runtime->mutation_end = application_operation_mutation_end;
     runtime->mutation_context = session;
+    runtime->store_resolve = application_operation_store_resolve;
+    runtime->store_invalidate = application_operation_store_invalidate;
+    runtime->store_error = application_operation_store_error;
+    runtime->store_context = session;
     runtime->project_detach = application_operation_project_detach;
     runtime->project_detach_context = session;
     runtime->index_execute = application_operation_index_execute;

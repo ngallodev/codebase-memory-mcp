@@ -28,6 +28,7 @@ typedef enum cbm_operation_id {
     CBM_OPERATION_DELETE_PROJECT,
     CBM_OPERATION_INDEX,
     CBM_OPERATION_INGEST_TRACES,
+    CBM_OPERATION_MANAGE_ADR,
 } cbm_operation_id_t;
 
 typedef struct cbm_operation_descriptor {
@@ -48,16 +49,29 @@ typedef cbm_operation_result_t (*cbm_operation_backend_fn)(void *context,
                                                             cbm_operation_id_t operation,
                                                             const char *args_json);
 
+
+typedef struct cbm_store cbm_store_t;
+
+typedef enum cbm_operation_store_recovery_status {
+    CBM_OPERATION_STORE_RECOVERY_NONE = 0,
+    CBM_OPERATION_STORE_RECOVERY_BUSY,
+    CBM_OPERATION_STORE_RECOVERY_TRY_GUARD_UNAVAILABLE,
+} cbm_operation_store_recovery_status_t;
+
+typedef cbm_store_t *(*cbm_operation_store_resolve_fn)(
+    void *context, const char *project, bool mutation_already_held, bool nonblocking_recovery,
+    cbm_operation_store_recovery_status_t *recovery_status);
+typedef void (*cbm_operation_store_invalidate_fn)(void *context);
+typedef char *(*cbm_operation_store_error_fn)(void *context, const char *project);
+
 typedef bool (*cbm_operation_cancelled_fn)(void *context);
 typedef bool (*cbm_operation_command_allowed_fn)(void *context, const char *command);
 typedef bool (*cbm_operation_mutation_begin_fn)(void *context, const char *project);
+typedef bool (*cbm_operation_mutation_try_begin_fn)(void *context, const char *project);
 typedef void (*cbm_operation_mutation_end_fn)(void *context, const char *project);
 typedef void (*cbm_operation_project_detach_fn)(void *context, const char *project);
 typedef cbm_operation_result_t (*cbm_operation_index_execute_fn)(void *context, const char *root_path,
                                                                  const char *args_json);
-typedef cbm_operation_result_t (*cbm_operation_cross_repo_execute_fn)(void *context,
-                                                                       const char *root_path,
-                                                                       const char *args_json);
 typedef void (*cbm_operation_project_invalidate_fn)(void *context, const char *project);
 
 typedef struct cbm_operation_runtime {
@@ -71,8 +85,17 @@ typedef struct cbm_operation_runtime {
      * their logical reservation plus native per-project lease; compatibility hosts
      * may adapt an equivalent coordinator but must not silently run uncoordinated. */
     cbm_operation_mutation_begin_fn mutation_begin;
+    cbm_operation_mutation_try_begin_fn mutation_try_begin;
     cbm_operation_mutation_end_fn mutation_end;
     void *mutation_context;
+
+    /* Transitional neutral store-host seam used by operations whose behavior
+     * requires the existing generation-aware open/recovery policy. This keeps
+     * operation business logic out of MCP while store recovery is extracted. */
+    cbm_operation_store_resolve_fn store_resolve;
+    cbm_operation_store_invalidate_fn store_invalidate;
+    cbm_operation_store_error_fn store_error;
+    void *store_context;
 
     /* Release host-owned project handles/subscriptions while the mutation lease is
      * held, before a destructive project operation removes published artifacts. */
@@ -84,12 +107,6 @@ typedef struct cbm_operation_runtime {
      * executes the physical pipeline separately. */
     cbm_operation_index_execute_fn index_execute;
     void *index_execute_context;
-
-    /* Transitional special-mode bridge. Ordinary repository indexing is fully
-     * neutral; cross-repository intelligence remains a separate mutation until
-     * its own extraction is complete. */
-    cbm_operation_cross_repo_execute_fn cross_repo_execute;
-    void *cross_repo_execute_context;
 
     /* Host/session policy required by the physical index worker. These values
      * are borrowed for the synchronous operation call. */
