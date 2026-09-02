@@ -154,6 +154,8 @@ Codebase Memory can infer the current repository/project in common cases, but au
 
 See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for cache, runtime, extension mapping, and environment settings.
 
+Release scanning policy: Microsoft `!ml` tolerance is the only tolerated detection.
+
 ## Indexing and language support
 
 The existing indexing engine is intentionally unchanged by the CLI-first migration. It includes:
