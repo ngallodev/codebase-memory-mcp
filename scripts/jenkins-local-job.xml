@@ -1,0 +1,19 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job">
+  <description>Script-triggered codebase-memory-cli release-tooling build and test.</description>
+  <properties>
+    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty>
+      <abortPrevious>false</abortPrevious>
+    </org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition">
+    <scm class="hudson.plugins.git.GitSCM">
+      <userRemoteConfigs><hudson.plugins.git.UserRemoteConfig><url>file:///lump/apps/codebase-memory-cli</url></hudson.plugins.git.UserRemoteConfig></userRemoteConfigs>
+      <branches><hudson.plugins.git.BranchSpec><name>refs/heads/release-tooling</name></hudson.plugins.git.BranchSpec></branches>
+      <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations><submoduleCfg class="empty-list"/><extensions/>
+    </scm>
+    <scriptPath>Jenkinsfile</scriptPath><lightweight>true</lightweight>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>
