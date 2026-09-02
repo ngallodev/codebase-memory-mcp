@@ -176,12 +176,12 @@ require(
 )
 # One composition ships, so there is one archive name and no variant alias.
 require(
-    "codebase-memory-mcp-${OS}-${ARCH}.tar.gz" in smoke_local
+    "codebase-memory-cli-${OS}-${ARCH}.tar.gz" in smoke_local
     and "${SUFFIX}" not in smoke_local,
     "smoke-local.sh must create the single canonical archive with no variant alias",
 )
 require(
-    "codebase-memory-mcp-${OS}-${ARCH}-portable.tar.gz" in smoke_local,
+    "codebase-memory-cli-${OS}-${ARCH}-portable.tar.gz" in smoke_local,
     "smoke-local.sh must create the Linux portable update alias",
 )
 require(
@@ -204,7 +204,7 @@ require(
 # binary, like every other platform), then runs the full smoke from a protected
 # profile-rooted directory/cache.
 for name in (
-    "codebase-memory-mcp.exe",
+    "codebase-memory-cli.exe",
     "LICENSE",
     "install.ps1",
     "THIRD_PARTY_NOTICES.md",
@@ -439,11 +439,11 @@ if sys.platform != "win32":
             arch_name = "amd64"
         portable = "-portable" if os_name == "linux" else ""
         archive_name = (
-            f"codebase-memory-mcp-{os_name}-{arch_name}{portable}.tar.gz"
+            f"codebase-memory-cli-{os_name}-{arch_name}{portable}.tar.gz"
         )
         archive = fixture / archive_name
 
-        candidate = payload / "codebase-memory-mcp"
+        candidate = payload / "codebase-memory-cli"
         candidate.write_text(
             "#!/usr/bin/env bash\n"
             "set -euo pipefail\n"
@@ -454,7 +454,7 @@ if sys.platform != "win32":
             "for arg in \"$@\"; do case \"$arg\" in --dir=*) target=${arg#--dir=} ;; esac; done\n"
             "[ -n \"$target\" ] || exit 65\n"
             "mkdir -p \"$target\"\n"
-            "cp \"$0\" \"$target/codebase-memory-mcp\"\n",
+            "cp \"$0\" \"$target/codebase-memory-cli\"\n",
             encoding="utf-8",
         )
         candidate.chmod(0o755)
@@ -465,7 +465,7 @@ if sys.platform != "win32":
         )
         with tarfile.open(archive, "w:gz") as bundle:
             for name in (
-                "codebase-memory-mcp",
+                "codebase-memory-cli",
                 "LICENSE",
                 "install.sh",
                 "THIRD_PARTY_NOTICES.md",
