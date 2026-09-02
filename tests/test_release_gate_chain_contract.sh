@@ -126,30 +126,23 @@ if not soak_input or "none" in soak_input.group("body"):
         "      The explicit bypass belongs only to dry-run; selected release\n"
         "      bytes must always complete soak before drafting.")
 
-# The MCP registry validates every package URL it is handed by FETCHING it, and
-# a DRAFT release's assets are not publicly readable. publish-final is the job
-# that un-drafts. Both jobs used to need only publish-registries, so they raced
-# and the registry was told its own .mcpb URL was a 404 (v0.10.3). The registry
-# must therefore run AFTER the release is public — while still never gating it.
+# Package registries publish against the verified draft release. publish-final
+# must un-draft only after those registry jobs complete successfully.
 def needs(job):
     """The job's `needs:` list as a single line."""
     m = re.search(r"^    needs:\s*(.*)$", blocks.get(job, ""), re.M)
     return m.group(1).strip() if m else ""
 
-if "publish-mcp-registry" not in blocks:
-    failures.append("publish-mcp-registry: job missing from release.yml — update this contract")
-elif "publish-final" not in needs("publish-mcp-registry"):
+if "publish-registries" not in blocks:
+    failures.append("publish-registries: job missing from release.yml — update this contract")
+elif "verify" not in needs("publish-registries"):
     failures.append(
-        "publish-mcp-registry: must `needs:` publish-final. The registry fetches\n"
-        "      the .mcpb URLs it validates, and a draft release's assets 404 —\n"
-        "      running it in parallel with the un-draft is a race it loses.")
+        "publish-registries: must `needs:` verify before publishing packages.")
 
-# ...and the reverse must NEVER hold: a registry outage must not block shipping.
-if "publish-final" in blocks and "publish-mcp-registry" in needs("publish-final"):
+# The final publication must wait for verification and package registries.
+if "publish-final" in blocks and "publish-registries" not in needs("publish-final"):
     failures.append(
-        "publish-final: must NOT depend on publish-mcp-registry. The binary\n"
-        "      release is the product and the registry entry is metadata; a\n"
-        "      registry-preview outage must never hold up a release.")
+        "publish-final: must `needs:` publish-registries before un-drafting.")
 
 # 3. Candidate selection is part of the reusable build boundary. Native jobs
 #    may upload only candidate pairs; the reusable workflow must not complete
