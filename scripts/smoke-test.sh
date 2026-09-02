@@ -1385,7 +1385,7 @@ mkdir -p "$FAKE_HOME/.local/bin"
 # seeding it would mean running the fixture binary out of the very location the
 # install is about to publish to, which Windows' image lock forbids.
 if [[ "$BINARY" == *.exe ]]; then
-  SELF_PATH="$FAKE_HOME/.local/bin/codebase-memory-mcp.exe"
+  SELF_PATH="$FAKE_HOME/.local/bin/codebase-memory-cli.exe"
 else
   cp "$BINARY" "$FAKE_HOME/.local/bin/codebase-memory-mcp"
   SELF_PATH="$FAKE_HOME/.local/bin/codebase-memory-mcp"
@@ -1448,7 +1448,7 @@ if [[ "$BINARY" == *.exe ]]; then
     echo "FAIL 8-0: install exited rc=$PHASE8_INSTALL_RC"
     exit 1
   fi
-  PHASE8_CANONICAL="$FAKE_HOME/.local/bin/codebase-memory-mcp.exe"
+  PHASE8_CANONICAL="$FAKE_HOME/.local/bin/codebase-memory-cli.exe"
   if [ ! -f "$PHASE8_CANONICAL" ]; then
     echo "FAIL 8-0: installed binary missing after install"
     exit 1
@@ -3066,7 +3066,7 @@ copy_smoke_binary "$IDEM_HOME/.local/bin/codebase-memory-mcp"
 run_no_crash 9b-2 env HOME="$IDEM_HOME" LOCALAPPDATA="$IDEM_HOME/AppData/Local" "$BINARY" install -y
 IDEM_INSTALLER="$BINARY"
 if [[ "$BINARY" == *.exe ]]; then
-  IDEM_INSTALLER="$IDEM_HOME/.local/bin/codebase-memory-mcp.exe"
+  IDEM_INSTALLER="$IDEM_HOME/.local/bin/codebase-memory-cli.exe"
 fi
 run_no_crash 9b-2-second env HOME="$IDEM_HOME" LOCALAPPDATA="$IDEM_HOME/AppData/Local" "$IDEM_INSTALLER" install -y
 # Count MCP entries — should be exactly 1
@@ -3114,7 +3114,7 @@ copy_smoke_binary "$DBL_HOME/.local/bin/codebase-memory-mcp"
 run_no_crash 9b-8-install env HOME="$DBL_HOME" "$BINARY" install -y
 DBL_UNINSTALLER="$BINARY"
 if [[ "$BINARY" == *.exe ]]; then
-  DBL_UNINSTALLER="$DBL_HOME/.local/bin/codebase-memory-mcp.exe"
+  DBL_UNINSTALLER="$DBL_HOME/.local/bin/codebase-memory-cli.exe"
 fi
 run_no_crash 9b-8-first env HOME="$DBL_HOME" "$DBL_UNINSTALLER" uninstall -y -n
 run_no_crash 9b-8-second env HOME="$DBL_HOME" "$BINARY" uninstall -y -n
@@ -3302,9 +3302,9 @@ if [ -n "${SMOKE_DOWNLOAD_URL:-}" ]; then
   # through install.sh or `install`. The binary is self-contained, so a staged
   # copy is immediately able to render and remove its own integrations.
   if [[ "$BINARY" == *.exe ]]; then
-    cp "$BINARY" "$UPDATE_HOME/.local/bin/codebase-memory-mcp.exe"
+    cp "$BINARY" "$UPDATE_HOME/.local/bin/codebase-memory-cli.exe"
     mkdir -p "$UPDATE_HOME/retired-install"
-    cp "$BINARY" "$UPDATE_HOME/retired-install/codebase-memory-mcp.exe"
+    cp "$BINARY" "$UPDATE_HOME/retired-install/codebase-memory-cli.exe"
   else
     cp "$BINARY" "$UPDATE_HOME/.local/bin/codebase-memory-mcp"
     chmod 755 "$UPDATE_HOME/.local/bin/codebase-memory-mcp"
@@ -3323,7 +3323,7 @@ if [ -n "${SMOKE_DOWNLOAD_URL:-}" ]; then
   # from the installed binary, and the installed copy drives the later
   # uninstall phases.
   if [[ "$BINARY" == *.exe ]]; then
-    UPDATE_DRIVER="$UPDATE_HOME/.local/bin/codebase-memory-mcp.exe"
+    UPDATE_DRIVER="$UPDATE_HOME/.local/bin/codebase-memory-cli.exe"
   else
     UPDATE_DRIVER="$UPDATE_HOME/.local/bin/codebase-memory-mcp"
   fi
@@ -3380,7 +3380,7 @@ if [ -n "${SMOKE_DOWNLOAD_URL:-}" ]; then
 
   # 14b: Verify new binary exists and runs
   if [[ "$BINARY" == *.exe ]]; then
-    UPD_BIN="$UPDATE_HOME/.local/bin/codebase-memory-mcp.exe"
+    UPD_BIN="$UPDATE_HOME/.local/bin/codebase-memory-cli.exe"
   else
     UPD_BIN="$UPDATE_HOME/.local/bin/codebase-memory-mcp"
   fi
@@ -3414,7 +3414,7 @@ if [ -n "${SMOKE_DOWNLOAD_URL:-}" ]; then
   HOME="$UPDATE_HOME" "$UPD_BIN" uninstall -y 2>&1
 
   # 14e: Verify binary removed
-  if [ -f "$UPDATE_HOME/.local/bin/codebase-memory-mcp" ] || [ -f "$UPDATE_HOME/.local/bin/codebase-memory-mcp.exe" ]; then
+  if [ -f "$UPDATE_HOME/.local/bin/codebase-memory-mcp" ] || [ -f "$UPDATE_HOME/.local/bin/codebase-memory-cli.exe" ]; then
     echo "FAIL 14e: binary still exists after uninstall"
     exit 1
   fi
@@ -3552,7 +3552,7 @@ echo "OK 12c: checksum verified"
 echo "--- Phase 12d: extraction ---"
 (cd "$DL_DIR" && if [ "$DL_EXT" = "zip" ]; then unzip -q "$DL_ARCHIVE"; else tar -xzf "$DL_ARCHIVE"; fi)
 if [ "$DL_OS" = "windows" ]; then
-  DL_BIN="$DL_DIR/codebase-memory-mcp.exe"
+  DL_BIN="$DL_DIR/codebase-memory-cli.exe"
   # ONE binary per platform: a second executable in the archive would mean the
   # AV-flagged launcher/payload split came back.
   if [ -e "$DL_DIR/codebase-memory-mcp.payload.exe" ]; then
@@ -3700,7 +3700,7 @@ elif [ -f "$REPO_ROOT/install.ps1" ] && command -v powershell.exe &>/dev/null; t
   fi
 
   # 13g: binary placed
-  PS1_BIN="$PS1_TEST_DIR/codebase-memory-mcp.exe"
+  PS1_BIN="$PS1_TEST_DIR/codebase-memory-cli.exe"
   if [ ! -f "$PS1_BIN" ] && [ -f "$PS1_TEST_DIR/codebase-memory-mcp" ]; then
     PS1_BIN="$PS1_TEST_DIR/codebase-memory-mcp"
   fi

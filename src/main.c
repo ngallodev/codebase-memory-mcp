@@ -1,8 +1,8 @@
 /*
- * main.c — Entry point for codebase-memory-mcp.
+ * main.c — Entry point for codebase-memory-cli.
  *
  * Modes:
- *   (default)       Run as MCP server on stdin/stdout (JSON-RPC 2.0)
+ *   (default)       Print CLI help; no MCP stdio server is started
  *   cli <tool> <json>  Run a single tool call and print result
  *   --version       Print version and exit
  *   --help          Print usage and exit
@@ -10,9 +10,9 @@
  *   --port=N        Set HTTP UI port (persisted, default 9749)
  *   --tool-profile=analysis|scout  Expose a restricted agent tool surface
  *
- * Long-lived MCP and hook frontends are thin clients of one mandatory
- * per-account daemon. One-shot CLI tool calls run in an isolated local server
- * and never create or retain a daemon generation.
+ * Canonical read commands execute directly through protocol-neutral operations.
+ * Indexing and remaining legacy compatibility paths may still use the daemon
+ * while their business logic is extracted in later slices.
  */
 #ifdef _WIN32
 /* winsock2 must precede every project header that can transitively include
@@ -30,6 +30,8 @@
 #include "daemon/project_lock.h"
 #include "daemon/version_cohort.h"
 #include "mcp/mcp.h"
+#include "operations/operation.h"
+#include "pipeline/pipeline.h"
 #include "mcp/index_supervisor.h"
 #include "cli/cli.h"
 #include "cli/progress_sink.h"
@@ -198,7 +200,7 @@ static void main_local_maintenance_finish(cbm_daemon_maintenance_monitor_t **mon
 static _Noreturn void main_coordination_cleanup_fail_stop(const char *component) {
     cbm_log_error("coordination.cleanup_timeout", "component", component, "action", "process_exit");
     (void)fprintf(stderr,
-                  "codebase-memory-mcp: coordination cleanup timed out (%s); "
+                  "codebase-memory-cli: coordination cleanup timed out (%s); "
                   "terminating so the OS releases retained claims\n",
                   component ? component : "unknown");
     (void)fflush(stdout);
@@ -539,7 +541,37 @@ static bool client_start_parent_watchdog(pid_t initial_ppid) {
 
 /* ── CLI mode ───────────────────────────────────────────────────── */
 
-#define CLI_USAGE "Usage: codebase-memory-mcp cli [--progress] [--json] <tool_name> [json_args]\n"
+typedef struct {
+    const char *command;
+    const char *tool_name;
+    const char *positional_flag;
+    const char *positional_metavar;
+    const char *summary;
+} cbm_cli_command_alias_t;
+
+static const cbm_cli_command_alias_t CLI_COMMAND_ALIASES[] = {
+    {"index", "index_repository", "--repo-path", "PATH", "Index a repository"},
+    {"status", "index_status", NULL, NULL, "Show index status"},
+    {"search", "search_graph", "--query", "QUERY", "Search the code graph"},
+    {"trace", "trace_path", "--function-name", "SYMBOL", "Trace callers and callees"},
+    {"snippet", "get_code_snippet", "--qualified-name", "SYMBOL", "Read source for a symbol"},
+    {"coverage", "check_index_coverage", "--paths", "PATH", "Check index coverage for a path"},
+    {"projects", "list_projects", NULL, NULL, "List indexed projects"},
+};
+
+static const cbm_cli_command_alias_t *cli_command_alias_find(const char *command) {
+    if (!command) {
+        return NULL;
+    }
+    for (size_t i = 0; i < sizeof(CLI_COMMAND_ALIASES) / sizeof(CLI_COMMAND_ALIASES[0]); i++) {
+        if (strcmp(command, CLI_COMMAND_ALIASES[i].command) == 0) {
+            return &CLI_COMMAND_ALIASES[i];
+        }
+    }
+    return NULL;
+}
+
+#define CLI_USAGE "Usage: codebase-memory-cli cli [--progress] [--json] <tool_name> [json_args]\n"
 
 /* Extract text content from MCP tool result envelope and print it.
  * MCP results: {"content":[{"type":"text","text":"..."}],"isError":...}
@@ -571,6 +603,72 @@ static int cli_print_mcp_result(const char *result) {
     yyjson_doc_free(doc);
     return is_error ? SKIP_ONE : 0;
 }
+
+/* Canonical CLI JSON deliberately strips the MCP content envelope. During the
+ * first vertical slice the private dispatcher still returns that envelope, but
+ * it is migration debt, not the public machine contract. If the operation text
+ * is itself JSON, emit it directly; otherwise wrap the text in a tiny stable
+ * CLI object. */
+static int cli_print_canonical_json_result(const char *result) {
+    yyjson_doc *doc = result ? yyjson_read(result, strlen(result), 0) : NULL;
+    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
+    yyjson_val *err_val = yyjson_is_obj(root) ? yyjson_obj_get(root, "isError") : NULL;
+    bool is_error = err_val && yyjson_get_bool(err_val);
+    const char *text = NULL;
+    yyjson_val *content = yyjson_is_obj(root) ? yyjson_obj_get(root, "content") : NULL;
+    if (yyjson_is_arr(content) && yyjson_arr_size(content) > 0) {
+        yyjson_val *tv = yyjson_obj_get(yyjson_arr_get_first(content), "text");
+        text = tv && yyjson_is_str(tv) ? yyjson_get_str(tv) : NULL;
+    }
+
+    if (text) {
+        yyjson_doc *inner = yyjson_read(text, strlen(text), 0);
+        if (inner) {
+            (void)fputs(text, stdout);
+            (void)fputc('\n', stdout);
+            yyjson_doc_free(inner);
+        } else {
+            yyjson_mut_doc *out = yyjson_mut_doc_new(NULL);
+            yyjson_mut_val *obj = out ? yyjson_mut_obj(out) : NULL;
+            if (out && obj) {
+                yyjson_mut_doc_set_root(out, obj);
+                yyjson_mut_obj_add_bool(out, obj, "ok", !is_error);
+                yyjson_mut_obj_add_strcpy(out, obj, is_error ? "error" : "text", text);
+                char *encoded = yyjson_mut_write(out, 0, NULL);
+                if (encoded) {
+                    printf("%s\n", encoded);
+                    free(encoded);
+                }
+                yyjson_mut_doc_free(out);
+            } else {
+                printf("{\"ok\":false,\"error\":\"result encoding failed\"}\n");
+                if (out) {
+                    yyjson_mut_doc_free(out);
+                }
+                is_error = true;
+            }
+        }
+    } else {
+        yyjson_mut_doc *out = yyjson_mut_doc_new(NULL);
+        yyjson_mut_val *obj = out ? yyjson_mut_obj(out) : NULL;
+        if (out && obj) {
+            yyjson_mut_doc_set_root(out, obj);
+            yyjson_mut_obj_add_bool(out, obj, "ok", !is_error);
+            yyjson_mut_obj_add_strcpy(out, obj, "raw", result ? result : "");
+            char *encoded = yyjson_mut_write(out, 0, NULL);
+            if (encoded) {
+                printf("%s\n", encoded);
+                free(encoded);
+            }
+            yyjson_mut_doc_free(out);
+        }
+    }
+    if (doc) {
+        yyjson_doc_free(doc);
+    }
+    return is_error ? SKIP_ONE : 0;
+}
+
 
 /* Strip a flag from argv, returning true if found. */
 static bool cli_strip_flag(int *argc, char **argv, const char *flag) {
@@ -667,8 +765,69 @@ static bool cli_first_nonspace_is_brace(const char *s) {
 
 static char *main_local_cli_daemon_execute(const char *tool_name, const char *args_json);
 
+/* Slice 1 product boundary: canonical read-only CLI commands execute in the
+ * already-coordinated one-shot process instead of opening a daemon-backed MCP
+ * session. This removes persistent-session/watch lifecycle from ordinary CLI
+ * reads while the historical dispatcher is extracted into a protocol-neutral
+ * operation layer in Slice 2. Indexing deliberately remains daemon-side so its
+ * supervised worker, memory budget, process containment, and mutation leases
+ * stay intact. */
+static bool main_canonical_cli_tool_is_local_read(const char *tool_name) {
+    const cbm_operation_descriptor_t *operation = cbm_operation_find(tool_name);
+    return operation && operation->read_only;
+}
+
+static bool main_canonical_cli_tool_needs_project(const char *tool_name) {
+    const cbm_operation_descriptor_t *operation = cbm_operation_find(tool_name);
+    return operation && operation->requires_project;
+}
+
+/* Canonical CLI commands are repository-oriented: when a project argument is
+ * omitted, bind the command to the project deterministically derived from the
+ * current repository root. Explicit project selectors always win. The daemon
+ * protocol historically expected callers to repeat this field on every tool
+ * invocation; that is unnecessary friction for a shell-native interface. */
+static char *main_canonical_cli_args_with_project(const char *tool_name, const char *args_json,
+                                                  const char *default_project) {
+    if (!main_canonical_cli_tool_needs_project(tool_name) || !args_json || !default_project ||
+        !default_project[0]) {
+        return NULL;
+    }
+    yyjson_doc *doc = yyjson_read(args_json, strlen(args_json), 0);
+    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
+    if (!yyjson_is_obj(root)) {
+        if (doc) {
+            yyjson_doc_free(doc);
+        }
+        return NULL;
+    }
+    static const char *const project_keys[] = {
+        "project", "project_name", "project_id", "projectName",
+    };
+    for (size_t i = 0; i < sizeof(project_keys) / sizeof(project_keys[0]); i++) {
+        if (yyjson_obj_get(root, project_keys[i])) {
+            yyjson_doc_free(doc);
+            return NULL;
+        }
+    }
+    const char *project = default_project;
+    yyjson_mut_doc *mut = yyjson_doc_mut_copy(doc, NULL);
+    yyjson_doc_free(doc);
+    if (!mut) {
+        return NULL;
+    }
+    yyjson_mut_val *mut_root = yyjson_mut_doc_get_root(mut);
+    if (!yyjson_mut_obj_add_strcpy(mut, mut_root, "project", project)) {
+        yyjson_mut_doc_free(mut);
+        return NULL;
+    }
+    char *encoded = yyjson_mut_write(mut, 0, NULL);
+    yyjson_mut_doc_free(mut);
+    return encoded;
+}
+
 static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_locks,
-                   main_local_maintenance_context_t *maintenance_context) {
+                   main_local_maintenance_context_t *maintenance_context, bool canonical_mode) {
     if (argc == 1 && argv && (strcmp(argv[0], "--help") == 0 || strcmp(argv[0], "-h") == 0)) {
         (void)fputs(CLI_USAGE, stdout);
         return 0;
@@ -762,10 +921,13 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
             return SKIP_ONE;
         }
         args_json = heap_args;
-    } else if (cbm_cli_args_from_stdin_allowed(tool_name, cli_isatty(0) != 0)) {
-        /* piped stdin (UTF-8 clean, no shell quoting): cli <tool> < args.json.
-         * Gated (#1359): a tool that declares no arguments must not read a pipe
-         * nobody is going to write to or close — see the WHY on the predicate. */
+    } else if (!canonical_mode &&
+               cbm_cli_args_from_stdin_allowed(tool_name, cli_isatty(0) != 0)) {
+        /* Legacy `cli <tool>` retains its piped-JSON channel. Canonical named
+         * commands never read stdin implicitly: automation commonly inherits
+         * an open pipe with no writer, and a shell-native command such as
+         * `projects` or `status` must not block waiting for an EOF that has no
+         * semantic meaning. Canonical callers use flags or --args-file. */
         heap_args = cli_slurp_stream(stdin);
         if (heap_args && heap_args[0]) {
             args_json = heap_args;
@@ -789,6 +951,8 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
      * one-shot commands. */
     cbm_mcp_server_t *srv = NULL;
     char *result = NULL;
+    cbm_operation_result_t operation_result = {0};
+    bool have_operation_result = false;
     main_local_cli_mutation_t mutation = {
         .manager = project_locks,
         .feedback = progress ? stderr : NULL,
@@ -796,15 +960,37 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
     };
     bool maintenance_binding_failed = false;
     bool maintenance_cancelled = false;
-    if (!index_worker) {
+    bool local_canonical_read =
+        !index_worker && canonical_mode && main_canonical_cli_tool_is_local_read(tool_name);
+    if (local_canonical_read) {
+        char session_root[MAIN_PATH_CAP];
+        char allowed_root[MAIN_PATH_CAP];
+        const char *allowed_root_ptr = NULL;
+        char *default_project = NULL;
+        if (main_session_context(NULL, session_root, allowed_root, &allowed_root_ptr)) {
+            (void)allowed_root_ptr; /* authorization stays enforced by indexed-root admission */
+            default_project = cbm_project_name_from_path(session_root);
+        }
+        char *canonical_args =
+            main_canonical_cli_args_with_project(tool_name, args_json, default_project);
+        const char *dispatch_args = canonical_args ? canonical_args : args_json;
+        const cbm_operation_descriptor_t *operation = cbm_operation_find(tool_name);
+        if (operation) {
+            cbm_operation_context_t operation_context = {0};
+            operation_result =
+                cbm_operation_execute(&operation_context, operation->id, dispatch_args);
+            have_operation_result = true;
+        }
+        free(canonical_args);
+        free(default_project);
+        maintenance_cancelled = main_local_maintenance_was_cancelled(maintenance_context);
+    } else if (!index_worker) {
         result = main_local_cli_daemon_execute(tool_name, args_json);
     } else {
         srv = cbm_mcp_server_new(NULL);
         if (srv) {
-            /* The in-process worker is a standalone instance: it may not
-             * launch MCP-session background tasks. It receives project_locks
-             * from its own process-level coordination setup and therefore
-             * owns the mutation lease while it performs the physical write. */
+            /* The supervised index worker still uses the historical dispatcher
+             * until index_repository is extracted in a later slice. */
             cbm_mcp_server_set_background_tasks(srv, false);
             if (project_locks) {
                 cbm_mcp_server_set_project_mutation_guard(srv, main_local_cli_mutation_begin,
@@ -817,15 +1003,11 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
         if (srv && maintenance_context) {
             main_local_maintenance_server_bind(maintenance_context, srv);
             result = cbm_mcp_handle_tool(srv, tool_name, args_json);
-            /* Unbind under the same mutex used by cancellation before any
-             * server teardown. The process-level monitor remains active
-             * across all parsing and cleanup, but can no longer race a freed
-             * server. */
             main_local_maintenance_server_bind(maintenance_context, NULL);
             maintenance_cancelled = main_local_maintenance_was_cancelled(maintenance_context);
         }
     }
-    if (!result) {
+    if (!result && (!have_operation_result || !operation_result.payload)) {
         if (maintenance_binding_failed) {
             (void)fprintf(stderr,
                           "error: local %s maintenance cancellation could not bind safely\n",
@@ -844,6 +1026,14 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
     }
     int exit_code = 0;
 
+    if (have_operation_result) {
+        FILE *stream = operation_result.is_error ? stderr : stdout;
+        if (operation_result.payload) {
+            (void)fprintf(stream, "%s\n", operation_result.payload);
+        }
+        exit_code = operation_result.is_error ? SKIP_ONE : 0;
+        exit_code = cbm_cli_exit_status_after_maintenance(exit_code, maintenance_cancelled);
+    } else {
     {
         /* Supervised worker: hand the full result string to the parent via the
          * response file before printing (parent reads it back on a clean exit). */
@@ -858,11 +1048,13 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
             }
         }
         if (raw_json) {
-            printf("%s\n", result);
-            /* Raw JSON changes presentation only. Preserve a failing process
-             * status for MCP tool errors so scripts and activation-driven
-             * cancellation cannot be reported as successful work. */
-            exit_code = cbm_cli_mcp_result_is_error(result) ? SKIP_ONE : 0;
+            if (canonical_mode) {
+                exit_code = cli_print_canonical_json_result(result);
+            } else {
+                printf("%s\n", result);
+                /* Legacy parity mode preserves the historical MCP envelope. */
+                exit_code = cbm_cli_mcp_result_is_error(result) ? SKIP_ONE : 0;
+            }
         } else {
             exit_code = cli_print_mcp_result(result);
         }
@@ -881,6 +1073,8 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
         free(result);
     }
 
+    }
+    cbm_operation_result_dispose(&operation_result);
     cbm_mcp_server_free(srv);
     main_local_cli_mutation_release_all(&mutation);
     if (progress) {
@@ -892,48 +1086,96 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
     return exit_code;
 }
 
+static int run_named_cli(const cbm_cli_command_alias_t *alias, int argc, char **argv,
+                         cbm_project_lock_manager_t *project_locks,
+                         main_local_maintenance_context_t *maintenance_context) {
+    if (!alias) {
+        return SKIP_ONE;
+    }
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            printf("%s — %s\n\n", alias->command, alias->summary);
+            printf("Usage:\n  codebase-memory-cli %s", alias->command);
+            if (alias->positional_metavar) {
+                printf(" [%s]", alias->positional_metavar);
+            }
+            printf(" [options]\n\n");
+            printf("The current repository/project is inferred when the underlying operation "
+                   "supports session context; use --project to select explicitly.\n\n");
+            return cbm_cli_print_tool_flags(alias->tool_name) == 0 ? 0 : SKIP_ONE;
+        }
+    }
+
+    /* Named commands are intentionally thin. The existing schema-driven flag
+     * parser remains the single argument contract during Slice 1; positional
+     * sugar is translated into that same flag vocabulary before run_cli sees
+     * it. Raw JSON remains available only through the legacy `cli <tool>`
+     * compatibility form. */
+    bool has_positional = argc > 0 && argv && argv[0] && strncmp(argv[0], "--", 2) != 0;
+    if (has_positional && !alias->positional_flag) {
+        (void)fprintf(stderr, "error: '%s' does not accept a positional argument; run '%s --help'\n",
+                      alias->command, alias->command);
+        return SKIP_ONE;
+    }
+
+    size_t extra = has_positional ? 2U : 0U;
+    size_t mapped_count = 1U + (size_t)argc + extra;
+    char **mapped = calloc(mapped_count + 1U, sizeof(*mapped));
+    if (!mapped) {
+        (void)fprintf(stderr, "error: out of memory while preparing '%s'\n", alias->command);
+        return SKIP_ONE;
+    }
+    size_t out = 0;
+    mapped[out++] = (char *)alias->tool_name;
+    if (has_positional) {
+        mapped[out++] = (char *)alias->positional_flag;
+        mapped[out++] = argv[0];
+        for (int i = 1; i < argc; i++) {
+            mapped[out++] = argv[i];
+        }
+    } else {
+        for (int i = 0; i < argc; i++) {
+            mapped[out++] = argv[i];
+        }
+    }
+    int result = run_cli((int)out, mapped, project_locks, maintenance_context, true);
+    free(mapped);
+    return result;
+}
+
 /* ── Help ───────────────────────────────────────────────────────── */
 
 static void print_help(void) {
-    printf("codebase-memory-mcp %s\n\n", CBM_VERSION);
+    printf("codebase-memory-cli %s — local code intelligence CLI\n\n", CBM_VERSION);
     printf("Usage:\n");
-    printf("  codebase-memory-mcp              Run MCP server on stdio\n");
-    printf("  codebase-memory-mcp cli [--progress] [--json] <tool> [args]\n");
-    printf("                                      Run one tool locally, then exit\n");
-    printf("  codebase-memory-mcp install [-y|-n] [--force] [--dry-run] "
-           "[--dir=<path>] [--skip-config]\n");
-    printf("  codebase-memory-mcp uninstall [-y|-n] [--dry-run]\n");
-    printf("  codebase-memory-mcp update [-y|-n]\n");
-    printf("  codebase-memory-mcp config <list|get|set|reset>\n");
-    printf("  codebase-memory-mcp --version    Print version\n");
-    printf("  codebase-memory-mcp --help       Print this help\n");
-    printf("\nUI options:\n");
-    printf("  --ui=true    Enable HTTP graph visualization (persisted)\n");
-    printf("  --ui=false   Disable HTTP graph visualization (persisted)\n");
-    printf("  --port=N     Set UI port (default 9749, persisted)\n");
-    printf("  --tool-profile=analysis|scout  Expose a restricted inspection surface\n");
-    printf("\nSupported automatic/conditional client surfaces (45):\n");
-    printf("  Claude Code, Codex CLI, Gemini CLI, Zed, OpenCode,\n");
-    printf("  Antigravity, Aider, KiloCode, VS Code, Cursor, Windsurf,\n");
-    printf("  Augment / Auggie, OpenClaw, Kiro, Junie, Hermes, OpenHands,\n");
-    printf("  Cline, Warp, Qwen Code, GitHub Copilot CLI, Factory Droid, Crush,\n");
-    printf("  Goose, Mistral Vibe, Grok Build, Qoder CLI, Kimi Code CLI, GitLab Duo CLI,\n");
-    printf("  Rovo Dev CLI, Amp, Devin CLI / Local, Tabnine, Continue / cn,\n");
-    printf("  Visual Studio, TRAE, Roo Code, Amazon Q Developer IDE,\n");
-    printf("  CodeBuddy Code CLI, IBM Bob IDE, IBM Bob Shell, Pochi, Pi,\n");
-    printf("  Sourcegraph Cody, Oh My Pi (omp)\n");
-    printf("  Conditional/explicit targets are changed only when their documented\n");
-    printf("  platform, marker, or explicit existing config path is present.\n");
-    printf("  Manual/UI MCP boundaries: Qodo, Warp, JetBrains AI/ACP, Replit,\n");
-    printf("  Plandex, SWE-agent, BLACKBOX, GitHub cloud agents, Jules,\n");
-    printf("  CodeRabbit.\n");
-    /* Rendered from the MCP tool registry: a hand-maintained copy here
-     * omitted check_index_coverage (#1361) and could silently drift again. */
-    char *tools_help = cbm_mcp_tools_help_list();
-    if (tools_help) {
-        printf("\n%s", tools_help);
-        free(tools_help);
+    printf("  codebase-memory-cli <command> [options]\n\n");
+    printf("Core commands:\n");
+    for (size_t i = 0; i < sizeof(CLI_COMMAND_ALIASES) / sizeof(CLI_COMMAND_ALIASES[0]); i++) {
+        printf("  %-10s %s\n", CLI_COMMAND_ALIASES[i].command, CLI_COMMAND_ALIASES[i].summary);
     }
+    printf("\nExamples:\n");
+    printf("  codebase-memory-cli index .\n");
+    printf("  codebase-memory-cli search ClaimValidator\n");
+    printf("  codebase-memory-cli trace ClaimValidator.validate --direction both\n");
+    printf("  codebase-memory-cli snippet ClaimValidator.validate\n");
+    printf("  codebase-memory-cli coverage src/Claims/ClaimValidator.cs\n");
+    printf("  codebase-memory-cli projects --json\n");
+    printf("\nAdministration:\n");
+    printf("  codebase-memory-cli allow-root [--approve-sensitive] <path>\n");
+    printf("  codebase-memory-cli install [-y|-n] [--force] [--dry-run] [--dir=<path>] [--skip-config]\n");
+    printf("  codebase-memory-cli uninstall [-y|-n] [--dry-run]\n");
+    printf("  codebase-memory-cli update [-y|-n]\n");
+    printf("  codebase-memory-cli config <list|get|set|reset>\n");
+    printf("  codebase-memory-cli daemon <start|stop|status>\n");
+    printf("\nGlobal:\n");
+    printf("  --version    Print version\n");
+    printf("  --help       Print this help\n");
+    printf("\nMachine use:\n");
+    printf("  Add --json to canonical commands for machine-readable output.\n");
+    printf("  Progress and diagnostics are written to stderr.\n");
+    printf("\nCompatibility:\n");
+    printf("  codebase-memory-cli cli <tool> ... remains temporarily available for migration/parity.\n");
+    printf("  The MCP stdio server is no longer a supported/default product entry point.\n");
 }
 
 /* ── Main ───────────────────────────────────────────────────────── */
@@ -986,9 +1228,9 @@ static int main_run_allow_root(int argc, char **argv) {
         }
         if (!path && !list_only) {
             (void)fprintf(stderr,
-                          "usage: codebase-memory-mcp allow-root [--approve-sensitive] <path>\n"
-                          "       codebase-memory-mcp allow-root --approve-manifest <project>\n"
-                          "       codebase-memory-mcp allow-root --list\n");
+                          "usage: codebase-memory-cli allow-root [--approve-sensitive] <path>\n"
+                          "       codebase-memory-cli allow-root --approve-manifest <project>\n"
+                          "       codebase-memory-cli allow-root --list\n");
             return EXIT_FAILURE;
         }
         return 0;
@@ -1041,6 +1283,10 @@ static int main_run_allow_root(int argc, char **argv) {
 
 static int handle_subcommand(int argc, char **argv, cbm_project_lock_manager_t *project_locks,
                              main_local_maintenance_context_t *maintenance_context) {
+    if (argc <= 1) {
+        print_help();
+        return 0;
+    }
     /* First scan: global flags */
     for (int i = SKIP_ONE; i < argc; i++) {
         if (strcmp(argv[i], "--profile") == 0) {
@@ -1049,7 +1295,7 @@ static int handle_subcommand(int argc, char **argv, cbm_project_lock_manager_t *
     }
     for (int i = SKIP_ONE; i < argc; i++) {
         if (strcmp(argv[i], "--version") == 0) {
-            printf("codebase-memory-mcp %s\n", CBM_VERSION);
+            printf("codebase-memory-cli %s\n", CBM_VERSION);
             return 0;
         }
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -1059,11 +1305,21 @@ static int handle_subcommand(int argc, char **argv, cbm_project_lock_manager_t *
         if (strcmp(argv[i], "allow-root") == 0) {
             return main_run_allow_root(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
         }
+        const cbm_cli_command_alias_t *alias = cli_command_alias_find(argv[i]);
+        if (alias) {
+            cbm_mem_init_with_cap(cbm_mem_ram_fraction_for_total(cbm_system_info().total_ram),
+                                  cbm_index_worker_memory_budget_bytes());
+            return run_named_cli(alias, argc - i - SKIP_ONE, argv + i + SKIP_ONE, project_locks,
+                                 maintenance_context);
+        }
         if (strcmp(argv[i], "cli") == 0) {
             cbm_mem_init_with_cap(cbm_mem_ram_fraction_for_total(cbm_system_info().total_ram),
                                   cbm_index_worker_memory_budget_bytes());
+            (void)fprintf(stderr,
+                          "warning: 'cli <tool>' is a temporary compatibility interface; prefer "
+                          "the named commands shown by --help.\n");
             return run_cli(argc - i - SKIP_ONE, argv + i + SKIP_ONE, project_locks,
-                           maintenance_context);
+                           maintenance_context, false);
         }
         if (strcmp(argv[i], "hook-augment") == 0) {
             cbm_mem_init(cbm_mem_ram_fraction_for_total(cbm_system_info().total_ram));
@@ -1082,7 +1338,9 @@ static int handle_subcommand(int argc, char **argv, cbm_project_lock_manager_t *
             return cbm_cmd_config(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
         }
     }
-    return CBM_NOT_FOUND;
+    (void)fprintf(stderr, "error: unknown command '%s'\n", argv[1]);
+    (void)fprintf(stderr, "hint: run 'codebase-memory-cli --help' for available commands\n");
+    return EXIT_FAILURE;
 }
 
 /* Parse --ui= and --port= into a per-field daemon mutation. */
@@ -1526,7 +1784,7 @@ static void main_report_client_failure(cbm_daemon_process_role_t role, const cha
                       escaped);
         (void)fflush(stdout);
     }
-    (void)fprintf(stderr, "codebase-memory-mcp: %s\n", detail);
+    (void)fprintf(stderr, "codebase-memory-cli: %s\n", detail);
 }
 
 static void main_report_client_bootstrap_failure(cbm_daemon_process_role_t role,
@@ -1557,7 +1815,7 @@ static cbm_daemon_bootstrap_status_t main_client_bootstrap_with_upgrade(
         return status;
     }
     (void)fprintf(stderr,
-                  "codebase-memory-mcp: retiring the active permanent daemon (%s, pid %lu) for "
+                  "codebase-memory-cli: retiring the active permanent daemon (%s, pid %lu) for "
                   "this newer build (%s)\n",
                   active.semantic_version, (unsigned long)active.daemon_pid,
                   config->identity->semantic_version);
@@ -1566,8 +1824,8 @@ static cbm_daemon_bootstrap_status_t main_client_bootstrap_with_upgrade(
                                                         CBM_DAEMON_RUNTIME_ACTIVATION_UPDATE,
                                                         MAIN_MCP_STARTUP_TIMEOUT_MS, &drain) ||
         !drain.accepted) {
-        (void)fprintf(stderr, "codebase-memory-mcp: the active daemon did not accept the "
-                              "upgrade drain; run `codebase-memory-mcp daemon stop`\n");
+        (void)fprintf(stderr, "codebase-memory-cli: the active daemon did not accept the "
+                              "upgrade drain; run `codebase-memory-cli daemon stop`\n");
         return status;
     }
     return cbm_daemon_bootstrap_execute(config, result);
@@ -1609,7 +1867,7 @@ static char *main_local_cli_daemon_execute(const char *tool_name, const char *ar
     }
     if (bootstrap.daemon_spawned) {
         (void)fprintf(stderr, "hint: this command started a temporary CBM daemon. "
-                              "`codebase-memory-mcp daemon start` keeps one warm and removes this "
+                              "`codebase-memory-cli daemon start` keeps one warm and removes this "
                               "startup cost from every CLI command.\n");
     }
     char session_root[MAIN_PATH_CAP];
@@ -1703,9 +1961,9 @@ static void main_hook_report_absent_daemon(const char *hook_dialect) {
     if (!main_hook_absent_notice_due()) {
         return;
     }
-    (void)fprintf(stderr, "codebase-memory-mcp: no CBM daemon is running, so graph "
+    (void)fprintf(stderr, "codebase-memory-cli: no CBM daemon is running, so graph "
                           "augmentation is skipped. Start an MCP session or run "
-                          "`codebase-memory-mcp daemon start` to enable it.\n");
+                          "`codebase-memory-cli daemon start` to enable it.\n");
     const char *notice = cbm_hook_admission_notice(CBM_HOOK_ADMISSION_DAEMON_ABSENT, hook_dialect);
     if (notice) {
         (void)fputs(notice, stdout);
@@ -2247,7 +2505,7 @@ static int main_run_daemon_ctl(int argc, char **argv, const cbm_daemon_ipc_endpo
         }
     }
     if (!arguments_valid || !subcommand) {
-        (void)fprintf(stderr, "usage: codebase-memory-mcp daemon <start|stop|status> "
+        (void)fprintf(stderr, "usage: codebase-memory-cli daemon <start|stop|status> "
                               "[--open] [--port=N]\n");
         return EXIT_FAILURE;
     }
@@ -2267,12 +2525,12 @@ static int main_run_daemon_ctl(int argc, char **argv, const cbm_daemon_ipc_endpo
                        (unsigned long long)status.muted_endpoint_holder_pid);
                 printf("hint: that process holds the daemon endpoint but answered nothing; "
                        "its runtime is likely dead. Terminate pid %llu, then run "
-                       "`codebase-memory-mcp daemon start`.\n",
+                       "`codebase-memory-cli daemon start`.\n",
                        (unsigned long long)status.muted_endpoint_holder_pid);
                 return EXIT_FAILURE;
             }
             printf("daemon: not running\n");
-            printf("hint: `codebase-memory-mcp daemon start` keeps a daemon warm so CLI "
+            printf("hint: `codebase-memory-cli daemon start` keeps a daemon warm so CLI "
                    "commands and hooks skip the per-command startup cost.\n");
             return EXIT_FAILURE;
         }
@@ -2385,7 +2643,7 @@ static int main_run_daemon_ctl(int argc, char **argv, const cbm_daemon_ipc_endpo
                                               : "the permanent daemon could not be started");
         if (start_status == CBM_DAEMON_BOOTSTRAP_CONFLICT) {
             (void)fprintf(stderr, "hint: a daemon of a different build is active; "
-                                  "`codebase-memory-mcp daemon stop` retires it.\n");
+                                  "`codebase-memory-cli daemon stop` retires it.\n");
         }
         return EXIT_FAILURE;
     }
@@ -2423,7 +2681,7 @@ static int main_run_daemon_ctl(int argc, char **argv, const cbm_daemon_ipc_endpo
     } else {
         printf("daemon: started (permanent)\n");
     }
-    printf("It survives idle periods and session ends; `codebase-memory-mcp daemon stop` "
+    printf("It survives idle periods and session ends; `codebase-memory-cli daemon stop` "
            "retires it.\n");
     int ui_result =
         (CBM_EMBEDDED_FILE_COUNT > 0)
@@ -2461,7 +2719,7 @@ int main(int argc, char **argv) {
         cbm_log_set_crash_durable(true);
     }
     if (role == CBM_DAEMON_PROCESS_INVALID) {
-        (void)fprintf(stderr, "codebase-memory-mcp: invalid internal process arguments\n");
+        (void)fprintf(stderr, "codebase-memory-cli: invalid internal process arguments\n");
         return EXIT_FAILURE;
     }
 #ifndef _WIN32
@@ -2477,7 +2735,7 @@ int main(int argc, char **argv) {
     cbm_mcp_tool_profile_t tool_profile = CBM_MCP_TOOL_PROFILE_ALL;
     if (role == CBM_DAEMON_PROCESS_MCP_CLIENT &&
         cbm_mcp_parse_tool_profile_args(argc, (const char *const *)argv, &tool_profile) != 0) {
-        (void)fprintf(stderr, "codebase-memory-mcp: --tool-profile requires the supported value "
+        (void)fprintf(stderr, "codebase-memory-cli: --tool-profile requires the supported value "
                               "'analysis' or 'scout'\n");
         return 2;
     }
@@ -2576,7 +2834,7 @@ int main(int argc, char **argv) {
             const char *why = cbm_daemon_ipc_validation_detail();
             (void)fprintf(
                 stderr,
-                "codebase-memory-mcp: secure CLI coordination could not be created (%s)%s%s\n",
+                "codebase-memory-cli: secure CLI coordination could not be created (%s)%s%s\n",
                 coordination_failure, (why && why[0]) ? ": " : "", (why && why[0]) ? why : "");
             goto local_cli_cleanup;
         }
@@ -2592,7 +2850,7 @@ int main(int argc, char **argv) {
             if (cohort_status == CBM_VERSION_COHORT_CONFLICT) {
                 (void)cbm_version_cohort_log_conflict(&cohort_conflict);
             }
-            (void)fprintf(stderr, "codebase-memory-mcp: %s\n",
+            (void)fprintf(stderr, "codebase-memory-cli: %s\n",
                           formatted ? message
                                     : "CLI exact-build admission could not be verified; retry "
                                       "after active CBM operations exit");
@@ -2605,7 +2863,7 @@ int main(int argc, char **argv) {
                                                  &maintenance_context, EXIT_FAILURE, "CLI command");
         if (!maintenance_monitor) {
             (void)fprintf(stderr,
-                          "codebase-memory-mcp: CLI maintenance observer could not start safely\n");
+                          "codebase-memory-cli: CLI maintenance observer could not start safely\n");
             goto local_cli_cleanup;
         }
 
@@ -2619,14 +2877,14 @@ int main(int argc, char **argv) {
                  * that the OS has not reclaimed. "Busy" alone sent reporters
                  * hunting for a CBM session that had already exited. */
                 (void)fprintf(stderr,
-                              "codebase-memory-mcp: CLI startup coordination stayed busy for "
+                              "codebase-memory-cli: CLI startup coordination stayed busy for "
                               "%d seconds. Either another CBM command is still running, or a "
                               "previous one was force-killed and the operating system has not "
                               "released its lock yet. Check for running CBM processes; if there "
                               "are none, retry shortly.\n",
                               MAIN_STARTUP_CONTENTION_CEILING_MS / 1000);
             } else {
-                (void)fprintf(stderr, "codebase-memory-mcp: CLI startup coordination could not "
+                (void)fprintf(stderr, "codebase-memory-cli: CLI startup coordination could not "
                                       "be verified safely; retry after active CBM sessions "
                                       "exit\n");
             }
@@ -2637,7 +2895,7 @@ int main(int argc, char **argv) {
             if (seal_status == 0) {
                 (void)cbm_version_cohort_log_uncoordinated_daemon(&local_identity);
             }
-            (void)fprintf(stderr, "codebase-memory-mcp: CBM CLI could not start because a "
+            (void)fprintf(stderr, "codebase-memory-cli: CBM CLI could not start because a "
                                   "pre-coordination or unverified CBM generation is active; close "
                                   "all CBM sessions and commands, then retry\n");
             goto local_cli_cleanup;
@@ -2650,19 +2908,19 @@ int main(int argc, char **argv) {
             daemon_presence != CBM_VERSION_COHORT_DAEMON_COORDINATED) {
             if (daemon_presence == CBM_VERSION_COHORT_DAEMON_UNCOORDINATED) {
                 (void)cbm_version_cohort_log_uncoordinated_daemon(&local_identity);
-                (void)fprintf(stderr, "codebase-memory-mcp: CBM CLI could not start because "
+                (void)fprintf(stderr, "codebase-memory-cli: CBM CLI could not start because "
                                       "an active pre-coordination or unverified CBM daemon is "
                                       "running. Close all CBM sessions and commands, then "
                                       "retry.\n");
             } else {
-                (void)fprintf(stderr, "codebase-memory-mcp: active daemon coordination could "
+                (void)fprintf(stderr, "codebase-memory-cli: active daemon coordination could "
                                       "not be verified safely; retry after active CBM sessions "
                                       "exit\n");
             }
             goto local_cli_cleanup;
         }
         if (!cbm_daemon_ipc_local_transition_begin_work(local_transition)) {
-            (void)fprintf(stderr, "codebase-memory-mcp: CLI startup coordination could not enter "
+            (void)fprintf(stderr, "codebase-memory-cli: CLI startup coordination could not enter "
                                   "local work safely\n");
             goto local_cli_cleanup;
         }
@@ -2691,7 +2949,7 @@ int main(int argc, char **argv) {
     cbm_daemon_build_identity_t identity;
     if (!main_resolve_executable(argv[0], executable_path)) {
         (void)fprintf(stderr,
-                      "codebase-memory-mcp: exact executable identity could not be verified "
+                      "codebase-memory-cli: exact executable identity could not be verified "
                       "(executable-path)\n");
         return role == CBM_DAEMON_PROCESS_HOOK_CLIENT ? EXIT_SUCCESS : EXIT_FAILURE;
     }
@@ -2699,7 +2957,7 @@ int main(int argc, char **argv) {
     if (identity_status != MAIN_BUILD_IDENTITY_OK) {
         const char *validation_detail = cbm_daemon_ipc_validation_detail();
         (void)fprintf(stderr,
-                      "codebase-memory-mcp: exact executable identity could not be verified "
+                      "codebase-memory-cli: exact executable identity could not be verified "
                       "(%s)%s%s\n",
                       main_build_identity_status_name(identity_status),
                       validation_detail[0] ? " - " : "", validation_detail);
@@ -2915,7 +3173,7 @@ int main(int argc, char **argv) {
         if (client_cohort_status == CBM_VERSION_COHORT_CONFLICT) {
             (void)cbm_version_cohort_log_conflict(&client_cohort_conflict);
         }
-        (void)fprintf(stderr, "codebase-memory-mcp: %s\n",
+        (void)fprintf(stderr, "codebase-memory-cli: %s\n",
                       formatted ? message : "client exact-build admission failed");
         if (role == CBM_DAEMON_PROCESS_HOOK_CLIENT &&
             client_cohort_status == CBM_VERSION_COHORT_CONFLICT) {
@@ -2937,7 +3195,7 @@ int main(int argc, char **argv) {
                 char conflict_detail[CBM_DAEMON_CONFLICT_MESSAGE_SIZE];
                 if (cbm_daemon_conflict_format(&hook_connect.conflict, conflict_detail,
                                                sizeof(conflict_detail))) {
-                    (void)fprintf(stderr, "codebase-memory-mcp: %s\n", conflict_detail);
+                    (void)fprintf(stderr, "codebase-memory-cli: %s\n", conflict_detail);
                 }
                 main_hook_report_conflicted_daemon(hook_dialect);
             } else {
@@ -2983,7 +3241,7 @@ int main(int argc, char **argv) {
     if (role == CBM_DAEMON_PROCESS_MCP_CLIENT &&
         !main_set_client_context(g_daemon_client, NULL, tool_profile, NULL, NULL,
                                  MAIN_CONNECT_TIMEOUT_MS)) {
-        (void)fprintf(stderr, "codebase-memory-mcp: daemon session context was rejected\n");
+        (void)fprintf(stderr, "codebase-memory-cli: daemon session context was rejected\n");
         (void)cbm_daemon_runtime_client_close(g_daemon_client, MAIN_CLOSE_TIMEOUT_MS);
         g_daemon_client = NULL;
         (void)main_version_cohort_close(&client_cohort_lease, &client_cohort_manager);
@@ -3003,21 +3261,21 @@ int main(int argc, char **argv) {
         if (update_mask != 0 && cbm_daemon_application_client_set_ui_config(
                                     g_daemon_client, update_mask, ui_enabled, ui_port,
                                     MAIN_CONNECT_TIMEOUT_MS) != CBM_DAEMON_RUNTIME_APPLICATION_OK) {
-            (void)fprintf(stderr, "codebase-memory-mcp: daemon UI configuration update failed\n");
+            (void)fprintf(stderr, "codebase-memory-cli: daemon UI configuration update failed\n");
             (void)cbm_daemon_runtime_client_close(g_daemon_client, MAIN_CLOSE_TIMEOUT_MS);
             g_daemon_client = NULL;
             (void)main_version_cohort_close(&client_cohort_lease, &client_cohort_manager);
             return EXIT_FAILURE;
         }
         if (explicitly_enabled && !(CBM_EMBEDDED_FILE_COUNT > 0)) {
-            (void)fprintf(stderr, "codebase-memory-mcp: --ui requested, but this binary was built "
+            (void)fprintf(stderr, "codebase-memory-cli: --ui requested, but this binary was built "
                                   "without UI support; rebuild with `make -f Makefile.cbm "
                                   "cbm-with-ui`.\n");
         }
     }
 #ifndef _WIN32
     if (!client_start_parent_watchdog(process_initial_ppid)) {
-        (void)fprintf(stderr, "codebase-memory-mcp: parent-death watchdog could not start\n");
+        (void)fprintf(stderr, "codebase-memory-cli: parent-death watchdog could not start\n");
         (void)cbm_daemon_runtime_client_close(g_daemon_client, MAIN_CLOSE_TIMEOUT_MS);
         g_daemon_client = NULL;
         (void)main_version_cohort_close(&client_cohort_lease, &client_cohort_manager);

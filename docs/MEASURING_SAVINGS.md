@@ -86,7 +86,7 @@ GRAPH_SHA=$(git -C "$GRAPH_REPO" rev-parse HEAD) || exit 1
 GRAPH_STATUS=$(git -C "$GRAPH_REPO" status --porcelain=v1 --untracked-files=all) || exit 1
 test "$GRAPH_SHA" = "$SHA" || exit 1
 test -z "$GRAPH_STATUS" || exit 1
-codebase-memory-mcp cli index_repository \
+codebase-memory-cli cli index_repository \
   --repo-path "$GRAPH_REPO" \
   --mode "$MODE" || exit 1
 GRAPH_SHA_AFTER=$(git -C "$GRAPH_REPO" rev-parse HEAD) || exit 1
@@ -99,8 +99,8 @@ Take `PROJECT_NAME` from the successful indexing response. A verbose status call
 is useful only as a root/current-HEAD cross-check:
 
 ```bash
-codebase-memory-mcp cli list_projects
-codebase-memory-mcp cli index_status --project PROJECT_NAME --verbose
+codebase-memory-cli cli list_projects
+codebase-memory-cli cli index_status --project PROJECT_NAME --verbose
 ```
 
 Confirm that `root_path` is `GRAPH_REPO`, `git.head_sha` is `SHA`, and the Git
@@ -113,7 +113,7 @@ Finally, run one or more representative queries whose expected symbols you
 have verified directly at the recorded SHA:
 
 ```bash
-codebase-memory-mcp cli search_graph \
+codebase-memory-cli cli search_graph \
   --project PROJECT_NAME \
   --name-pattern 'KNOWN_SYMBOL_PATTERN' \
   --limit 10

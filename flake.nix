@@ -1,5 +1,5 @@
 {
-  description = "codebase-memory-mcp — C11 MCP server for codebase indexing";
+  description = "Codebase Memory — local CLI for persistent codebase indexing and structural graph queries";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
@@ -62,7 +62,7 @@
     {
       packages = forAllSystems (pkgs: rec {
         default = pkgs.stdenv.mkDerivation {
-          pname = "codebase-memory-mcp";
+          pname = "codebase-memory-cli";
           version = "0.10.8";
 
           src = ./.;
@@ -79,14 +79,14 @@
           '';
 
           installPhase = ''
-            install -Dm755 build/c/codebase-memory-mcp $out/bin/codebase-memory-mcp
+            install -Dm755 build/c/codebase-memory-cli $out/bin/codebase-memory-cli
           '';
 
           meta = {
-            description = "MCP server that builds and queries a semantic graph of your codebase";
+            description = "Local CLI that builds and queries a structural graph of your codebase";
             homepage = "https://github.com/DeusData/codebase-memory-mcp";
             license = nixpkgs.lib.licenses.mit;
-            mainProgram = "codebase-memory-mcp";
+            mainProgram = "codebase-memory-cli";
             platforms = systems;
           };
         };
@@ -115,8 +115,8 @@
         # so `--ui=true` starts the HTTP server. The frontend is built separately
         # by the graph-ui package above; here we drop its dist/ into place and run
         # the embed + link path (cbm-with-ui) — no network access needed.
-        codebase-memory-mcp-ui = default.overrideAttrs (old: {
-          pname = "codebase-memory-mcp-ui";
+        codebase-memory-cli-ui = default.overrideAttrs (old: {
+          pname = "codebase-memory-cli-ui";
 
           buildPhase = ''
             # cbm-with-ui depends on `embed`, which depends on `frontend`, which
@@ -137,7 +137,7 @@
           '';
 
           meta = old.meta // {
-            description = "codebase-memory-mcp with the embedded graph UI (--ui)";
+            description = "codebase-memory-cli with the embedded graph UI (--ui)";
           };
         });
       });

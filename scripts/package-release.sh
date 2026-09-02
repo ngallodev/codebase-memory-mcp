@@ -27,20 +27,16 @@ Options:
   --out-dir DIR                output directory (default: repository root)
 
 Environment:
-  VERSION                      MCPB manifest version (v-prefix accepted;
-                               default: 0.0.0-dev)
-
 Targets are the eight existing release products:
   linux/{amd64,arm64,amd64-portable,arm64-portable}
   darwin/{amd64,arm64}
   windows/{amd64,arm64}
 
 Archive contents — one executable, no sidecars:
-  unix:    codebase-memory-mcp LICENSE install.sh THIRD_PARTY_NOTICES.md (.tar.gz)
-  windows: codebase-memory-mcp.exe LICENSE install.ps1 THIRD_PARTY_NOTICES.md (.zip)
+  unix:    codebase-memory-cli LICENSE install.sh THIRD_PARTY_NOTICES.md (.tar.gz)
+  windows: codebase-memory-cli.exe LICENSE install.ps1 THIRD_PARTY_NOTICES.md (.zip)
 
-MCPB bundle (.mcpb): every darwin/windows target and static linux target.
-The executable member in every produced container is verified against
+The executable member in every produced archive is verified against
 --expected-sha256 before anything is published.
 EOF
 }
@@ -129,7 +125,7 @@ if [ -n "$THIRD_PARTY_NOTICES" ]; then
     THIRD_PARTY_NOTICES="$(cd "$(dirname "$THIRD_PARTY_NOTICES")" && pwd -P)/$(basename "$THIRD_PARTY_NOTICES")"
 fi
 OUT_DIR="$(mkdir -p "$OUT_DIR" && cd "$OUT_DIR" && pwd -P)"
-NAME="codebase-memory-mcp-${GOOS}-${GOARCH}"
+NAME="codebase-memory-cli-${GOOS}-${GOARCH}"
 
 sha256_file() {
     python3 - "$1" <<'PY'
@@ -189,19 +185,14 @@ PY
 assert_expected_hash "$SELECTED_BINARY" "selected binary" || exit 2
 
 if [ "$GOOS" = "windows" ]; then
-    STAGED_BINARY_NAME="codebase-memory-mcp.exe"
+    STAGED_BINARY_NAME="codebase-memory-cli.exe"
     INSTALLER="install.ps1"
     ARCHIVE_OUT="$OUT_DIR/$NAME.zip"
 else
-    STAGED_BINARY_NAME="codebase-memory-mcp"
+    STAGED_BINARY_NAME="codebase-memory-cli"
     INSTALLER="install.sh"
     ARCHIVE_OUT="$OUT_DIR/$NAME.tar.gz"
 fi
-MCPB_OUT="$OUT_DIR/$NAME.mcpb"
-BUILD_MCPB=0
-case "$GOOS/$GOARCH" in
-darwin/* | windows/* | linux/*-portable) BUILD_MCPB=1 ;;
-esac
 
 LOCK_DIR="$OUT_DIR/.${NAME}.package.lock"
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -216,8 +207,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ -e "$ARCHIVE_OUT" ] || [ -e "$MCPB_OUT" ]; then
-    echo "package-release: refusing to overwrite an existing $NAME release container." >&2
+if [ -e "$ARCHIVE_OUT" ]; then
+    echo "package-release: refusing to overwrite an existing $NAME release archive." >&2
     exit 2
 fi
 
@@ -251,7 +242,7 @@ if [ "$GOOS" = "windows" ]; then
     (
         cd "$PACK_DIR"
         zip -q -X "$ARCHIVE_TMP" \
-            codebase-memory-mcp.exe LICENSE install.ps1 THIRD_PARTY_NOTICES.md
+            codebase-memory-cli.exe LICENSE install.ps1 THIRD_PARTY_NOTICES.md
     )
     mkdir "$VERIFY_DIR/archive"
     extract_zip_member "$ARCHIVE_TMP" "$STAGED_BINARY_NAME" \
@@ -260,70 +251,12 @@ else
     # BSD tar otherwise materializes macOS extended attributes as hidden
     # AppleDouble `._*` members, violating the exact four-file inventory.
     COPYFILE_DISABLE=1 tar -czf "$ARCHIVE_TMP" -C "$PACK_DIR" \
-        codebase-memory-mcp LICENSE install.sh THIRD_PARTY_NOTICES.md
+        codebase-memory-cli LICENSE install.sh THIRD_PARTY_NOTICES.md
     mkdir "$VERIFY_DIR/archive"
     tar -xzf "$ARCHIVE_TMP" -C "$VERIFY_DIR/archive" "$STAGED_BINARY_NAME"
 fi
 assert_expected_hash "$VERIFY_DIR/archive/$STAGED_BINARY_NAME" "archive executable" || exit 2
 
-build_mcpb_bundle() {
-    local out
-    out="$OUTPUT_DIR/$(basename "$MCPB_OUT")"
-    local stage="$LOCK_DIR/mcpb-stage"
-    local entry="server/$STAGED_BINARY_NAME"
-    local platform
-    case "$GOOS" in
-    darwin) platform="darwin" ;;
-    windows) platform="win32" ;;
-    linux) platform="linux" ;;
-    esac
-    command -v zip >/dev/null 2>&1 || {
-        echo "package-release: zip is required to build $NAME.mcpb" >&2
-        return 1
-    }
-    mkdir -p "$stage/server"
-    cp "$STAGED_BINARY" "$stage/$entry"
-    chmod 0755 "$stage/$entry"
-    cp "$PACK_DIR/LICENSE" "$PACK_DIR/THIRD_PARTY_NOTICES.md" "$stage/server/"
-    local mcpb_version="${VERSION:-0.0.0-dev}"
-    mcpb_version="${mcpb_version#v}"
-    cat >"$stage/manifest.json" <<EOF
-{
-  "manifest_version": "0.3",
-  "name": "codebase-memory-mcp",
-  "display_name": "Codebase Memory",
-  "version": "$mcpb_version",
-  "description": "Codebase knowledge graph for AI agents — 162 languages, sub-ms queries, 99% fewer tokens.",
-  "author": { "name": "DeusData", "url": "https://github.com/DeusData" },
-  "repository": { "type": "git", "url": "https://github.com/DeusData/codebase-memory-mcp" },
-  "homepage": "https://deusdata.github.io/codebase-memory-mcp/",
-  "license": "MIT",
-  "server": {
-    "type": "binary",
-    "entry_point": "$entry",
-    "mcp_config": {
-      "command": "\${__dirname}/$entry",
-      "args": []
-    }
-  },
-  "compatibility": {
-    "platforms": ["$platform"]
-  }
-}
-EOF
-    (
-        cd "$stage"
-        zip -q -X "$out" \
-            manifest.json "$entry" server/LICENSE server/THIRD_PARTY_NOTICES.md
-    )
-    mkdir "$VERIFY_DIR/mcpb"
-    extract_zip_member "$out" "$entry" "$VERIFY_DIR/mcpb/$entry"
-    assert_expected_hash "$VERIFY_DIR/mcpb/$entry" "MCPB executable" || return 1
-}
-
-if [ "$BUILD_MCPB" -eq 1 ]; then
-    build_mcpb_bundle || exit 2
-fi
 
 # Recheck both byte owners after every packaging operation. No archive tool,
 # manifest step, or future gate may mutate either one unnoticed.
@@ -345,14 +278,5 @@ publish_no_clobber() {
 }
 
 publish_no_clobber "$ARCHIVE_TMP" "$ARCHIVE_OUT" || exit 2
-if [ "$BUILD_MCPB" -eq 1 ]; then
-    if ! publish_no_clobber "$OUTPUT_DIR/$(basename "$MCPB_OUT")" "$MCPB_OUT"; then
-        rm -f "$ARCHIVE_OUT"
-        exit 2
-    fi
-fi
 
 echo "=== package-release: $ARCHIVE_OUT (selected sha256 $EXPECTED_SHA256) ==="
-if [ "$BUILD_MCPB" -eq 1 ]; then
-    echo "=== package-release: $MCPB_OUT (same selected sha256) ==="
-fi

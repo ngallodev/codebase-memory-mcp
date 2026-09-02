@@ -68,17 +68,9 @@ MAX_MEMBERS = 128
 def archive_specs() -> dict[str, tuple[str, str]]:
     specs: dict[str, tuple[str, str]] = {}
     for target in TARGETS:
-        binary = "codebase-memory-mcp.exe" if target.startswith("windows-") else "codebase-memory-mcp"
+        binary = "codebase-memory-cli.exe" if target.startswith("windows-") else "codebase-memory-cli"
         suffix = ".zip" if target.startswith("windows-") else ".tar.gz"
-        specs[f"codebase-memory-mcp-{target}{suffix}"] = (target, binary)
-        if (
-            target.startswith(("darwin-", "windows-"))
-            or target.endswith("-portable")
-        ):
-            specs[f"codebase-memory-mcp-{target}.mcpb"] = (
-                target,
-                f"server/{binary}",
-            )
+        specs[f"codebase-memory-cli-{target}{suffix}"] = (target, binary)
     return specs
 
 
@@ -87,7 +79,7 @@ ARCHIVES = archive_specs()
 
 def parse_arguments(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Bind all fourteen canonical release containers to release-selection.tsv."
+        description="Bind all eight canonical CLI release archives to release-selection.tsv."
     )
     parser.add_argument("--selection", required=True, type=pathlib.Path)
     parser.add_argument("--archive-dir", required=True, type=pathlib.Path)
@@ -167,7 +159,7 @@ def load_selection(
     analysis_ids: set[str] = set()
     for row in rows:
         target = row["target"]
-        binary = "codebase-memory-mcp.exe" if target.startswith("windows-") else "codebase-memory-mcp"
+        binary = "codebase-memory-cli.exe" if target.startswith("windows-") else "codebase-memory-cli"
         classifications = {
             variant: row[f"{FIELD_KEY[variant]}_classification"] for variant in VARIANTS
         }
@@ -393,7 +385,7 @@ def discover_archives(root: pathlib.Path) -> dict[str, pathlib.Path]:
             child = parent / name
             if child.is_symlink():
                 raise ContractError(f"symlinked file in archive tree: {child}")
-            if name.endswith((".tar.gz", ".zip", ".mcpb")):
+            if name.endswith((".tar.gz", ".zip")):
                 archive_like.append(child)
                 if name in discovered:
                     raise ContractError(f"duplicate archive basename: {name}")

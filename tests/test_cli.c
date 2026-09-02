@@ -10178,7 +10178,7 @@ TEST(cli_hook_augment_bash_pretooluse_reaches_augmenter) {
     const char *input = "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\","
                         "\"cwd\":\"/tmp/hookproj\",\"tool_input\":{"
                         "\"command\":\"rg -n someIndexedSymbol .\"}}";
-    char *output = cbm_hook_augment_process(srv, input);
+    char *output = cbm_hook_augment_process(cbm_mcp_server_session_root(srv), input);
     bool reached = output && strstr(output, "hookSpecificOutput") &&
                    strstr(output, "someIndexedSymbol") && strstr(output, "mod.py");
     free(output);

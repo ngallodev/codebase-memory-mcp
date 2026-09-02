@@ -49,8 +49,10 @@ int cbm_cypher_max_depth(void) {
     return env_positive_int("CBM_CYPHER_MAX_DEPTH", 10);
 }
 
-int cbm_mcp_max_depth(void) {
-    /* 15 — ceiling for client-driven MCP graph traversals (trace_call_path,
-     * detect_changes); the caller's `depth` is WARN-clamped to this. */
+int cbm_operation_max_depth(void) {
+    /* Preserve CBM_MCP_MAX_DEPTH as a compatibility environment variable while
+     * the public execution model migrates away from MCP. */
     return env_positive_int("CBM_MCP_MAX_DEPTH", 15);
 }
+
+int cbm_mcp_max_depth(void) { return cbm_operation_max_depth(); }

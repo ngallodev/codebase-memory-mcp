@@ -41,6 +41,9 @@ int cbm_cypher_max_depth(void);
  * detect_changes): the client `depth` argument is WARN-clamped to this so an
  * arbitrarily large value cannot drive an unbounded BFS over the shared store.
  * Override with CBM_MCP_MAX_DEPTH (a positive integer). Default 15. */
+int cbm_operation_max_depth(void);
+
+/* Compatibility alias for legacy MCP adapters. */
 int cbm_mcp_max_depth(void);
 
 #endif /* CBM_LIMITS_H */

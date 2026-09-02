@@ -1,4 +1,4 @@
-# install.ps1 - One-line installer for codebase-memory-mcp (Windows).
+# install.ps1 - One-line installer for codebase-memory-cli (Windows).
 #
 # Usage: see README.md for install instructions.
 #
@@ -12,8 +12,8 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Net.Http
 
 $Repo = "DeusData/codebase-memory-mcp"
-$InstallDir = "$env:LOCALAPPDATA\Programs\codebase-memory-mcp"
-$BinName = "codebase-memory-mcp.exe"
+$InstallDir = "$env:LOCALAPPDATA\Programs\codebase-memory-cli"
+$BinName = "codebase-memory-cli.exe"
 $WindowsArchiveNames = @(
     $BinName,
     "LICENSE",
@@ -115,13 +115,13 @@ if ($env:CBM_ARCH) {
     }
 }
 
-Write-Host "codebase-memory-mcp installer (Windows)"
+Write-Host "codebase-memory-cli installer (Windows)"
 Write-Host "  arch:    $Arch"
 Write-Host "  target:  $InstallDir\$BinName"
 Write-Host ""
 
 # Build download URL
-$Archive = "codebase-memory-mcp-windows-$Arch.zip"
+$Archive = "codebase-memory-cli-windows-$Arch.zip"
 $Url = "$BaseUrl/$Archive"
 
 # Download
@@ -319,7 +319,7 @@ if (Test-Path -LiteralPath $Dest -PathType Leaf) {
     }
     if (-not $renamed) {
         Write-Host "error: could not retire the existing $BinName - close all running" -ForegroundColor Red
-        Write-Host "       codebase-memory-mcp sessions and coding agents, then re-run." -ForegroundColor Red
+        Write-Host "       codebase-memory-cli sessions and coding agents, then re-run." -ForegroundColor Red
         Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
         exit 1
     }
@@ -396,4 +396,4 @@ if ($SkipConfig) {
 Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
 
 Write-Host ""
-Write-Host "Done! Restart your terminal and coding agent to start using codebase-memory-mcp."
+Write-Host "Done! Restart your terminal and coding agent to start using codebase-memory-cli."

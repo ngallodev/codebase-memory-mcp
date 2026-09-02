@@ -14,6 +14,72 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Canonical containment is foundation policy, not a transport concern. It is
+ * shared by CLI operations, hooks/UI consumers, and any temporary legacy
+ * adapter while MCP is removed. */
+static bool resolve_canonical_path(const char *path, char *out, size_t out_sz) {
+    /* cbm_canonical_path: realpath on POSIX; an opened handle plus
+     * GetFinalPathNameByHandleW on Windows.  The old bare _fullpath was ANSI
+     * (CJK-locale corruption, #973), accepted nonexistent paths, and lexical
+     * expansion alone did not resolve junctions for containment checks. */
+    if (!cbm_canonical_path(path, out, out_sz)) {
+        return false;
+    }
+#ifdef _WIN32
+    cbm_normalize_path_sep(out);
+#endif
+    return true;
+}
+
+static bool canonical_path_has_root(const char *root_path, const char *candidate_path) {
+#ifdef _WIN32
+    wchar_t *wide_root = cbm_utf8_to_wide(root_path);
+    wchar_t *wide_candidate = cbm_utf8_to_wide(candidate_path);
+    bool contained = false;
+    if (wide_root && wide_candidate) {
+        size_t root_len = wcslen(wide_root);
+        size_t candidate_len = wcslen(wide_candidate);
+        bool prefix_equal = root_len <= candidate_len && root_len <= INT_MAX &&
+                            CompareStringOrdinal(wide_candidate, (int)root_len, wide_root,
+                                                 (int)root_len, TRUE) == CSTR_EQUAL;
+        bool root_ends_separator =
+            root_len > 0 && (wide_root[root_len - 1] == L'/' || wide_root[root_len - 1] == L'\\');
+        bool boundary = root_ends_separator || root_len == candidate_len ||
+                        (root_len < candidate_len &&
+                         (wide_candidate[root_len] == L'/' || wide_candidate[root_len] == L'\\'));
+        contained = prefix_equal && boundary;
+    }
+    free(wide_root);
+    free(wide_candidate);
+    return contained;
+#else
+    size_t root_len = strlen(root_path);
+    size_t candidate_len = strlen(candidate_path);
+    bool prefix_equal =
+        root_len <= candidate_len && strncmp(candidate_path, root_path, root_len) == 0;
+    bool root_ends_separator = root_len > 0 && root_path[root_len - 1] == '/';
+    bool boundary = root_ends_separator || root_len == candidate_len ||
+                    (root_len < candidate_len && candidate_path[root_len] == '/');
+    return prefix_equal && boundary;
+#endif
+}
+
+bool cbm_path_within_root(const char *root_path, const char *abs_path) {
+    if (!root_path || !abs_path) {
+        return false;
+    }
+    char real_root[4096];
+    char real_file[4096];
+    if (resolve_canonical_path(root_path, real_root, sizeof(real_root)) &&
+        resolve_canonical_path(abs_path, real_file, sizeof(real_file))) {
+        if (canonical_path_has_root(real_root, real_file)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+
 enum {
     /* POSIX: two components, so every top-level tree is refused in one rule with
      * no list to maintain — "/etc", "/home", "/Users", "/var", "/opt", "/srv".

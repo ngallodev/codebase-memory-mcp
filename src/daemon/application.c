@@ -18,6 +18,7 @@
 #include "mcp/index_supervisor.h"
 #include "mcp/mcp.h"
 #include "mcp/mcp_internal.h"
+#include "operations/operation.h"
 #include "pipeline/pipeline.h"
 #include "ui/config.h"
 #include "watcher/watcher.h"
@@ -877,6 +878,8 @@ static bool application_mutation_begin_internal(cbm_daemon_application_t *applic
         return false;
     }
     cbm_daemon_application_mutation_t *reserved = NULL;
+    bool wait_logged = false;
+    uint64_t wait_started_ms = cbm_now_ms();
     for (;;) {
         cbm_mutex_lock(&application->mutex);
         bool cancelled =
@@ -905,7 +908,15 @@ static bool application_mutation_begin_internal(cbm_daemon_application_t *applic
         }
         cbm_mutex_unlock(&application->mutex);
         if (cancelled || !wait) {
+            if (busy && !cancelled) {
+                cbm_log_warn("mutation.conflict", "project", project_key, "coordinator",
+                             "daemon", "action", "refuse_mutation");
+            }
             return false;
+        }
+        if (busy && !wait_logged) {
+            cbm_log_info("mutation.lock_wait", "project", project_key, "coordinator", "daemon");
+            wait_logged = true;
         }
         cbm_usleep(APPLICATION_JOB_POLL_US);
     }
@@ -931,6 +942,13 @@ static bool application_mutation_begin_internal(cbm_daemon_application_t *applic
                 status = CBM_PRIVATE_FILE_LOCK_BUSY;
             } else {
                 reserved->project_lock_lease = lease;
+                if (wait_logged) {
+                    char wait_ms[32];
+                    (void)snprintf(wait_ms, sizeof(wait_ms), "%llu",
+                                   (unsigned long long)(cbm_now_ms() - wait_started_ms));
+                    cbm_log_info("mutation.lock_acquired", "project", project_key, "wait_ms",
+                                 wait_ms, "coordinator", "daemon");
+                }
                 return true;
             }
         }
@@ -1620,10 +1638,13 @@ static cbm_daemon_application_job_t *application_job_subscribe_locked(
             return NULL;
         }
         if (!application_index_args_equal(job->args_json, args_json)) {
+            cbm_log_warn("mutation.conflict", "project", project_key, "operation", "index",
+                         "reason", "options_mismatch");
             *status_out = APPLICATION_JOB_SUBSCRIBE_OPTIONS_CONFLICT;
             return NULL;
         }
         job->subscribers++;
+        cbm_log_info("mutation.coalesced", "project", project_key, "operation", "index");
         *status_out = APPLICATION_JOB_SUBSCRIBE_OK;
         return job;
     }
@@ -1778,7 +1799,7 @@ static void application_update_publish_terminal_locked(cbm_daemon_application_t 
     if (!application->update_cancel_requested && application_update_version_valid(latest_version) &&
         cbm_compare_versions(latest_version, cbm_cli_get_version()) > 0) {
         (void)snprintf(application->update_notice, sizeof(application->update_notice),
-                       "Update available: %s -> %s -- run: codebase-memory-mcp update  |  "
+                       "Update available: %s -> %s -- run: codebase-memory-cli update  |  "
                        "Enjoying codebase-memory-mcp? Please leave a star: "
                        "https://github.com/DeusData/codebase-memory-mcp",
                        cbm_cli_get_version(), latest_version);
@@ -2518,7 +2539,18 @@ static cbm_daemon_runtime_application_status_t application_tool_request(
         free(args);
         return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
     }
-    char *response = cbm_mcp_handle_tool(session->mcp, tool, args);
+    char *response = NULL;
+    const cbm_operation_descriptor_t *operation = cbm_operation_find(tool);
+    if (operation) {
+        cbm_operation_context_t context = {0};
+        cbm_operation_result_t result = cbm_operation_execute(&context, operation->id, args);
+        if (result.payload) {
+            response = cbm_mcp_text_result(result.payload, result.is_error);
+        }
+        cbm_operation_result_dispose(&result);
+    } else {
+        response = cbm_mcp_handle_tool(session->mcp, tool, args);
+    }
     free(tool);
     free(args);
     if (!response) {
@@ -2617,7 +2649,8 @@ static cbm_daemon_runtime_application_status_t application_request_dispatch(
         if (!input) {
             return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
         }
-        char *response = cbm_hook_augment_process_for(session->mcp, input, session->hook_event,
+        const char *session_root = cbm_mcp_server_session_root(session->mcp);
+        char *response = cbm_hook_augment_process_for(session_root, input, session->hook_event,
                                                       session->hook_dialect);
         free(input);
         if (response) {

@@ -13,7 +13,7 @@
 # Designed to run IDENTICALLY on Linux / macOS / Windows(msys2 CLANG64).
 #
 # Usage:
-#   scripts/smoke-invariants.sh <binary>        # e.g. build/c/codebase-memory-mcp(.exe)
+#   scripts/smoke-invariants.sh <binary>        # e.g. build/c/codebase-memory-cli(.exe)
 #
 # Portability notes:
 #   * set -u (NOT -e): we want every invariant to run even if one fails.

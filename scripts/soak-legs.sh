@@ -42,8 +42,8 @@ Environment:
   RESULTS_DIR is owned by this script (per-leg); do not pre-set it.
 
 Examples:
-  scripts/soak-legs.sh build/c/codebase-memory-mcp 10          # both legs, 10m each
-  scripts/soak-legs.sh --legs quick build/c/codebase-memory-mcp 15   # ASan-style
+  scripts/soak-legs.sh build/c/codebase-memory-cli 10          # both legs, 10m each
+  scripts/soak-legs.sh --legs quick build/c/codebase-memory-cli 15   # ASan-style
 EOF
 }
 

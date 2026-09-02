@@ -167,6 +167,9 @@ cbm_daemon_process_role_t cbm_daemon_process_role(int argc, char *const argv[]) 
          * the daemon so enrolling a root cannot depend on daemon state. */
         "allow-root",
     };
+    static const char *const cli_commands[] = {
+        "index", "status", "search", "trace", "snippet", "coverage", "projects",
+    };
     /* Stop at the first top-level mode token. Tool names, flag values, and JSON
      * following `cli` are opaque user input: a search query named "install"
      * or containing "--version" must never bypass the mandatory daemon. */
@@ -176,6 +179,14 @@ cbm_daemon_process_role_t cbm_daemon_process_role(int argc, char *const argv[]) 
                 return CBM_DAEMON_PROCESS_STATELESS;
             }
             return CBM_DAEMON_PROCESS_LOCAL_CLI;
+        }
+        for (size_t command = 0;
+             command < sizeof(cli_commands) / sizeof(cli_commands[0]); command++) {
+            if (bootstrap_arg_is(argv[arg], cli_commands[command])) {
+                return bootstrap_has_help_after(argc, argv, arg + 1)
+                           ? CBM_DAEMON_PROCESS_STATELESS
+                           : CBM_DAEMON_PROCESS_LOCAL_CLI;
+            }
         }
         if (bootstrap_arg_is(argv[arg], "hook-augment")) {
             return CBM_DAEMON_PROCESS_HOOK_CLIENT;
@@ -201,7 +212,10 @@ cbm_daemon_process_role_t cbm_daemon_process_role(int argc, char *const argv[]) 
             }
         }
     }
-    return CBM_DAEMON_PROCESS_MCP_CLIENT;
+    /* CLI-first product boundary: an unrecognized or empty normal invocation
+     * must never fall through into the historical MCP stdio frontend. main()
+     * will render help for argc==1 and an actionable CLI error otherwise. */
+    return CBM_DAEMON_PROCESS_STATELESS;
 }
 
 bool cbm_daemon_process_role_requires_client(cbm_daemon_process_role_t role) {
@@ -280,7 +294,7 @@ static uint64_t bootstrap_deadline_after(uint32_t timeout_ms) {
 
 static _Noreturn void bootstrap_cleanup_fail_stop(const char *component) {
     (void)fprintf(stderr,
-                  "codebase-memory-mcp: coordination cleanup failed (%s); "
+                  "codebase-memory-cli: coordination cleanup failed (%s); "
                   "terminating so the OS releases retained claims\n",
                   component ? component : "unknown");
     (void)fflush(stderr);
@@ -347,7 +361,7 @@ static cbm_daemon_bootstrap_status_t bootstrap_finish_probe(
                            ? connect_result->message
                            : "CBM could not start because a conflicting CBM process is active; "
                              "close all CBM sessions and commands, then retry. If a permanent "
-                             "daemon from another build is running, `codebase-memory-mcp daemon "
+                             "daemon from another build is running, `codebase-memory-cli daemon "
                              "stop` retires it");
         if (ops->visible_diagnostic) {
             ops->visible_diagnostic(ops->context, result->message);
@@ -1020,7 +1034,7 @@ static void bootstrap_production_diagnostic(void *context, const char *message) 
     bootstrap_production_context_t *production = context;
 #ifdef _WIN32
     if (production && production->spawn_error != ERROR_SUCCESS) {
-        (void)fprintf(stderr, "codebase-memory-mcp: %s (daemon launch error %lu)\n",
+        (void)fprintf(stderr, "codebase-memory-cli: %s (daemon launch error %lu)\n",
                       message ? message : "daemon startup failed",
                       (unsigned long)production->spawn_error);
         (void)fflush(stderr);
@@ -1028,7 +1042,7 @@ static void bootstrap_production_diagnostic(void *context, const char *message) 
     }
 #elif defined(__APPLE__)
     if (production && production->spawn_error != 0) {
-        (void)fprintf(stderr, "codebase-memory-mcp: %s (daemon launch: %s)\n",
+        (void)fprintf(stderr, "codebase-memory-cli: %s (daemon launch: %s)\n",
                       message ? message : "daemon startup failed",
                       strerror(production->spawn_error));
         (void)fflush(stderr);
@@ -1037,7 +1051,7 @@ static void bootstrap_production_diagnostic(void *context, const char *message) 
 #else
     (void)production;
 #endif
-    (void)fprintf(stderr, "codebase-memory-mcp: %s\n", message ? message : "daemon startup failed");
+    (void)fprintf(stderr, "codebase-memory-cli: %s\n", message ? message : "daemon startup failed");
     (void)fflush(stderr);
 }
 

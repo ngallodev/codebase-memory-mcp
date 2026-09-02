@@ -52,10 +52,8 @@ bool cbm_workspace_verdict_is_overridable(cbm_ws_verdict_t verdict);
 int cbm_workspace_path_depth(const char *canonical_path);
 
 /* Canonical containment check: is abs_path at or below root_path, after symlink
- * and junction resolution? The definition currently lives in src/mcp/mcp.c; it is
- * declared here so the MCP handler, the HTTP UI route and the CLI all reach the
- * same implementation. Two entry points evaluating the same policy separately is
- * what produced the UI/MCP divergence in the first place. */
+ * and junction resolution? This is shared foundation policy used by every
+ * source-reading surface. */
 bool cbm_path_within_root(const char *root_path, const char *abs_path);
 
 /*
