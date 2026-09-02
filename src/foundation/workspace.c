@@ -14,6 +14,72 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Canonical containment is foundation policy, not a transport concern. It is
+ * shared by CLI operations, hooks/UI consumers, and any temporary legacy
+ * adapter while MCP is removed. */
+static bool resolve_canonical_path(const char *path, char *out, size_t out_sz) {
+    /* cbm_canonical_path: realpath on POSIX; an opened handle plus
+     * GetFinalPathNameByHandleW on Windows.  The old bare _fullpath was ANSI
+     * (CJK-locale corruption, #973), accepted nonexistent paths, and lexical
+     * expansion alone did not resolve junctions for containment checks. */
+    if (!cbm_canonical_path(path, out, out_sz)) {
+        return false;
+    }
+#ifdef _WIN32
+    cbm_normalize_path_sep(out);
+#endif
+    return true;
+}
+
+static bool canonical_path_has_root(const char *root_path, const char *candidate_path) {
+#ifdef _WIN32
+    wchar_t *wide_root = cbm_utf8_to_wide(root_path);
+    wchar_t *wide_candidate = cbm_utf8_to_wide(candidate_path);
+    bool contained = false;
+    if (wide_root && wide_candidate) {
+        size_t root_len = wcslen(wide_root);
+        size_t candidate_len = wcslen(wide_candidate);
+        bool prefix_equal = root_len <= candidate_len && root_len <= INT_MAX &&
+                            CompareStringOrdinal(wide_candidate, (int)root_len, wide_root,
+                                                 (int)root_len, TRUE) == CSTR_EQUAL;
+        bool root_ends_separator =
+            root_len > 0 && (wide_root[root_len - 1] == L'/' || wide_root[root_len - 1] == L'\\');
+        bool boundary = root_ends_separator || root_len == candidate_len ||
+                        (root_len < candidate_len &&
+                         (wide_candidate[root_len] == L'/' || wide_candidate[root_len] == L'\\'));
+        contained = prefix_equal && boundary;
+    }
+    free(wide_root);
+    free(wide_candidate);
+    return contained;
+#else
+    size_t root_len = strlen(root_path);
+    size_t candidate_len = strlen(candidate_path);
+    bool prefix_equal =
+        root_len <= candidate_len && strncmp(candidate_path, root_path, root_len) == 0;
+    bool root_ends_separator = root_len > 0 && root_path[root_len - 1] == '/';
+    bool boundary = root_ends_separator || root_len == candidate_len ||
+                    (root_len < candidate_len && candidate_path[root_len] == '/');
+    return prefix_equal && boundary;
+#endif
+}
+
+bool cbm_path_within_root(const char *root_path, const char *abs_path) {
+    if (!root_path || !abs_path) {
+        return false;
+    }
+    char real_root[4096];
+    char real_file[4096];
+    if (resolve_canonical_path(root_path, real_root, sizeof(real_root)) &&
+        resolve_canonical_path(abs_path, real_file, sizeof(real_file))) {
+        if (canonical_path_has_root(real_root, real_file)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+
 enum {
     /* POSIX: two components, so every top-level tree is refused in one rule with
      * no list to maintain — "/etc", "/home", "/Users", "/var", "/opt", "/srv".
@@ -211,6 +277,34 @@ static bool ws_any_component_matches(const char *path, const char *const *names,
     return false;
 }
 
+/* The default per-user Windows application prefix. Match from the drive root,
+ * by whole segments, so a project merely containing the same sequence (or a
+ * sibling such as Programs-src) is not captured. The second segment is the one
+ * and only user name; its spelling is deliberately unrestricted. */
+static bool ws_is_windows_user_programs_tree(const char *path) {
+    if (!ws_is_windows_style(path)) {
+        return false;
+    }
+    static const char *const expected[] = {"Users", NULL, "AppData", "Local", "Programs"};
+    const char *p = path + ws_volume_prefix_len(path);
+    for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+        while (ws_is_sep(*p)) {
+            p++;
+        }
+        if (!*p) {
+            return false;
+        }
+        const char *start = p;
+        while (*p && !ws_is_sep(*p)) {
+            p++;
+        }
+        if (expected[i] && !ws_component_equals(start, (size_t)(p - start), expected[i], true)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /* True when b is a or lives under a. Compares on a separator boundary so
  * "/a/bc" is not treated as living under "/a/b". */
 static bool ws_is_ancestor_or_equal(const char *a, const char *b) {
@@ -297,6 +391,10 @@ cbm_ws_verdict_t cbm_workspace_classify_root(const char *canonical_path, const c
         return CBM_WS_DENY_SENSITIVE;
     }
 
+    if (ws_is_windows_user_programs_tree(canonical_path)) {
+        return CBM_WS_DENY_SENSITIVE;
+    }
+
     /* "C:/Users" is the user tree itself — refuse it as a root, but leave the
      * projects below it alone; that is where Windows users actually work. */
     if (windows_style && depth == 1 &&
@@ -316,7 +414,7 @@ const char *cbm_workspace_verdict_reason(cbm_ws_verdict_t verdict) {
     case CBM_WS_DENY_ABSOLUTE:
         return "path is a volume root or holds the codebase-memory cache; it cannot be indexed";
     case CBM_WS_DENY_SENSITIVE:
-        return "path is a home or credential directory";
+        return "path is a home, credential, system, or application-install directory";
     default:
         break;
     }
@@ -455,10 +553,15 @@ bool cbm_workspace_grant_add(const char *cache_dir, const char *home_dir,
         }
     }
 
-    /* Already present is success, not a duplicate error. */
+    bool sensitive = verdict == CBM_WS_DENY_SENSITIVE;
+
+    /* Already present is success, not a duplicate error. A sensitive approval
+     * is narrower: an old ordinary grant (or an ordinary ancestor) establishes
+     * containment, but does not record the exact human-approved exception that
+     * cbm_workspace_root_allowed requires. Append that exact marked entry once. */
     ws_match_t existing = {canonical_path, false, false};
     (void)ws_grant_walk(cache_dir, ws_match_visit, &existing);
-    if (existing.contained) {
+    if (existing.contained && (!sensitive || existing.exact_sensitive)) {
         return true;
     }
 
@@ -476,7 +579,6 @@ bool cbm_workspace_grant_add(const char *cache_dir, const char *home_dir,
         }
         return false;
     }
-    bool sensitive = verdict == CBM_WS_DENY_SENSITIVE;
     (void)fprintf(f, "%s%s\n", sensitive ? "!" : "", canonical_path);
     bool ok = fclose(f) == 0;
     if (!ok && err) {

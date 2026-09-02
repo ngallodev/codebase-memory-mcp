@@ -90,14 +90,14 @@ jobs:
         run: |
           scripts/ci/prepare-release-candidates.sh \
             "${{ matrix.goos }}" "${{ matrix.goarch }}" \
-            --binary build/c/codebase-memory-mcp \
+            --binary build/c/codebase-memory-cli \
             --out-dir release-candidates
           scripts/gen-third-party-notices.sh \
             "release-candidates/${{ matrix.goos }}-${{ matrix.goarch }}/THIRD_PARTY_NOTICES.md"
 
       - name: Attest release candidate provenance
         if: ${{ inputs.attest }}
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             release-candidates/${{ matrix.goos }}-${{ matrix.goarch }}/candidate-provenance.tsv
@@ -148,14 +148,14 @@ jobs:
         shell: msys2 {0}
         run: |
           scripts/ci/prepare-release-candidates.sh windows amd64 \
-            --binary build/c/codebase-memory-mcp.exe \
+            --binary build/c/codebase-memory-cli.exe \
             --out-dir release-candidates
           scripts/gen-third-party-notices.sh \
             release-candidates/windows-amd64/THIRD_PARTY_NOTICES.md
 
       - name: Attest release candidate provenance
         if: ${{ inputs.attest }}
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             release-candidates/windows-amd64/candidate-provenance.tsv
@@ -210,14 +210,14 @@ jobs:
         shell: msys2 {0}
         run: |
           scripts/ci/prepare-release-candidates.sh windows arm64 \
-            --binary build/c/codebase-memory-mcp.exe \
+            --binary build/c/codebase-memory-cli.exe \
             --out-dir release-candidates
           scripts/gen-third-party-notices.sh \
             release-candidates/windows-arm64/THIRD_PARTY_NOTICES.md
 
       - name: Attest release candidate provenance
         if: ${{ inputs.attest }}
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             release-candidates/windows-arm64/candidate-provenance.tsv
@@ -266,21 +266,21 @@ jobs:
 
       - name: Verify release static linking
         run: |
-          file build/c/codebase-memory-mcp
-          ldd build/c/codebase-memory-mcp 2>&1 | grep -q "not a dynamic executable" || ldd build/c/codebase-memory-mcp 2>&1 | grep -q "statically linked"
+          file build/c/codebase-memory-cli
+          ldd build/c/codebase-memory-cli 2>&1 | grep -q "not a dynamic executable" || ldd build/c/codebase-memory-cli 2>&1 | grep -q "statically linked"
 
       - name: Derive immutable stripped and unstripped release candidates
         run: |
           scripts/ci/prepare-release-candidates.sh \
             linux "${{ matrix.arch }}-portable" \
-            --binary build/c/codebase-memory-mcp \
+            --binary build/c/codebase-memory-cli \
             --out-dir release-candidates
           scripts/gen-third-party-notices.sh \
             "release-candidates/linux-${{ matrix.arch }}-portable/THIRD_PARTY_NOTICES.md"
 
       - name: Attest release candidate provenance
         if: ${{ inputs.attest }}
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             release-candidates/linux-${{ matrix.arch }}-portable/candidate-provenance.tsv
@@ -395,8 +395,8 @@ jobs:
             windows-amd64 windows-arm64; do
             goos="${target%%-*}"
             goarch="${target#*-}"
-            selected_name=codebase-memory-mcp
-            test "$goos" != windows || selected_name=codebase-memory-mcp.exe
+            selected_name=codebase-memory-cli
+            test "$goos" != windows || selected_name=codebase-memory-cli.exe
             selected="release-selection/selected/$target/$selected_name"
             notices="release-candidate-scan/notices/$target/THIRD_PARTY_NOTICES.md"
             test -f "$selected"
@@ -432,7 +432,7 @@ jobs:
 
       - name: Attest selected containers and decision evidence
         if: ${{ inputs.attest }}
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             release-containers/**/*.tar.gz

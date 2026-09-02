@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# codebase-memory-mcp setup script (macOS + Linux)
+# codebase-memory-cli setup script (macOS + Linux)
 # Default: download pre-built binary from GitHub Release
 # --from-source: build from source (requires Go + C compiler)
 
 REPO="DeusData/codebase-memory-mcp"
 INSTALL_DIR="$HOME/.local/bin"
-BINARY_NAME="codebase-memory-mcp"
-SOURCE_DIR="$HOME/.local/share/codebase-memory-mcp"
+BINARY_NAME="codebase-memory-cli"
+SOURCE_DIR="$HOME/.local/share/codebase-memory-cli"
 CLEANUP_DIR=""  # set by download_binary for EXIT trap
 
 # --- Colors ---
@@ -157,7 +157,7 @@ download_binary() {
     fi
     ok "Latest release: $tag"
 
-    local asset="codebase-memory-mcp-${platform}.tar.gz"
+    local asset="codebase-memory-cli-${platform}.tar.gz"
     local url="https://github.com/${REPO}/releases/download/${tag}/${asset}"
 
     echo "${BOLD}Downloading ${asset}...${RESET}"
@@ -199,81 +199,19 @@ build_from_source() {
     echo "${BOLD}Building binary (this may take a minute)...${RESET}"
     mkdir -p "$INSTALL_DIR"
 
-    (cd "$SOURCE_DIR" && scripts/build.sh && cp build/c/codebase-memory-mcp "${INSTALL_DIR}/${BINARY_NAME}")
+    (cd "$SOURCE_DIR" && scripts/build.sh && cp build/c/codebase-memory-cli "${INSTALL_DIR}/${BINARY_NAME}")
 
     ok "Built and installed to ${INSTALL_DIR}/${BINARY_NAME}"
 }
 
-# --- MCP auto-configuration ---
+# --- CLI-first agent integration guidance ---
 
-configure_claude() {
+print_agent_integration_guidance() {
     echo ""
-    local binary_path="${INSTALL_DIR}/${BINARY_NAME}"
-    local claude_config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-    local settings_file="${claude_config_dir}/settings.json"
-
-    printf "%s" "${BOLD}Configure Claude Code to use codebase-memory-mcp? [y/N] ${RESET}"
-    read -r answer
-    if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-        echo ""
-        info "Add this to your .mcp.json or ${claude_config_dir}/settings.json:"
-        echo ""
-        echo '  {'
-        echo '    "mcpServers": {'
-        echo '      "codebase-memory-mcp": {'
-        echo '        "type": "stdio",'
-        echo "        \"command\": \"${binary_path}\""
-        echo '      }'
-        echo '    }'
-        echo '  }'
-        return
-    fi
-
-    local mcp_entry
-    mcp_entry=$(cat <<JSONEOF
-{"type":"stdio","command":"${binary_path}"}
-JSONEOF
-)
-
-    mkdir -p "$(dirname "$settings_file")"
-
-    if command -v jq &>/dev/null; then
-        # Use jq to merge
-        if [ -f "$settings_file" ]; then
-            local tmp
-            tmp=$(mktemp)
-            jq --argjson entry "$mcp_entry" '.mcpServers["codebase-memory-mcp"] = $entry' "$settings_file" > "$tmp"
-            mv "$tmp" "$settings_file"
-        else
-            echo "{}" | jq --argjson entry "$mcp_entry" '.mcpServers["codebase-memory-mcp"] = $entry' > "$settings_file"
-        fi
-        ok "Updated ${settings_file}"
-    elif command -v python3 &>/dev/null; then
-        python3 -c "
-import json, os
-path = os.path.expanduser('$settings_file')
-data = {}
-if os.path.exists(path):
-    with open(path) as f:
-        data = json.load(f)
-data.setdefault('mcpServers', {})['codebase-memory-mcp'] = json.loads('$mcp_entry')
-with open(path, 'w') as f:
-    json.dump(data, f, indent=2)
-print()
-"
-        ok "Updated ${settings_file}"
-    else
-        warn "Neither jq nor python3 found — cannot auto-configure."
-        echo ""
-        info "Add this to ${settings_file} manually:"
-        echo ""
-        echo '  "mcpServers": {'
-        echo '    "codebase-memory-mcp": {'
-        echo '      "type": "stdio",'
-        echo "      \"command\": \"${binary_path}\""
-        echo '    }'
-        echo '  }'
-    fi
+    info "Codebase Memory is CLI-first; this setup script does not write MCP client configuration."
+    info "To install CLI-first skills/instructions/hooks for detected agents, run:"
+    echo ""
+    echo "  ${INSTALL_DIR}/${BINARY_NAME} install --skip-binary"
 }
 
 # --- PATH check ---
@@ -291,7 +229,7 @@ check_path() {
 # --- Main ---
 
 echo ""
-echo "${BOLD}codebase-memory-mcp installer${RESET}"
+echo "${BOLD}codebase-memory-cli installer${RESET}"
 echo ""
 
 if [ "$FROM_SOURCE" = true ]; then
@@ -316,7 +254,7 @@ else
     ok "Binary is executable"
 fi
 
-configure_claude
+print_agent_integration_guidance
 check_path
 
 # --- Git hooks ---
@@ -327,7 +265,7 @@ if [ -d "scripts/hooks" ] && git rev-parse --git-dir &>/dev/null; then
 fi
 
 echo ""
-ok "Done! Restart Claude Code and verify with /mcp"
+ok "Done! Try: ${BINARY_NAME} --help"
 echo ""
 info "To uninstall:"
 info "  rm ${INSTALL_DIR}/${BINARY_NAME}"

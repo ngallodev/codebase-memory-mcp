@@ -147,6 +147,12 @@ typedef bool (*cbm_mcp_project_mutation_try_begin_fn)(void *context, const char 
 /* Create an MCP server. store_path is the SQLite database directory. */
 cbm_mcp_server_t *cbm_mcp_server_new(const char *store_path);
 
+/* Transitional CLI-only constructor: create request/session state without
+ * eagerly opening the legacy in-memory store. Canonical one-shot CLI reads
+ * resolve their indexed project lazily and do not need the embedded test store.
+ * This exists only while the dispatcher is being extracted from src/mcp. */
+cbm_mcp_server_t *cbm_mcp_server_new_deferred_store(void);
+
 /* Select the tool surface exposed by tools/list and enforced by dispatch. */
 void cbm_mcp_server_set_tool_profile(cbm_mcp_server_t *srv, cbm_mcp_tool_profile_t profile);
 

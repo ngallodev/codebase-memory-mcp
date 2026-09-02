@@ -92,7 +92,7 @@ jobs:
           SELECTED_BINARY: ${{ runner.temp }}/cbm-selected-artifact/codebase-memory-mcp
           USE_RELEASE_ARTIFACTS: ${{ inputs.use_release_artifacts }}
         run: |
-          binary=build/c/codebase-memory-mcp
+          binary=build/c/codebase-memory-cli
           test "$USE_RELEASE_ARTIFACTS" != true || binary="$SELECTED_BINARY"
           scripts/soak-legs.sh --legs "${{ inputs.legs }}" "$binary" ${{ inputs.duration_minutes }}
       - name: Upload metrics
@@ -156,9 +156,9 @@ jobs:
         run: |
           ARTIFACT_DIR="$(cygpath -u "$RUNNER_TEMP")/cbm-selected-artifact"
           mkdir -p "$ARTIFACT_DIR"
-          unzip -q "$(cygpath -u "$RUNNER_TEMP")/cbm-selected-container/codebase-memory-mcp-windows-amd64.zip" \
-            codebase-memory-mcp.exe -d "$ARTIFACT_DIR"
-          "$ARTIFACT_DIR/codebase-memory-mcp.exe" --version
+          unzip -q "$(cygpath -u "$RUNNER_TEMP")/cbm-selected-container/codebase-memory-cli-windows-amd64.zip" \
+            codebase-memory-cli.exe -d "$ARTIFACT_DIR"
+          "$ARTIFACT_DIR/codebase-memory-cli.exe" --version
       # Both release-gating legs via the ONE canonical soak entry; only the
       # protected-TEMP provisioning is venue text. soak-legs.sh resolves .exe.
       - name: Soak legs (${{ inputs.legs }}, ${{ inputs.duration_minutes }} min each)
@@ -167,9 +167,9 @@ jobs:
           export TEMP="$(cygpath -m "$CBM_CI_TEMP_ROOT")"
           export TMP="$TEMP"
           export TMPDIR="$(cygpath -u "$CBM_CI_TEMP_ROOT")"
-          binary=build/c/codebase-memory-mcp
+          binary=build/c/codebase-memory-cli
           if [ "${{ inputs.use_release_artifacts }}" = true ]; then
-            binary="$(cygpath -u "$RUNNER_TEMP")/cbm-selected-artifact/codebase-memory-mcp.exe"
+            binary="$(cygpath -u "$RUNNER_TEMP")/cbm-selected-artifact/codebase-memory-cli.exe"
           fi
           scripts/soak-legs.sh --legs "${{ inputs.legs }}" "$binary" ${{ inputs.duration_minutes }}
       - name: Upload metrics
@@ -234,9 +234,9 @@ jobs:
         run: |
           ARTIFACT_DIR="$(cygpath -u "$RUNNER_TEMP")/cbm-selected-artifact"
           mkdir -p "$ARTIFACT_DIR"
-          unzip -q "$(cygpath -u "$RUNNER_TEMP")/cbm-selected-container/codebase-memory-mcp-windows-arm64.zip" \
-            codebase-memory-mcp.exe -d "$ARTIFACT_DIR"
-          "$ARTIFACT_DIR/codebase-memory-mcp.exe" --version
+          unzip -q "$(cygpath -u "$RUNNER_TEMP")/cbm-selected-container/codebase-memory-cli-windows-arm64.zip" \
+            codebase-memory-cli.exe -d "$ARTIFACT_DIR"
+          "$ARTIFACT_DIR/codebase-memory-cli.exe" --version
       # Both release-gating legs via the ONE canonical soak entry; only the
       # protected-TEMP provisioning is venue text. soak-legs.sh resolves .exe.
       - name: Soak legs (${{ inputs.legs }}, ${{ inputs.duration_minutes }} min each)
@@ -245,9 +245,9 @@ jobs:
           export TEMP="$(cygpath -m "$CBM_CI_TEMP_ROOT")"
           export TMP="$TEMP"
           export TMPDIR="$(cygpath -u "$CBM_CI_TEMP_ROOT")"
-          binary=build/c/codebase-memory-mcp
+          binary=build/c/codebase-memory-cli
           if [ "${{ inputs.use_release_artifacts }}" = true ]; then
-            binary="$(cygpath -u "$RUNNER_TEMP")/cbm-selected-artifact/codebase-memory-mcp.exe"
+            binary="$(cygpath -u "$RUNNER_TEMP")/cbm-selected-artifact/codebase-memory-cli.exe"
           fi
           scripts/soak-legs.sh --legs "${{ inputs.legs }}" "$binary" ${{ inputs.duration_minutes }}
       - name: Upload metrics
@@ -292,7 +292,7 @@ jobs:
       - name: Extract selected portable executable
         run: |
           mkdir -p "$RUNNER_TEMP/cbm-selected-artifact"
-          tar -xzf "$RUNNER_TEMP/cbm-selected-container/codebase-memory-mcp-linux-${{ matrix.arch }}-portable.tar.gz" \
+          tar -xzf "$RUNNER_TEMP/cbm-selected-container/codebase-memory-cli-linux-${{ matrix.arch }}-portable.tar.gz" \
             -C "$RUNNER_TEMP/cbm-selected-artifact" codebase-memory-mcp
           chmod +x "$RUNNER_TEMP/cbm-selected-artifact/codebase-memory-mcp"
           "$RUNNER_TEMP/cbm-selected-artifact/codebase-memory-mcp" --version
@@ -367,7 +367,7 @@ jobs:
         # Single-leg variant of the canonical soak entry: the ASan build is too
         # slow for the two-leg sequence; leg selection is a documented flag, not
         # a divergent inline procedure.
-        run: scripts/soak-legs.sh --legs quick build/c/codebase-memory-mcp 15
+        run: scripts/soak-legs.sh --legs quick build/c/codebase-memory-cli 15
       - name: Upload metrics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -407,7 +407,7 @@ jobs:
         env:
           ASAN_OPTIONS: "detect_leaks=0:halt_on_error=0:log_path=soak-results/asan"
         # Single-leg variant of the canonical soak entry (see the unix ASan job).
-        run: scripts/soak-legs.sh --legs quick build/c/codebase-memory-mcp 15
+        run: scripts/soak-legs.sh --legs quick build/c/codebase-memory-cli 15
       - name: Upload metrics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

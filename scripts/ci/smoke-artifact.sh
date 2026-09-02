@@ -95,8 +95,8 @@ CANDIDATE_ROOT="$WORK_DIR/candidates"
 scripts/ci/prepare-release-candidates.sh "$GOOS" "$GOARCH" \
     --binary "$SOURCE_BINARY" --out-dir "$CANDIDATE_ROOT"
 
-SELECTED_NAME="codebase-memory-mcp"
-[ "$GOOS" = "windows" ] && SELECTED_NAME="codebase-memory-mcp.exe"
+SELECTED_NAME="codebase-memory-cli"
+[ "$GOOS" = "windows" ] && SELECTED_NAME="codebase-memory-cli.exe"
 SELECTED_BINARY="$CANDIDATE_ROOT/${GOOS}-${GOARCH}/stripped/$SELECTED_NAME"
 [ -f "$SELECTED_BINARY" ] || {
     echo "smoke-artifact: candidate derivation did not produce $SELECTED_BINARY" >&2
@@ -129,12 +129,12 @@ scripts/package-release.sh "$GOOS" "$GOARCH" \
     --third-party-notices "$NOTICES" \
     --out-dir "$WORK_DIR"
 
-NAME="codebase-memory-mcp-${GOOS}-${GOARCH}"
+NAME="codebase-memory-cli-${GOOS}-${GOARCH}"
 EXTRACT_DIR="$WORK_DIR/extract"
 mkdir -p "$EXTRACT_DIR"
 if [ "$GOOS" = "windows" ]; then
     unzip -q -o "$WORK_DIR/$NAME.zip" -d "$EXTRACT_DIR"
-    test -s "$EXTRACT_DIR/codebase-memory-mcp.exe"
+    test -s "$EXTRACT_DIR/codebase-memory-cli.exe"
     # ONE binary per platform: a payload sibling means the AV-flagged launcher
     # stub came back.
     test ! -e "$EXTRACT_DIR/codebase-memory-mcp.payload.exe"

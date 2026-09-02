@@ -242,11 +242,6 @@ bash "$ROOT/tests/test_vt_release_notes_contract.sh"
 echo "=== Step 0n: VirusTotal gate policy contract ==="
 bash "$ROOT/tests/test_vt_gate_policy_contract.sh"
 
-echo "=== Step 0o: MCPB bundle contract (#1246) ==="
-bash "$ROOT/tests/test_mcpb_bundle_contract.sh"
-
-echo "=== Step 0p: MCPB registry entries contract (#1246) ==="
-bash "$ROOT/tests/test_mcpb_registry_entries_contract.sh"
 
 echo "=== Step 0q: release candidate derivation contract ==="
 bash "$ROOT/tests/test_release_candidate_derivation_contract.sh"
@@ -268,6 +263,9 @@ bash "$ROOT/tests/test_nomic_blob_generator_contract.sh"
 
 echo "=== Step 0w: published language-count contract ==="
 bash "$ROOT/tests/test_language_count_contract.sh"
+
+echo "=== Step 0x: packaging version-metadata contract ==="
+bash "$ROOT/tests/test_version_metadata_contract.sh"
 
 # Verify compiler supports target arch
 verify_compiler "$CC"

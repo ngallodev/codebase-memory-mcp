@@ -14,9 +14,12 @@
 #include "foundation/secure_random.h"
 #include "foundation/sha256.h"
 #include "foundation/subprocess.h"
+#include "foundation/workspace.h"
 #include "mcp/index_supervisor.h"
 #include "mcp/mcp.h"
 #include "mcp/mcp_internal.h"
+#include "operations/operation.h"
+#include "operations/reliability_events.h"
 #include "pipeline/pipeline.h"
 #include "ui/config.h"
 #include "watcher/watcher.h"
@@ -46,6 +49,7 @@
 
 enum {
     APPLICATION_CONTEXT_HEADER_SIZE = 19,
+    APPLICATION_OPERATION_HEADER_SIZE = 5,
     APPLICATION_TOOL_HEADER_SIZE = 5,
     APPLICATION_UI_CONFIG_REQUEST_SIZE = 7,
     APPLICATION_UI_READINESS_REQUEST_SIZE = 1 + CBM_SHA256_DIGEST_LEN,
@@ -429,6 +433,22 @@ static void application_release_session_watch_locked(cbm_daemon_application_sess
     }
 }
 
+static bool application_session_workspace_allowed(const cbm_daemon_application_session_t *session,
+                                                  const char *operation) {
+    const char *root = session ? cbm_mcp_server_session_root(session->mcp) : NULL;
+    char boundary_error[CBM_SZ_1K];
+    bool allowed =
+        root && root[0] &&
+        cbm_workspace_root_allowed(root, cbm_workspace_home_dir(), cbm_workspace_cache_dir(),
+                                   cbm_mcp_server_allowed_root(session->mcp), boundary_error,
+                                   sizeof(boundary_error));
+    if (!allowed) {
+        cbm_log_warn("daemon.workspace.skipped", "operation", operation, "detail",
+                     root && root[0] ? boundary_error : "session root is unavailable");
+    }
+    return allowed;
+}
+
 /* Caller holds application->mutex. */
 static void application_refresh_watch_locked(cbm_daemon_application_session_t *session) {
     cbm_daemon_application_t *application = session->application;
@@ -440,6 +460,10 @@ static void application_refresh_watch_locked(cbm_daemon_application_session_t *s
     const char *project = cbm_mcp_server_session_project(session->mcp);
     const char *root = cbm_mcp_server_session_root(session->mcp);
     if (!project || !project[0] || !root || !root[0]) {
+        return;
+    }
+    if (!application_session_workspace_allowed(session, "watch")) {
+        application_release_session_watch_locked(session);
         return;
     }
     bool enabled = !application->config ||
@@ -856,6 +880,8 @@ static bool application_mutation_begin_internal(cbm_daemon_application_t *applic
         return false;
     }
     cbm_daemon_application_mutation_t *reserved = NULL;
+    bool wait_logged = false;
+    uint64_t wait_started_ms = cbm_now_ms();
     for (;;) {
         cbm_mutex_lock(&application->mutex);
         bool cancelled =
@@ -884,7 +910,15 @@ static bool application_mutation_begin_internal(cbm_daemon_application_t *applic
         }
         cbm_mutex_unlock(&application->mutex);
         if (cancelled || !wait) {
+            if (busy && !cancelled) {
+                cbm_log_warn("mutation.conflict", "project", project_key, "coordinator",
+                             "daemon", "action", "refuse_mutation");
+            }
             return false;
+        }
+        if (busy && !wait_logged) {
+            cbm_log_info("mutation.lock_wait", "project", project_key, "coordinator", "daemon");
+            wait_logged = true;
         }
         cbm_usleep(APPLICATION_JOB_POLL_US);
     }
@@ -910,6 +944,13 @@ static bool application_mutation_begin_internal(cbm_daemon_application_t *applic
                 status = CBM_PRIVATE_FILE_LOCK_BUSY;
             } else {
                 reserved->project_lock_lease = lease;
+                if (wait_logged) {
+                    char wait_ms[32];
+                    (void)snprintf(wait_ms, sizeof(wait_ms), "%llu",
+                                   (unsigned long long)(cbm_now_ms() - wait_started_ms));
+                    cbm_log_info("mutation.lock_acquired", "project", project_key, "wait_ms",
+                                 wait_ms, "coordinator", "daemon");
+                }
                 return true;
             }
         }
@@ -1394,6 +1435,11 @@ static void application_auto_index_retry_pending_locked(cbm_daemon_application_t
             session->auto_index_retry_pending = false;
             continue;
         }
+        if (!application_session_workspace_allowed(session, "auto_index_retry")) {
+            session->auto_index_retry_pending = false;
+            application_refresh_watch_locked(session);
+            continue;
+        }
         if (application_regular_db_exists(project)) {
             session->auto_index_retry_pending = false;
             application_refresh_watch_locked(session);
@@ -1438,6 +1484,19 @@ static void application_job_publish(cbm_daemon_application_job_t *job,
                                !execution->last_result.cancellation_requested);
     job->terminal = true;
     job->thread_done = true;
+    if (job->successful) {
+        cbm_reliability_record(&(cbm_reliability_record_t){
+            .event = CBM_RELIABILITY_EVENT_INDEX_PUBLISH,
+            .project = job->project_key, .operation = "index", .reason = "completed"});
+    } else if (execution->have_last_result &&
+               (execution->last_result.outcome == CBM_PROC_CRASH ||
+                execution->last_result.outcome == CBM_PROC_HANG)) {
+        cbm_reliability_record(&(cbm_reliability_record_t){
+            .event = CBM_RELIABILITY_EVENT_INDEX_WORKER_CRASH,
+            .project = job->project_key, .operation = "index",
+            .reason = execution->last_result.outcome == CBM_PROC_HANG ? "hang" : "crash",
+            .retry = !execution->unsafe_terminal});
+    }
     for (cbm_daemon_application_session_t *session = application->sessions; session;
          session = session->next) {
         if (session->auto_index_job != job || !session->auto_index_subscribed) {
@@ -1594,10 +1653,19 @@ static cbm_daemon_application_job_t *application_job_subscribe_locked(
             return NULL;
         }
         if (!application_index_args_equal(job->args_json, args_json)) {
+            cbm_log_warn("mutation.conflict", "project", project_key, "operation", "index",
+                         "reason", "options_mismatch");
+            cbm_reliability_record(&(cbm_reliability_record_t){
+                .event = CBM_RELIABILITY_EVENT_MUTATION_CONFLICT,
+                .project = project_key, .operation = "index", .reason = "options_mismatch"});
             *status_out = APPLICATION_JOB_SUBSCRIBE_OPTIONS_CONFLICT;
             return NULL;
         }
         job->subscribers++;
+        cbm_log_info("mutation.coalesced", "project", project_key, "operation", "index");
+        cbm_reliability_record(&(cbm_reliability_record_t){
+            .event = CBM_RELIABILITY_EVENT_MUTATION_COALESCED,
+            .project = project_key, .operation = "index"});
         *status_out = APPLICATION_JOB_SUBSCRIBE_OK;
         return job;
     }
@@ -1625,6 +1693,9 @@ static cbm_daemon_application_job_t *application_job_subscribe_locked(
     job->subscribers = 1;
     job->next = application->jobs;
     application->jobs = job;
+    cbm_reliability_record(&(cbm_reliability_record_t){
+        .event = CBM_RELIABILITY_EVENT_MUTATION_REQUESTED,
+        .project = project_key, .operation = "index"});
     if (application_job_thread_create(&job->thread, job) == 0) {
         job->thread_started = true;
     } else {
@@ -1752,7 +1823,7 @@ static void application_update_publish_terminal_locked(cbm_daemon_application_t 
     if (!application->update_cancel_requested && application_update_version_valid(latest_version) &&
         cbm_compare_versions(latest_version, cbm_cli_get_version()) > 0) {
         (void)snprintf(application->update_notice, sizeof(application->update_notice),
-                       "Update available: %s -> %s -- run: codebase-memory-mcp update  |  "
+                       "Update available: %s -> %s -- run: codebase-memory-cli update  |  "
                        "Enjoying codebase-memory-mcp? Please leave a star: "
                        "https://github.com/DeusData/codebase-memory-mcp",
                        cbm_cli_get_version(), latest_version);
@@ -1940,6 +2011,10 @@ static void application_background_initialize_impl(cbm_daemon_application_sessio
                             : CBM_MCP_DEFAULT_AUTO_INDEX_LIMIT;
     int tracked_files = -1;
     bool auto_index_candidate = auto_index && !db_exists;
+    if (auto_index_candidate &&
+        !application_session_workspace_allowed(session, "auto_index_discovery")) {
+        auto_index_candidate = false;
+    }
     bool within_auto_index_limit =
         !auto_index_candidate ||
         cbm_mcp_auto_index_within_file_limit(root_path, auto_index_limit, &tracked_files);
@@ -2469,6 +2544,52 @@ static cbm_daemon_runtime_application_status_t application_mcp_request(
     return CBM_DAEMON_RUNTIME_APPLICATION_OK;
 }
 
+
+static cbm_daemon_runtime_application_status_t application_operation_request(
+    cbm_daemon_application_session_t *session, const uint8_t *request, uint32_t request_length,
+    uint8_t **response_out, uint32_t *response_length_out) {
+    if (!session->context_set || request_length <= APPLICATION_OPERATION_HEADER_SIZE) {
+        return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
+    }
+    uint32_t name_length = application_get_u32(request + 1);
+    if (name_length == 0 || name_length >= request_length - APPLICATION_OPERATION_HEADER_SIZE) {
+        return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
+    }
+    char *name = application_text_copy(request + APPLICATION_OPERATION_HEADER_SIZE, name_length);
+    uint32_t args_length = request_length - APPLICATION_OPERATION_HEADER_SIZE - name_length;
+    char *args = application_text_copy(
+        request + APPLICATION_OPERATION_HEADER_SIZE + name_length, args_length);
+    if (!name || !args) {
+        free(name);
+        free(args);
+        return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
+    }
+    const cbm_operation_descriptor_t *operation = cbm_operation_find(name);
+    free(name);
+    if (!operation) {
+        free(args);
+        return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
+    }
+    cbm_operation_context_t context = {0};
+    cbm_operation_result_t result = cbm_operation_execute(&context, operation->id, args);
+    free(args);
+    if (!result.payload) {
+        cbm_operation_result_dispose(&result);
+        return CBM_DAEMON_RUNTIME_APPLICATION_HANDLER_ERROR;
+    }
+    size_t response_length = strlen(result.payload);
+    if (response_length > UINT32_MAX) {
+        cbm_operation_result_dispose(&result);
+        return CBM_DAEMON_RUNTIME_APPLICATION_HANDLER_ERROR;
+    }
+    *response_out = (uint8_t *)result.payload;
+    *response_length_out = (uint32_t)response_length;
+    result.payload = NULL;
+    cbm_operation_result_dispose(&result);
+    application_refresh_watch(session);
+    return CBM_DAEMON_RUNTIME_APPLICATION_OK;
+}
+
 static cbm_daemon_runtime_application_status_t application_tool_request(
     cbm_daemon_application_session_t *session, const uint8_t *request, uint32_t request_length,
     uint8_t **response_out, uint32_t *response_length_out) {
@@ -2488,7 +2609,18 @@ static cbm_daemon_runtime_application_status_t application_tool_request(
         free(args);
         return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
     }
-    char *response = cbm_mcp_handle_tool(session->mcp, tool, args);
+    char *response = NULL;
+    const cbm_operation_descriptor_t *operation = cbm_operation_find(tool);
+    if (operation) {
+        cbm_operation_context_t context = {0};
+        cbm_operation_result_t result = cbm_operation_execute(&context, operation->id, args);
+        if (result.payload) {
+            response = cbm_mcp_text_result(result.payload, result.is_error);
+        }
+        cbm_operation_result_dispose(&result);
+    } else {
+        response = cbm_mcp_handle_tool(session->mcp, tool, args);
+    }
     free(tool);
     free(args);
     if (!response) {
@@ -2571,6 +2703,9 @@ static cbm_daemon_runtime_application_status_t application_request_dispatch(
     case CBM_DAEMON_APPLICATION_REQUEST_MCP:
         return application_mcp_request(session, request, request_length, response_out,
                                        response_length_out);
+    case CBM_DAEMON_APPLICATION_REQUEST_OPERATION:
+        return application_operation_request(session, request, request_length, response_out,
+                                             response_length_out);
     case CBM_DAEMON_APPLICATION_REQUEST_TOOL:
         return application_tool_request(session, request, request_length, response_out,
                                         response_length_out);
@@ -2587,7 +2722,8 @@ static cbm_daemon_runtime_application_status_t application_request_dispatch(
         if (!input) {
             return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
         }
-        char *response = cbm_hook_augment_process_for(session->mcp, input, session->hook_event,
+        const char *session_root = cbm_mcp_server_session_root(session->mcp);
+        char *response = cbm_hook_augment_process_for(session_root, input, session->hook_event,
                                                       session->hook_dialect);
         free(input);
         if (response) {
@@ -3298,6 +3434,31 @@ cbm_daemon_runtime_application_status_t cbm_daemon_application_client_mcp_tagged
     return application_client_text_request_tagged(client, request_token,
                                                   CBM_DAEMON_APPLICATION_REQUEST_MCP, message,
                                                   response_out, response_length_out, timeout_ms);
+}
+
+cbm_daemon_runtime_application_status_t cbm_daemon_application_client_operation(
+    cbm_daemon_runtime_client_t *client, const char *operation_name, const char *args_json,
+    uint8_t **response_out, uint32_t *response_length_out, uint32_t timeout_ms) {
+    if (!client || !operation_name || !operation_name[0] || !args_json || !args_json[0] ||
+        !cbm_operation_find(operation_name)) {
+        return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
+    }
+    size_t name_length = strlen(operation_name);
+    size_t args_length = strlen(args_json);
+    uint64_t total = (uint64_t)APPLICATION_OPERATION_HEADER_SIZE + name_length + args_length;
+    if (name_length > UINT32_MAX || total > CBM_DAEMON_RUNTIME_APPLICATION_PAYLOAD_MAX) {
+        return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
+    }
+    uint8_t *request = malloc((size_t)total);
+    if (!request) {
+        return CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
+    }
+    request[0] = CBM_DAEMON_APPLICATION_REQUEST_OPERATION;
+    application_put_u32(request + 1, (uint32_t)name_length);
+    memcpy(request + APPLICATION_OPERATION_HEADER_SIZE, operation_name, name_length);
+    memcpy(request + APPLICATION_OPERATION_HEADER_SIZE + name_length, args_json, args_length);
+    return application_client_exchange(client, request, (uint32_t)total, response_out,
+                                       response_length_out, timeout_ms);
 }
 
 cbm_daemon_runtime_application_status_t cbm_daemon_application_client_tool(

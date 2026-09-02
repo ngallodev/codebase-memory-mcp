@@ -1,0 +1,88 @@
+name: Windows CLI Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      fixture_files:
+        description: Files per generated concurrency fixture
+        required: false
+        default: "180"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate-windows-x64:
+    name: Native Windows x64 validation (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          msystem: CLANG64
+          path-type: inherit
+          install: >-
+            mingw-w64-clang-x86_64-clang
+            mingw-w64-clang-x86_64-zlib
+            mingw-w64-clang-x86_64-python3
+            make
+            git
+            coreutils
+            zip
+
+      - name: Build native production CLI
+        shell: msys2 {0}
+        run: scripts/build.sh --with-ui CC=clang CXX=clang++
+
+      - name: Verify Windows executable exists
+        shell: msys2 {0}
+        run: |
+          test -s build/c/codebase-memory-cli.exe
+          build/c/codebase-memory-cli.exe --version
+          build/c/codebase-memory-cli.exe --help >/dev/null
+
+      - name: Run CLI smoke invariants
+        shell: msys2 {0}
+        run: |
+          chmod +x scripts/smoke-invariants.sh
+          scripts/smoke-invariants.sh build/c/codebase-memory-cli.exe
+
+      - name: Run native Windows validation and concurrency evidence
+        shell: msys2 {0}
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          mkdir -p validation-evidence
+          python scripts/evaluate-windows-validation.py \
+            --binary build/c/codebase-memory-cli.exe \
+            --output "validation-evidence/windows-validation-${{ matrix.os }}.json" \
+            --concurrency-output "validation-evidence/concurrency-${{ matrix.os }}.json" \
+            --fixture-files "${{ inputs.fixture_files }}"
+
+      - name: Package validation candidate
+        if: always()
+        shell: msys2 {0}
+        run: |
+          mkdir -p validation-package
+          cp build/c/codebase-memory-cli.exe validation-package/ 2>/dev/null || true
+          cp THIRD_PARTY.md validation-package/ 2>/dev/null || true
+          cp README.md validation-package/ 2>/dev/null || true
+          cp validation-evidence/*.json validation-package/ 2>/dev/null || true
+          (cd validation-package && zip -9 -r "../codebase-memory-cli-windows-x64-${{ matrix.os }}-validation.zip" .)
+
+      - name: Upload Windows validation candidate and evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codebase-memory-cli-windows-x64-${{ matrix.os }}-validation
+          path: |
+            codebase-memory-cli-windows-x64-${{ matrix.os }}-validation.zip
+            validation-evidence/*.json
+          if-no-files-found: error

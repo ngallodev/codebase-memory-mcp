@@ -89,7 +89,9 @@ typedef struct {
 typedef enum {
     CBM_DAEMON_APPLICATION_REQUEST_SET_CONTEXT = 1,
     CBM_DAEMON_APPLICATION_REQUEST_MCP = 2,
-    CBM_DAEMON_APPLICATION_REQUEST_TOOL = 3,
+    CBM_DAEMON_APPLICATION_REQUEST_OPERATION = 3,
+    /* Transitional legacy dispatcher for application behavior not yet extracted. */
+    CBM_DAEMON_APPLICATION_REQUEST_TOOL = 7,
     CBM_DAEMON_APPLICATION_REQUEST_HOOK_AUGMENT = 4,
     CBM_DAEMON_APPLICATION_REQUEST_SET_UI_CONFIG = 5,
     CBM_DAEMON_APPLICATION_REQUEST_UI_READINESS_PROOF = 6,
@@ -155,6 +157,14 @@ cbm_daemon_runtime_application_status_t cbm_daemon_application_client_mcp_tagged
     const char *message, uint8_t **response_out, uint32_t *response_length_out,
     uint32_t timeout_ms);
 
+/* Execute a protocol-neutral operation. The response is the canonical operation
+ * payload, never an MCP/JSON-RPC envelope. */
+cbm_daemon_runtime_application_status_t cbm_daemon_application_client_operation(
+    cbm_daemon_runtime_client_t *client, const char *operation_name, const char *args_json,
+    uint8_t **response_out, uint32_t *response_length_out, uint32_t timeout_ms);
+
+/* Transitional compatibility path for behavior still owned by the legacy MCP
+ * dispatcher. New/extracted callers must use client_operation instead. */
 cbm_daemon_runtime_application_status_t cbm_daemon_application_client_tool(
     cbm_daemon_runtime_client_t *client, const char *tool_name, const char *args_json,
     uint8_t **response_out, uint32_t *response_length_out, uint32_t timeout_ms);

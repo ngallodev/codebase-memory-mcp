@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# install.sh — One-line installer for codebase-memory-mcp.
+# install.sh — One-line installer for codebase-memory-cli.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash
@@ -19,6 +19,8 @@ main() {
 REPO="DeusData/codebase-memory-mcp"
 INSTALL_DIR="$HOME/.local/bin"
 SKIP_CONFIG=false
+CLIENTS_SET=false
+CLIENTS=""
 CBM_DOWNLOAD_URL="${CBM_DOWNLOAD_URL:-https://github.com/${REPO}/releases/latest/download}"
 
 # Security: every remote hop must remain HTTPS. Plain HTTP is accepted only
@@ -79,25 +81,45 @@ download_file() {
     fi
 }
 
-for arg in "$@"; do
-    case "$arg" in
-        --dir=*)        INSTALL_DIR="${arg#--dir=}" ;;
-        --skip-config)  SKIP_CONFIG=true ;;
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --dir=*)
+            INSTALL_DIR="${1#--dir=}"
+            shift
+            ;;
+        --dir)
+            if [ "$#" -lt 2 ] || [[ "$2" == -* ]]; then
+                echo "install.sh: '--dir' needs a value. Please consult --help." >&2
+                exit 2
+            fi
+            INSTALL_DIR="$2"
+            shift 2
+            ;;
+        --clients=*)
+            CLIENTS_SET=true
+            CLIENTS="${1#--clients=}"
+            shift
+            ;;
+        --skip-config)
+            SKIP_CONFIG=true
+            shift
+            ;;
         --help|-h)
-            echo "Usage: install.sh [--dir=<path>] [--skip-config]"
-            echo "  --dir PATH     Install directory (default: ~/.local/bin)"
-            echo "  --skip-config  Skip automatic agent configuration"
+            echo "Usage: install.sh [--dir=<path>] [--clients=<list>] [--skip-config]"
+            echo "  --dir PATH       Install directory (default: ~/.local/bin)"
+            echo "  --clients LIST   Configure only comma-separated clients"
+            echo "  --skip-config    Skip automatic agent configuration"
             exit 0
             ;;
+        -*)
+            echo "install.sh: unknown option '$1'. Please consult --help." >&2
+            exit 2
+            ;;
+        *)
+            echo "install.sh: unexpected argument '$1'. Please consult --help." >&2
+            exit 2
+            ;;
     esac
-done
-# Handle --dir <path> (space-separated)
-prev=""
-for arg in "$@"; do
-    if [ "$prev" = "--dir" ]; then
-        INSTALL_DIR="$arg"
-    fi
-    prev="$arg"
 done
 
 detect_os() {
@@ -129,10 +151,10 @@ detect_arch() {
 OS=$(detect_os)
 ARCH=$(detect_arch)
 
-echo "codebase-memory-mcp installer"
+echo "codebase-memory-cli installer"
 echo "  os:      $OS"
 echo "  arch:    $ARCH"
-echo "  target:  $INSTALL_DIR/codebase-memory-mcp"
+echo "  target:  $INSTALL_DIR/codebase-memory-cli"
 echo ""
 
 # Build download URL
@@ -148,7 +170,7 @@ fi
 PORTABLE=""
 [ "$OS" = "linux" ] && PORTABLE="-portable"
 
-ARCHIVE="codebase-memory-mcp-${OS}-${ARCH}${PORTABLE}.${EXT}"
+ARCHIVE="codebase-memory-cli-${OS}-${ARCH}${PORTABLE}.${EXT}"
 
 URL="${CBM_DOWNLOAD_URL}/${ARCHIVE}"
 
@@ -224,10 +246,10 @@ echo "Checksum verified."
 # release assets use the same four-member root layout; anything outside that
 # closed set is a release-integrity failure, not a sidecar to ignore.
 if [ "$OS" = "windows" ]; then
-    ARCHIVE_BINARY="codebase-memory-mcp.exe"
+    ARCHIVE_BINARY="codebase-memory-cli.exe"
     ARCHIVE_INSTALLER="install.ps1"
 else
-    ARCHIVE_BINARY="codebase-memory-mcp"
+    ARCHIVE_BINARY="codebase-memory-cli"
     ARCHIVE_INSTALLER="install.sh"
 fi
 ARCHIVE_MEMBERS_FILE="$DLDIR/archive-members.txt"
@@ -312,8 +334,11 @@ if ! CANDIDATE_VERSION=$("$DLBIN" --version 2>&1); then
 fi
 echo "Verified candidate: $CANDIDATE_VERSION"
 
-DEST="$INSTALL_DIR/codebase-memory-mcp"
+DEST="$INSTALL_DIR/codebase-memory-cli"
 INSTALL_ARGS=(-y --force "--dir=$INSTALL_DIR")
+if [ "$CLIENTS_SET" = true ]; then
+    INSTALL_ARGS+=("--clients=$CLIENTS")
+fi
 if [ "$SKIP_CONFIG" = true ]; then
     INSTALL_ARGS+=(--skip-config)
 fi
@@ -371,7 +396,7 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
 fi
 
 echo ""
-echo "Done! Restart your coding agent to start using codebase-memory-mcp."
+echo "Done! Restart your coding agent to start using codebase-memory-cli."
 
 } # end main()
 

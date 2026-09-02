@@ -13,8 +13,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct cbm_mcp_server cbm_mcp_server_t;
-
 /* ── Version ──────────────────────────────────────────────────── */
 
 /* Set the version string (called from main). */
@@ -46,6 +44,9 @@ bool cbm_cli_args_from_stdin_allowed(const char *tool_name, bool stdin_is_tty);
  * derived from its input_schema, to stdout. Returns 0 if the tool is known,
  * non-zero (and prints nothing) if it is not. */
 int cbm_cli_print_tool_help(const char *tool_name);
+/* Print only schema-derived flags for a tool. Used by canonical CLI commands
+ * so their help can use CLI-first usage text without duplicating schemas. */
+int cbm_cli_print_tool_flags(const char *tool_name);
 
 /* Inspect a raw MCP tool-result envelope. Returns true only when the root
  * object carries the exact boolean field `isError: true`; malformed JSON,
@@ -544,17 +545,16 @@ typedef enum {
  * only dialect that surfaces a stdout systemMessage to the user. */
 const char *cbm_hook_admission_notice(cbm_hook_admission_t reason, const char *hook_dialect);
 
-/* Process one already-read hook payload using a caller-owned MCP session.
- * Returns a malloc-owned hook output JSON string, or NULL for fail-open/no
- * augmentation. This is the daemon entry; it never arms a process-global
- * timer and never constructs a second store/session. */
-char *cbm_hook_augment_process(cbm_mcp_server_t *srv, const char *input_json);
+/* Process one already-read hook payload through protocol-neutral operations.
+ * session_root is an optional borrowed fallback when the vendor payload omits cwd.
+ * Returns malloc-owned hook output JSON, or NULL for fail-open/no augmentation. */
+char *cbm_hook_augment_process(const char *session_root, const char *input_json);
 
 /* Dialect-aware daemon entry. forced_event and dialect_name are borrowed and
  * may be NULL for the ordinary event dialect. Unsupported combinations fail
  * open with NULL, matching the direct hook command. */
 bool cbm_hook_augment_invocation_supported(const char *forced_event, const char *dialect_name);
-char *cbm_hook_augment_process_for(cbm_mcp_server_t *srv, const char *input_json,
+char *cbm_hook_augment_process_for(const char *session_root, const char *input_json,
                                    const char *forced_event, const char *dialect_name);
 
 /* True for an absolute path the augmenter can walk up: POSIX "/..." or a
