@@ -2436,7 +2436,7 @@ static void add_git_context_string(yyjson_mut_doc *doc, yyjson_mut_val *obj, con
     }
 }
 
-static void add_git_context_json(yyjson_mut_doc *doc, yyjson_mut_val *obj, const char *root_path) {
+static __attribute__((unused)) void add_git_context_json(yyjson_mut_doc *doc, yyjson_mut_val *obj, const char *root_path) {
     cbm_git_context_t ctx = {0};
     (void)cbm_git_context_resolve(root_path, &ctx);
 
@@ -2626,7 +2626,7 @@ static cbm_store_t *resolve_store_fallback_scan(const char *project) {
 
 /* Open a .db file briefly, collect node/edge counts and root_path,
  * then append a JSON entry to arr. */
-static void build_project_json_entry(yyjson_mut_doc *doc, yyjson_mut_val *arr, const char *dir_path,
+static __attribute__((unused)) void build_project_json_entry(yyjson_mut_doc *doc, yyjson_mut_val *arr, const char *dir_path,
                                      const char *name, size_t name_len, int64_t size_bytes,
                                      bool include_details) {
     (void)name_len;
@@ -2684,7 +2684,7 @@ static void build_project_json_entry(yyjson_mut_doc *doc, yyjson_mut_val *arr, c
     yyjson_mut_arr_add_val(arr, p);
 }
 
-static int project_db_name_cmp(const void *a, const void *b) {
+static __attribute__((unused)) int project_db_name_cmp(const void *a, const void *b) {
     const char *const *sa = (const char *const *)a;
     const char *const *sb = (const char *const *)b;
     return strcmp(*sa, *sb);
@@ -2700,7 +2700,7 @@ static int project_db_name_cmp(const void *a, const void *b) {
  * nodes (e.g., an empty or half-initialised project).
  * Callers that receive a non-NULL return value must free(project) themselves
  * before returning the error string. */
-static char *verify_project_indexed(cbm_store_t *store, const char *project) {
+static __attribute__((unused)) char *verify_project_indexed(cbm_store_t *store, const char *project) {
     cbm_project_t proj_check = {0};
     if (cbm_store_get_project(store, project, &proj_check) != CBM_STORE_OK) {
         char *err = build_project_list_error("project not indexed — run index_repository first");
@@ -3127,7 +3127,7 @@ static char *handle_compare_graphs(cbm_mcp_server_t *server, const char *args) {
 }
 
 /* Validate edge type: uppercase letters + underscore only, max 64 chars. */
-static bool validate_edge_type(const char *s) {
+static __attribute__((unused)) bool validate_edge_type(const char *s) {
     if (!s || strlen(s) > CBM_SZ_64) {
         return false;
     }
@@ -3323,7 +3323,7 @@ static char *bm25_file_pattern_like(const char *file_pattern) {
 /* Run the BM25 full-text search path and return the JSON result string.
  * Returns NULL if FTS5 is unavailable or the query produced no usable tokens,
  * in which case the caller falls back to the regex-based search path. */
-static char *bm25_search(cbm_store_t *store, const char *project, const char *query,
+static __attribute__((unused)) char *bm25_search(cbm_store_t *store, const char *project, const char *query,
                          const char *file_pattern, int limit, int offset, bool toon) {
     sqlite3 *db = cbm_store_get_db(store);
     if (!db) {
@@ -3540,7 +3540,7 @@ static int extract_semantic_keywords(yyjson_val *sq_val, const char **keywords, 
 
 /* Emit vector-search hits in the json-tree model: "semantic": {cols, rows}
  * — score order preserved (ranked output is never regrouped). */
-static void emit_semantic_results(yyjson_mut_doc *doc, yyjson_mut_val *root,
+static __attribute__((unused)) void emit_semantic_results(yyjson_mut_doc *doc, yyjson_mut_val *root,
                                   cbm_vector_result_t *vresults, int vcount) {
     yyjson_mut_val *sem = yyjson_mut_obj(doc);
     yyjson_mut_val *scols = yyjson_mut_arr(doc);
@@ -3566,7 +3566,7 @@ static void emit_semantic_results(yyjson_mut_doc *doc, yyjson_mut_val *root,
  * *out_vcount (caller frees via cbm_store_free_vector_results when vcount>0).
  * Returns true if semantic_query was provided as a non-array (type error —
  * caller should surface to the user). */
-static bool run_semantic_query_core(const char *args, cbm_store_t *store, const char *project,
+static __attribute__((unused)) bool run_semantic_query_core(const char *args, cbm_store_t *store, const char *project,
                                     int limit, cbm_vector_result_t **out_vresults, int *out_vcount,
                                     bool *out_present) {
     enum { MAX_KW_SEARCH = 32 };
@@ -3632,7 +3632,7 @@ static bool sg_field_is_core(const char *f) {
  * pointers owned by the returned doc (caller frees the doc after emission).
  * Blocked internal fields are silently dropped; core-column requests are
  * dropped too and reported via *core_requested so the emitter can hint. */
-static int sg_parse_fields(const char *args, const char *out[], int max_out, yyjson_doc **out_owner,
+static __attribute__((unused)) int sg_parse_fields(const char *args, const char *out[], int max_out, yyjson_doc **out_owner,
                            bool *core_requested) {
     *out_owner = NULL;
     if (core_requested) {
@@ -3720,7 +3720,7 @@ static void sg_lines_str(char *out, size_t sz, int start, int end) {
 }
 
 /* Emit the regex-path search results as a TOON table. */
-static void emit_search_results_toon(cbm_sb_t *sb, const cbm_search_output_t *out, int offset,
+static __attribute__((unused)) void emit_search_results_toon(cbm_sb_t *sb, const cbm_search_output_t *out, int offset,
                                      const char *const *fields, int nfields, bool detail_ids) {
     cbm_tree_scalar_int(sb, "total", out->total);
     if (detail_ids) {
@@ -3782,7 +3782,7 @@ static int sg_cmp_by_qn(const void *pa, const void *pb) {
     return strcmp(qa, qb);
 }
 
-static void emit_search_results_tree(cbm_sb_t *sb, cbm_search_output_t *out, int offset,
+static __attribute__((unused)) void emit_search_results_tree(cbm_sb_t *sb, cbm_search_output_t *out, int offset,
                                      const char *const *fields, int nfields, cbm_store_t *store,
                                      const char *relationship, bool include_connected) {
     char buf[CBM_SZ_512];
@@ -3857,7 +3857,7 @@ static void emit_search_results_tree(cbm_sb_t *sb, cbm_search_output_t *out, int
  * as JSON for agents that need structured parsing — groups with a shared
  * (qn_prefix, file) and column-ordered row ARRAYS (never per-row key
  * envelopes; that legacy shape was 84% key overhead). */
-static void emit_search_results_tree_json(yyjson_mut_doc *doc, yyjson_mut_val *root,
+static __attribute__((unused)) void emit_search_results_tree_json(yyjson_mut_doc *doc, yyjson_mut_val *root,
                                           cbm_search_output_t *out, int offset,
                                           const char *const *fields, int nfields,
                                           cbm_store_t *store, const char *relationship,
@@ -3939,7 +3939,7 @@ static void emit_search_results_tree_json(yyjson_mut_doc *doc, yyjson_mut_val *r
 }
 
 /* Emit semantic vector-search results as a TOON table. */
-static void emit_semantic_results_toon(cbm_sb_t *sb, const cbm_vector_result_t *vresults,
+static __attribute__((unused)) void emit_semantic_results_toon(cbm_sb_t *sb, const cbm_vector_result_t *vresults,
                                        int vcount) {
     static const char *const cols[] = {"qn", "label", "file", "score"};
     cbm_tree_table_header(sb, "semantic", vcount, cols, 4);
@@ -3958,7 +3958,7 @@ static void emit_semantic_results_toon(cbm_sb_t *sb, const cbm_vector_result_t *
  * the graph, stored outside it). Full per-project list, capped generously. */
 enum { COVERAGE_FILE_CAP = 500 };
 
-static void add_coverage_report(yyjson_mut_doc *doc, yyjson_mut_val *root, cbm_store_t *store,
+static __attribute__((unused)) void add_coverage_report(yyjson_mut_doc *doc, yyjson_mut_val *root, cbm_store_t *store,
                                 const char *project) {
     cbm_coverage_row_t *rows = NULL;
     int count = 0;
@@ -4071,7 +4071,7 @@ typedef enum {
 /* Normalize an untrusted repository-relative path without touching the
  * filesystem. Absolute paths, drive/UNC paths, control bytes, and any `..`
  * component are rejected. A root scope (`.`) normalizes to the empty prefix. */
-static coverage_path_result_t coverage_normalize_rel(const char *input, bool allow_root, char *out,
+static __attribute__((unused)) coverage_path_result_t coverage_normalize_rel(const char *input, bool allow_root, char *out,
                                                      size_t out_size) {
     if (!input || !out || out_size == 0U) {
         return COVERAGE_PATH_INVALID;
@@ -4134,7 +4134,7 @@ static int64_t coverage_stat_mtime_ns(const struct stat *st) {
 #endif
 }
 
-static const char *coverage_path_freshness(cbm_store_t *store, const char *project,
+static __attribute__((unused)) const char *coverage_path_freshness(cbm_store_t *store, const char *project,
                                            const char *root_path, const char *rel_path,
                                            bool *outside) {
     *outside = false;
@@ -4216,7 +4216,7 @@ static void coverage_add_ranges(yyjson_mut_doc *doc, yyjson_mut_val *row, const 
     }
 }
 
-static void coverage_add_row_json(yyjson_mut_doc *doc, yyjson_mut_val *array,
+static __attribute__((unused)) void coverage_add_row_json(yyjson_mut_doc *doc, yyjson_mut_val *array,
                                   const cbm_coverage_row_t *row, const char *requested_path) {
     yyjson_mut_val *item = yyjson_mut_obj(doc);
     yyjson_mut_obj_add_strcpy(doc, item, "path", row->rel_path ? row->rel_path : "");
@@ -4233,7 +4233,7 @@ static void coverage_add_row_json(yyjson_mut_doc *doc, yyjson_mut_val *array,
     yyjson_mut_arr_add_val(array, item);
 }
 
-static const char *coverage_status(const cbm_coverage_row_t *rows, int count,
+static __attribute__((unused)) const char *coverage_status(const cbm_coverage_row_t *rows, int count,
                                    const char *requested_path, const char *recording_status,
                                    bool generation_matches, bool lookup_ok,
                                    bool exact_path_verified) {
@@ -4273,7 +4273,7 @@ static const char *coverage_status(const cbm_coverage_row_t *rows, int count,
     return "no_recorded_issue";
 }
 
-static const char *coverage_recommended_action(const char *status, const char *freshness) {
+static __attribute__((unused)) const char *coverage_recommended_action(const char *status, const char *freshness) {
     if (!freshness || strcmp(freshness, "metadata_match") != 0) {
         return "read_source_and_reindex";
     }
@@ -4376,7 +4376,7 @@ static char *handle_delete_project(cbm_mcp_server_t *srv, const char *args) {
 /* Resolve edge types from args: explicit array > mode-based > default ("CALLS").
  * Writes types into out_types (max 16). Returns the parsed yyjson_doc if explicit
  * edge_types were found (caller must keep alive until types are consumed), or NULL. */
-static yyjson_doc *resolve_trace_edge_types(const char *args, const char *mode,
+static __attribute__((unused)) yyjson_doc *resolve_trace_edge_types(const char *args, const char *mode,
                                             const char **out_types, int *out_count) {
     static const char *mode_calls[] = {"CALLS"};
     static const char *mode_data_flow[] = {"CALLS", "DATA_FLOWS"};
@@ -4581,7 +4581,7 @@ static bool bfs_edge_evidence_for_hop(cbm_traverse_result_t *tr, int64_t hop_nod
 /* TOON table for one trace direction: callees[N]{qn,hop,...} with optional
  * risk / test / args columns. `name` is omitted (it is the qn's last
  * segment); the per-item JSON key envelope was 84% of the legacy payload. */
-static void bfs_to_toon_table(cbm_sb_t *sb, const char *key, cbm_traverse_result_t *tr,
+static __attribute__((unused)) void bfs_to_toon_table(cbm_sb_t *sb, const char *key, cbm_traverse_result_t *tr,
                               bool risk_labels, bool include_tests, bool data_flow) {
     int visible = 0;
     for (int i = 0; i < tr->visited_count; i++) {
@@ -4691,7 +4691,7 @@ static bool node_is_real_callable_def(const cbm_node_t *n) {
  * differ in length score differently, dodge the tie, and get their caller sets
  * unioned by bfs_union_same_name (#546) into one confidently-conflated answer.
  * Body-less .d.ts stubs still union with their implementation (#650). */
-static int pick_resolved_node(const cbm_node_t *nodes, int count, bool *ambiguous) {
+static __attribute__((unused)) int pick_resolved_node(const cbm_node_t *nodes, int count, bool *ambiguous) {
     *ambiguous = false;
     if (count <= 1) {
         return 0;
@@ -4743,7 +4743,7 @@ static int node_hop_cmp_hop_id(const void *pa, const void *pb) {
  * nodes and silently truncated by tracing only one (#546). visited hops are
  * deduped by node id; edges are concatenated. Ownership of all heap fields
  * transfers into *out, freed by cbm_store_traverse_free. */
-static void bfs_union_same_name(cbm_store_t *store, const cbm_node_t *nodes, int node_count,
+static __attribute__((unused)) void bfs_union_same_name(cbm_store_t *store, const cbm_node_t *nodes, int node_count,
                                 const char *direction, const char **edge_types, int edge_type_count,
                                 int depth, int limit, cbm_traverse_result_t *out) {
     memset(out, 0, sizeof(*out));
@@ -4838,7 +4838,7 @@ typedef struct {
 
 /* Hash the params that define the traversal identity. A cursor replayed with
  * different params must fail loudly, never silently mis-skip. */
-static uint64_t trace_params_hash(const char *project, const char *func_name, const char *direction,
+static __attribute__((unused)) uint64_t trace_params_hash(const char *project, const char *func_name, const char *direction,
                                   const char *mode, int depth, bool include_tests, int limit) {
     uint64_t h = 0xcbf29ce484222325ULL;
     h = cursor_fnv1a64(project ? project : "", h);
@@ -4854,13 +4854,13 @@ static uint64_t trace_params_hash(const char *project, const char *func_name, co
     return h;
 }
 
-static void trace_cursor_encode(const trace_cursor_t *c, char *buf, size_t bufsz) {
+static __attribute__((unused)) void trace_cursor_encode(const trace_cursor_t *c, char *buf, size_t bufsz) {
     snprintf(buf, bufsz, "c1.%c.%s.%016llx.%d.%lld", c->leg, c->generation,
              (unsigned long long)c->qhash, c->hop, (long long)c->node_id);
 }
 
 /* Decode + validate. Returns NULL on success, else a static teaching error. */
-static const char *trace_cursor_decode(const char *token, const char *current_generation,
+static __attribute__((unused)) const char *trace_cursor_decode(const char *token, const char *current_generation,
                                        uint64_t expected_qhash, trace_cursor_t *out) {
     memset(out, 0, sizeof(*out));
     if (!token || strncmp(token, "c1.", 3) != 0) {
@@ -4898,7 +4898,7 @@ static const char *trace_cursor_decode(const char *token, const char *current_ge
 
 /* Slice a canonically-ordered traversal at the watermark: index of the first
  * row strictly AFTER (hop, id). */
-static int trace_watermark_index(const cbm_traverse_result_t *tr, int hop, int64_t node_id) {
+static __attribute__((unused)) int trace_watermark_index(const cbm_traverse_result_t *tr, int hop, int64_t node_id) {
     for (int i = 0; i < tr->visited_count; i++) {
         if (tr->visited[i].hop > hop ||
             (tr->visited[i].hop == hop && tr->visited[i].node.id > node_id)) {
@@ -4911,7 +4911,7 @@ static int trace_watermark_index(const cbm_traverse_result_t *tr, int hop, int64
 /* json-stringified tree for one trace leg: same grouped model as the text
  * output — {cols, groups:[{qn_prefix, rows:[[name,hop,...]]}]}. Optional
  * risk/args columns mirror the flags. */
-static yyjson_mut_val *bfs_to_tree_json(yyjson_mut_doc *doc, cbm_traverse_result_t *tr,
+static __attribute__((unused)) yyjson_mut_val *bfs_to_tree_json(yyjson_mut_doc *doc, cbm_traverse_result_t *tr,
                                         bool risk_labels, bool include_tests, bool data_flow,
                                         bool include_evidence) {
     yyjson_mut_val *leg = yyjson_mut_obj(doc);
@@ -5018,7 +5018,7 @@ static int tree_hop_cmp_qn(const void *pa, const void *pb) {
     return a->hop - b->hop;
 }
 
-static void bfs_to_tree_table(cbm_sb_t *sb, const char *key, cbm_traverse_result_t *tr,
+static __attribute__((unused)) void bfs_to_tree_table(cbm_sb_t *sb, const char *key, cbm_traverse_result_t *tr,
                               bool include_tests, bool include_evidence) {
     int visible = 0;
     for (int i = 0; i < tr->visited_count; i++) {
@@ -5082,7 +5082,7 @@ static void bfs_to_tree_table(cbm_sb_t *sb, const char *key, cbm_traverse_result
 /* Clamp a client-supplied traversal depth to the MCP ceiling (cbm_mcp_max_depth),
  * WARN-logging when it does so — never a silent truncation (#887). An unclamped
  * `depth` would drive the shared cbm_store_bfs to an arbitrary hop count. */
-static int clamp_mcp_depth(int depth, const char *tool) {
+static __attribute__((unused)) int clamp_mcp_depth(int depth, const char *tool) {
     int cap = cbm_mcp_max_depth();
     if (depth > cap) {
         char req_buf[16];
@@ -5097,7 +5097,7 @@ static int clamp_mcp_depth(int depth, const char *tool) {
 
 /* ── Helper: free heap fields of a stack-allocated node ────────── */
 
-static void free_node_contents(cbm_node_t *n) {
+static __attribute__((unused)) void free_node_contents(cbm_node_t *n) {
     safe_str_free(&n->project);
     safe_str_free(&n->label);
     safe_str_free(&n->name);
@@ -6616,7 +6616,7 @@ static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
 /* ── get_code_snippet ─────────────────────────────────────────── */
 
 /* Copy a node from an array into a heap-allocated standalone node. */
-static void copy_node(const cbm_node_t *src, cbm_node_t *dst) {
+static __attribute__((unused)) void copy_node(const cbm_node_t *src, cbm_node_t *dst) {
     dst->id = src->id;
     dst->project = heap_strdup(src->project);
     dst->label = heap_strdup(src->label);
@@ -6629,7 +6629,7 @@ static void copy_node(const cbm_node_t *src, cbm_node_t *dst) {
 }
 
 /* Build a JSON suggestions response for ambiguous or fuzzy results. */
-static char *snippet_suggestions(const char *input, cbm_node_t *nodes, int count) {
+static __attribute__((unused)) char *snippet_suggestions(const char *input, cbm_node_t *nodes, int count) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
@@ -6814,7 +6814,7 @@ static void add_snippet_coverage_note(yyjson_mut_doc *doc, yyjson_mut_val *root_
     cbm_store_free_coverage(rows, count);
 }
 
-static char *build_snippet_response(cbm_mcp_server_t *srv, cbm_node_t *node,
+static __attribute__((unused)) char *build_snippet_response(cbm_mcp_server_t *srv, cbm_node_t *node,
                                     const char *match_method, bool include_neighbors,
                                     cbm_node_t *alternatives, int alt_count) {
     char *root_path = get_project_root(srv, node->project);

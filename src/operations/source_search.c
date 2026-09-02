@@ -1089,7 +1089,7 @@ static bool validate_search_path_arg(const char *s) {
  * delayed variables, and caret changes parsing. Never interpolate them from a
  * stored project root or request branch into the Windows detect_changes payload.
  * /V:OFF is defense in depth for exclamation; validation remains the boundary. */
-static bool validate_windows_cmd_interpolation_arg(const char *s) {
+static __attribute__((unused)) bool validate_windows_cmd_interpolation_arg(const char *s) {
 #ifdef _WIN32
     return s && strpbrk(s, "%!^") == NULL;
 #else
@@ -1624,4 +1624,3 @@ cbm_operation_result_t cbm_source_search_operation_execute(
 }
 
 /* ── detect_changes ───────────────────────────────────────────── */
-
