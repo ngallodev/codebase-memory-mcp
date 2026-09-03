@@ -1939,7 +1939,7 @@ static void application_update_publish_terminal_locked(cbm_daemon_application_t 
         cbm_compare_versions(latest_version, cbm_cli_get_version()) > 0) {
         (void)snprintf(application->update_notice, sizeof(application->update_notice),
                        "Update available: %s -> %s -- run: codebase-memory-cli update  |  "
-                       "Enjoying codebase-memory-mcp? Please leave a star: "
+                       "Enjoying codebase-memory-cli? Please leave a star: "
                        "https://github.com/DeusData/codebase-memory-mcp",
                        cbm_cli_get_version(), latest_version);
         cbm_log_info("update.available", "current", cbm_cli_get_version(), "latest",

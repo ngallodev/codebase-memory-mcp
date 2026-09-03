@@ -220,7 +220,7 @@ cbm_daemon_process_role_t cbm_daemon_process_role(int argc, char *const argv[]) 
 }
 
 bool cbm_daemon_process_role_requires_client(cbm_daemon_process_role_t role) {
-    return role == CBM_DAEMON_PROCESS_MCP_CLIENT || role == CBM_DAEMON_PROCESS_HOOK_CLIENT;
+    return role == CBM_DAEMON_PROCESS_BOOTSTRAP_CLIENT || role == CBM_DAEMON_PROCESS_HOOK_CLIENT;
 }
 
 /* #1574/#1621: the rendezvous directory is created under %LOCALAPPDATA%
@@ -252,7 +252,7 @@ cbm_daemon_ipc_endpoint_t *cbm_daemon_bootstrap_endpoint_new(const char *runtime
     /* An explicit parent keeps precedence: it carries the compile-time test
      * seam and the lifecycle guards' isolated namespace. The override is
      * resolved HERE, the one function every product endpoint goes through
-     * (daemon, MCP client, local CLI, index worker, activation), so no call
+     * (daemon, bootstrap client, local CLI, index worker, activation), so no call
      * site can silently keep the default. */
     char override_parent[BOOTSTRAP_PATH_CAP];
     const char *parent =

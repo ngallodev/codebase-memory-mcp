@@ -91,7 +91,7 @@ install_root="${install_home%/*}"
    "$install_runtime" == "$install_root/runtime" ]] || fail "install env did not share one private root"
 ENTRY_POINTS=(
     scripts/security-install.sh scripts/security-fuzz.sh scripts/security-fuzz-random.sh
-    scripts/security-network.sh tests/test_parent_watchdog.sh tests/test_worker_watchdog.sh
+    scripts/security-network.sh tests/test_worker_watchdog.sh
     tests/test_worker_error_response.sh tests/test_hook_conflict_notice.sh
 )
 for entry in "${ENTRY_POINTS[@]}"; do

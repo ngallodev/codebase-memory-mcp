@@ -55,7 +55,7 @@ enum {
      * the OS finishes reclaiming a dead holder's lock. This only bounds a peer
      * that never finishes, so a command cannot hang indefinitely. */
     MAIN_STARTUP_CONTENTION_CEILING_MS = 120000,
-    MAIN_MCP_STARTUP_TIMEOUT_MS = 30000,
+    MAIN_CLIENT_STARTUP_TIMEOUT_MS = 30000,
     MAIN_REQUEST_TIMEOUT_MS = 24 * 60 * 60 * 1000,
     MAIN_HOOK_CONNECT_TIMEOUT_MS = 250,
     MAIN_HOOK_REQUEST_TIMEOUT_MS = 1500,
@@ -524,28 +524,6 @@ static bool worker_start_parent_watchdog(pid_t initial_ppid) {
     return cbm_thread_detach(&worker_watchdog_tid) == 0;
 }
 
-#if 0 /* retained only as historical MCP-client source */
-static bool client_start_parent_watchdog(pid_t initial_ppid) {
-    if (initial_ppid <= 1) {
-        return true;
-    }
-    static parent_watchdog_config_t client_config;
-    client_config.initial_ppid = initial_ppid;
-    client_config.kill_worker_group = false;
-    client_config.exit_on_parent_death = true;
-    cbm_thread_t watchdog;
-    if (cbm_thread_create(&watchdog, PARENT_WATCHDOG_STACK_SIZE, parent_watchdog_thread,
-                          &client_config) != 0) {
-        return false;
-    }
-    if (cbm_thread_detach(&watchdog) != 0) {
-        atomic_store(&g_shutdown, 1);
-        (void)cbm_thread_join(&watchdog);
-        return false;
-    }
-    return true;
-}
-#endif
 #endif
 
 /* ── CLI mode ───────────────────────────────────────────────────── */
@@ -590,107 +568,6 @@ static const cbm_cli_command_alias_t *cli_command_alias_find(const char *command
 }
 
 #define CLI_USAGE "Usage: codebase-memory-cli cli [--progress] [--json] <tool_name> [json_args]\n"
-
-/* Extract text content from MCP tool result envelope and print it.
- * MCP results: {"content":[{"type":"text","text":"..."}],"isError":...}
- * Returns 1 if the result was an error, 0 otherwise. */
-#if 0 /* retained only as historical MCP-result formatting source */
-static int cli_print_mcp_result(const char *result) {
-    yyjson_doc *doc = yyjson_read(result, strlen(result), 0);
-    if (!doc) {
-        printf("%s\n", result);
-        return 0;
-    }
-
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    yyjson_val *err_val = yyjson_obj_get(root, "isError");
-    bool is_error = err_val && yyjson_get_bool(err_val);
-
-    const char *text = NULL;
-    yyjson_val *content = yyjson_obj_get(root, "content");
-    if (yyjson_is_arr(content) && yyjson_arr_size(content) > 0) {
-        yyjson_val *tv = yyjson_obj_get(yyjson_arr_get_first(content), "text");
-        text = tv ? yyjson_get_str(tv) : NULL;
-    }
-
-    if (text) {
-        (void)fprintf(is_error ? stderr : stdout, "%s\n", text);
-    } else {
-        printf("%s\n", result);
-    }
-
-    yyjson_doc_free(doc);
-    return is_error ? SKIP_ONE : 0;
-}
-#endif
-
-/* Canonical CLI JSON deliberately strips the MCP content envelope. During the
- * first vertical slice the private dispatcher still returns that envelope, but
- * it is migration debt, not the public machine contract. If the operation text
- * is itself JSON, emit it directly; otherwise wrap the text in a tiny stable
- * CLI object. */
-#if 0 /* retained only as historical MCP-result formatting source */
-static int cli_print_canonical_json_result(const char *result) {
-    yyjson_doc *doc = result ? yyjson_read(result, strlen(result), 0) : NULL;
-    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
-    yyjson_val *err_val = yyjson_is_obj(root) ? yyjson_obj_get(root, "isError") : NULL;
-    bool is_error = err_val && yyjson_get_bool(err_val);
-    const char *text = NULL;
-    yyjson_val *content = yyjson_is_obj(root) ? yyjson_obj_get(root, "content") : NULL;
-    if (yyjson_is_arr(content) && yyjson_arr_size(content) > 0) {
-        yyjson_val *tv = yyjson_obj_get(yyjson_arr_get_first(content), "text");
-        text = tv && yyjson_is_str(tv) ? yyjson_get_str(tv) : NULL;
-    }
-
-    if (text) {
-        yyjson_doc *inner = yyjson_read(text, strlen(text), 0);
-        if (inner) {
-            (void)fputs(text, stdout);
-            (void)fputc('\n', stdout);
-            yyjson_doc_free(inner);
-        } else {
-            yyjson_mut_doc *out = yyjson_mut_doc_new(NULL);
-            yyjson_mut_val *obj = out ? yyjson_mut_obj(out) : NULL;
-            if (out && obj) {
-                yyjson_mut_doc_set_root(out, obj);
-                yyjson_mut_obj_add_bool(out, obj, "ok", !is_error);
-                yyjson_mut_obj_add_strcpy(out, obj, is_error ? "error" : "text", text);
-                char *encoded = yyjson_mut_write(out, 0, NULL);
-                if (encoded) {
-                    printf("%s\n", encoded);
-                    free(encoded);
-                }
-                yyjson_mut_doc_free(out);
-            } else {
-                printf("{\"ok\":false,\"error\":\"result encoding failed\"}\n");
-                if (out) {
-                    yyjson_mut_doc_free(out);
-                }
-                is_error = true;
-            }
-        }
-    } else {
-        yyjson_mut_doc *out = yyjson_mut_doc_new(NULL);
-        yyjson_mut_val *obj = out ? yyjson_mut_obj(out) : NULL;
-        if (out && obj) {
-            yyjson_mut_doc_set_root(out, obj);
-            yyjson_mut_obj_add_bool(out, obj, "ok", !is_error);
-            yyjson_mut_obj_add_strcpy(out, obj, "raw", result ? result : "");
-            char *encoded = yyjson_mut_write(out, 0, NULL);
-            if (encoded) {
-                printf("%s\n", encoded);
-                free(encoded);
-            }
-            yyjson_mut_doc_free(out);
-        }
-    }
-    if (doc) {
-        yyjson_doc_free(doc);
-    }
-    return is_error ? SKIP_ONE : 0;
-}
-#endif
-
 
 /* Strip a flag from argv, returning true if found. */
 static bool cli_strip_flag(int *argc, char **argv, const char *flag) {
@@ -1919,58 +1796,18 @@ static bool main_semver_newer(const char *candidate, const char *active) {
     return false;
 }
 
-/* A client that cannot reach the daemon must SAY SO, in the caller's own
- * protocol. An MCP client speaks JSON-RPC over stdout, and the old path
- * returned EXIT_FAILURE having written nothing at all: agents saw a transport
- * that closed mid-handshake and reported "Connection closed" with no cause,
- * while the real reason (image rejection, startup timeout, conflict) sat in
- * bootstrap_result.message and was dropped on the floor (#1539).
- *
- * stdout carries a JSON-RPC error object so the agent surfaces the reason;
- * id is null because the failure precedes reading any request. stderr carries
- * the same text for humans reading a terminal. */
-/* #1582: an MCP client that dies before the session exists must SAY so on
- * stdout. #1539 added that for bootstrap failures, but every earlier exit on
- * the client path still wrote to stderr only — which no MCP client surfaces.
- * A reporter's log showed the whole failure as:
- *
- *   Server transport closed unexpectedly, this is likely due to the process
- *   exiting early
- *
- * for what was a specific, nameable refusal. The guarantee is "a server that
- * cannot start always says why", so it belongs on every client-path exit, not
- * just the one that happened to be fixed first. */
-static void main_report_client_failure(cbm_daemon_process_role_t role, const char *detail) {
-    if (cbm_daemon_process_role_requires_client(role)) {
-        char escaped[CBM_DAEMON_CONFLICT_MESSAGE_SIZE * 2];
-        size_t out = 0;
-        for (size_t i = 0; detail[i] && out + 2 < sizeof(escaped); i++) {
-            unsigned char c = (unsigned char)detail[i];
-            if (c == '"' || c == '\\') {
-                escaped[out++] = '\\';
-                escaped[out++] = (char)c;
-            } else if (c < 0x20) {
-                escaped[out++] = ' ';
-            } else {
-                escaped[out++] = (char)c;
-            }
-        }
-        escaped[out] = '\0';
-        (void)fprintf(stdout,
-                      "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32001,"
-                      "\"message\":\"%s\"}}\n",
-                      escaped);
-        (void)fflush(stdout);
-    }
+/* Surface bootstrap/coordination failures through the invoking CLI process.
+ * Protocol-specific stdout framing was retired with the MCP stdio frontend;
+ * callers that need structured hook notices use the hook admission path. */
+static void main_report_client_failure(const char *detail) {
     (void)fprintf(stderr, "codebase-memory-cli: %s\n", detail);
 }
 
-static void main_report_client_bootstrap_failure(cbm_daemon_process_role_t role,
-                                                 const cbm_daemon_bootstrap_result_t *result) {
-    main_report_client_failure(role, (result && result->message[0])
-                                         ? result->message
-                                         : "CBM daemon connection failed before the session was "
-                                           "established");
+static void main_report_client_bootstrap_failure(const cbm_daemon_bootstrap_result_t *result) {
+    main_report_client_failure((result && result->message[0])
+                                   ? result->message
+                                   : "CBM daemon connection failed before the session was "
+                                     "established");
 }
 
 /* Client bootstrap with the upgrade policy: a CONFLICT against a PERMANENT
@@ -2000,7 +1837,7 @@ static cbm_daemon_bootstrap_status_t main_client_bootstrap_with_upgrade(
     cbm_daemon_runtime_activation_result_t drain;
     if (!cbm_daemon_runtime_request_activation_shutdown(config->endpoint, config->identity,
                                                         CBM_DAEMON_RUNTIME_ACTIVATION_UPDATE,
-                                                        MAIN_MCP_STARTUP_TIMEOUT_MS, &drain) ||
+                                                        MAIN_CLIENT_STARTUP_TIMEOUT_MS, &drain) ||
         !drain.accepted) {
         (void)fprintf(stderr, "codebase-memory-cli: the active daemon did not accept the "
                               "upgrade drain; run `codebase-memory-cli daemon stop`\n");
@@ -2030,12 +1867,12 @@ static char *main_local_cli_daemon_execute(const char *tool_name, const char *ar
         return NULL;
     }
     cbm_daemon_bootstrap_config_t config = {
-        .role = CBM_DAEMON_PROCESS_MCP_CLIENT,
+        .role = CBM_DAEMON_PROCESS_BOOTSTRAP_CLIENT,
         .endpoint = endpoint,
         .identity = &identity,
         .executable_path = executable_path,
         .connect_timeout_ms = MAIN_CONNECT_TIMEOUT_MS,
-        .startup_timeout_ms = MAIN_MCP_STARTUP_TIMEOUT_MS,
+        .startup_timeout_ms = MAIN_CLIENT_STARTUP_TIMEOUT_MS,
     };
     cbm_daemon_bootstrap_result_t bootstrap;
     cbm_daemon_bootstrap_status_t status = main_client_bootstrap_with_upgrade(&config, &bootstrap);
@@ -2811,7 +2648,7 @@ static int main_run_daemon_ctl(int argc, char **argv, const cbm_daemon_ipc_endpo
     }
 
     cbm_daemon_bootstrap_config_t start_config = {
-        .role = CBM_DAEMON_PROCESS_MCP_CLIENT,
+        .role = CBM_DAEMON_PROCESS_BOOTSTRAP_CLIENT,
         .endpoint = endpoint,
         .identity = identity,
         .executable_path = executable_path,
@@ -3117,7 +2954,7 @@ int main(int argc, char **argv) {
         cleanup_ok = main_version_cohort_close(&cohort_lease, &cohort_manager) && cleanup_ok;
         cbm_daemon_ipc_endpoint_free(local_endpoint);
         if (!cleanup_ok) {
-            main_report_client_failure(role, "CLI coordination cleanup failed");
+            main_report_client_failure("CLI coordination cleanup failed");
             return EXIT_FAILURE;
         }
         return exit_code;
@@ -3286,15 +3123,13 @@ int main(int argc, char **argv) {
 
     cbm_daemon_ipc_endpoint_t *endpoint = main_daemon_endpoint_new();
     if (!endpoint) {
-        /* #1582: this is where an ownership/ancestry refusal lands, and it was
-         * the silent one — stderr only, so an MCP client saw a transport that
-         * closed with no explanation. Include the validation detail, which
-         * names the directory and the rule that refused. */
+        /* Include the validation detail so endpoint ownership/ancestry refusals
+         * name the directory and rule that failed. */
         const char *why = cbm_daemon_ipc_validation_detail();
         char message[CBM_DAEMON_CONFLICT_MESSAGE_SIZE];
         (void)snprintf(message, sizeof(message), "secure daemon endpoint could not be created%s%s",
                        (why && why[0]) ? ": " : "", (why && why[0]) ? why : "");
-        main_report_client_failure(role, message);
+        main_report_client_failure(message);
         return EXIT_FAILURE;
     }
 
@@ -3340,7 +3175,7 @@ int main(int argc, char **argv) {
             ? cbm_version_cohort_acquire(client_cohort_manager, &identity,
                                          main_deadline_after(role == CBM_DAEMON_PROCESS_HOOK_CLIENT
                                                                  ? MAIN_HOOK_REQUEST_TIMEOUT_MS
-                                                                 : MAIN_MCP_STARTUP_TIMEOUT_MS),
+                                                                 : MAIN_CLIENT_STARTUP_TIMEOUT_MS),
                                          &client_cohort_lease, &client_cohort_conflict)
             : CBM_VERSION_COHORT_IO;
     if (client_cohort_status != CBM_VERSION_COHORT_OK) {
@@ -3402,23 +3237,22 @@ int main(int argc, char **argv) {
         .identity = &identity,
         .executable_path = executable_path,
         .connect_timeout_ms = MAIN_CONNECT_TIMEOUT_MS,
-        .startup_timeout_ms = MAIN_MCP_STARTUP_TIMEOUT_MS,
+        .startup_timeout_ms = MAIN_CLIENT_STARTUP_TIMEOUT_MS,
     };
     cbm_daemon_bootstrap_result_t bootstrap_result;
     cbm_daemon_bootstrap_status_t bootstrap_status =
         main_client_bootstrap_with_upgrade(&bootstrap_config, &bootstrap_result);
     cbm_daemon_ipc_endpoint_free(endpoint);
     if (bootstrap_status != CBM_DAEMON_BOOTSTRAP_CONNECTED || !bootstrap_result.client) {
-        main_report_client_bootstrap_failure(role, &bootstrap_result);
+        main_report_client_bootstrap_failure(&bootstrap_result);
         (void)main_version_cohort_close(&client_cohort_lease, &client_cohort_manager);
         return EXIT_FAILURE;
     }
 
     g_daemon_client = bootstrap_result.client;
 
-    /* The CLI-first role classifier has no public MCP-stdio role. Reaching this
-     * generic client tail therefore indicates an internal classification drift,
-     * not a request to start a hidden protocol frontend. */
+    /* No public invocation is classified as a bootstrap-only client. Reaching
+     * this tail therefore indicates internal role-classification drift. */
     (void)fprintf(stderr,
                   "codebase-memory-cli: internal client role has no CLI frontend\n");
     (void)cbm_daemon_runtime_client_close(g_daemon_client, MAIN_CLOSE_TIMEOUT_MS);

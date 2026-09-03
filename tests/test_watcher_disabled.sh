@@ -31,7 +31,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BINARY="${CBM_TEST_BINARY:-${ROOT}/build/c/codebase-memory-mcp}"
+BINARY="${CBM_TEST_BINARY:-${ROOT}/build/c/codebase-memory-cli}"
 
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) echo "skipping watcher_disabled test on Windows"; exit 0 ;;

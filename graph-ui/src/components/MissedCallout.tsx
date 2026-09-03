@@ -46,12 +46,12 @@ function buildIssueUrl(base: string, path: string, project: string | null): stri
 function buildAgentPrompt(issuesUrl: string | null, path: string, project: string | null): string {
   const where = issuesUrl
     ? `file a GitHub issue at ${issuesUrl}`
-    : "file a GitHub issue on the codebase-memory-mcp project";
+    : "file a GitHub issue on the codebase-memory-cli project";
   return (
-    `codebase-memory-mcp could not fully index \`${path}\`` +
+    `codebase-memory-cli could not fully index \`${path}\`` +
     (project ? ` (project \`${project}\`)` : "") +
     " — best-effort coverage signal. Please: " +
-    "1) call the index_status MCP tool and note this file's flagged line ranges under parse_partial; " +
+    "1) run `codebase-memory-cli status --json` and note this file's flagged line ranges under parse_partial; " +
     "2) read those ranges in the file and summarize which construct fails to parse; " +
     `3) ${where}, titled "Indexing gap: ${path}", ` +
     "with the summary — include a minimal reproducible snippet ONLY if the code is shareable."
@@ -118,7 +118,7 @@ export function MissedCallout({ node, project, onClose }: MissedCalloutProps) {
       </p>
       <p className="text-[12px] leading-relaxed text-foreground/70">
         Help us handle this edge case too: let your agent summarize what fails to parse
-        here and file a GitHub issue for the codebase-memory-mcp project.
+        here and file a GitHub issue for the codebase-memory-cli project.
       </p>
 
       <div className="flex flex-col gap-2 mt-1">

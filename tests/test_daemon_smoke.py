@@ -700,7 +700,7 @@ def main():
         return 0
 
     root = Path(__file__).resolve().parent.parent
-    binary = Path(sys.argv[1] if len(sys.argv) > 1 else root / "build/c/codebase-memory-mcp")
+    binary = Path(sys.argv[1] if len(sys.argv) > 1 else root / "build/c/codebase-memory-cli")
     binary = binary.resolve()
     check(binary.is_file() and os.access(binary, os.X_OK), "missing executable: " + str(binary))
 

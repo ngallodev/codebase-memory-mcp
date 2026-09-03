@@ -294,18 +294,12 @@ if [ "${CBM_RUN_HANG_TEST:-0}" = "1" ]; then
     bash "$ROOT/tests/test_cpp_index_hang.sh"
 fi
 
-# Step 5: Parent-death watchdog regression (#406/#407). Builds the production CLI
-# binary and verifies it self-exits when its launching parent is killed.
-#
-# TEST_SEAMS=1: the worker-mode leg below needs the crash-orphan probe, which is
-# compiled out of ordinary builds (it forks a SIGTERM-ignoring child — see
-# src/main.c). Requesting it HERE, in the leg that consumes it, is what keeps
-# release artifacts free of it; scripts/ci/check-binary-composition.sh proves
-# they stay that way.
-echo "=== Step 5: parent-death watchdog regression (#406/#407) ==="
+# Step 5: Build the production CLI with the worker crash-orphan test seam.
+# TEST_SEAMS=1 is requested only for this test leg so release artifacts remain
+# free of the SIGTERM-ignoring descendant used to prove tree-wide teardown.
+echo "=== Step 5: build worker-watchdog test binary ==="
 make -j"$NPROC" -f Makefile.cbm cbm TEST_SEAMS=1 ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"}
 WATCHDOG_BINARY="$ROOT/$BUILD_DIR/codebase-memory-cli"
-CBM_TEST_BINARY="$WATCHDOG_BINARY" bash "$ROOT/tests/test_parent_watchdog.sh"
 
 # Step 5b: worker-mode parent-death watchdog (#845). A supervised index worker
 # (`cli --index-worker …`) whose supervisor dies must self-exit instead of

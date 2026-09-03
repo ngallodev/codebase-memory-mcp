@@ -11,7 +11,7 @@ the PROD binary, which links mimalloc as the global allocator (Makefile.cbm:
 MI_OVERRIDE=1). The C test-runner and the C repro-runner are built CRT+ASan
 (MI_OVERRIDE=0), so mimalloc is inert there and cbm_mem_rss() falls back to
 os_rss() -- a C test would be VACUOUS. Hence this drives the real
-`build/c/codebase-memory-mcp` server over stdio and samples its RSS from `ps`.
+`build/c/codebase-memory-cli` server over stdio and samples its RSS from `ps`.
 
 WHAT IT SHOWS
 -------------

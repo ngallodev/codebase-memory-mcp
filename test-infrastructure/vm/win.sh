@@ -305,7 +305,7 @@ guards)
     # different environment shape than CI's profile-rooted TEMP. Python must
     # be PREPENDED: the Microsoft Store python.exe alias stub lives early in
     # the profile PATH and otherwise shadows any appended interpreter.
-    vm_cmd "cd /d ${VM_REPO_WIN} && set PATH=C:\\msys64\\clangarm64\\bin;C:\\msys64\\usr\\bin;%PATH%&& powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\test-windows.ps1 -GuardsOnly -Binary build\\guards\\codebase-memory-mcp.exe -Make C:\\msys64\\usr\\bin\\make.exe"
+    vm_cmd "cd /d ${VM_REPO_WIN} && set PATH=C:\\msys64\\clangarm64\\bin;C:\\msys64\\usr\\bin;%PATH%&& powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\test-windows.ps1 -GuardsOnly -Binary build\\guards\\codebase-memory-cli.exe -Make C:\\msys64\\usr\\bin\\make.exe"
     ;;
 smoke-install)
     # EXACTLY the PR CI smoke job (pr.yml pr-smoke windows): a clean canonical

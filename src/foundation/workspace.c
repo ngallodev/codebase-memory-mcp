@@ -634,7 +634,7 @@ bool cbm_workspace_root_allowed(const char *canonical_path, const char *home_dir
              * substituted. */
             snprintf(err, err_sz,
                      "%s is outside the allowed root. To allow it, run: "
-                     "codebase-memory-mcp allow-root %s",
+                     "codebase-memory-cli allow-root %s",
                      canonical_path, canonical_path);
         }
         return false;
@@ -653,7 +653,7 @@ bool cbm_workspace_root_allowed(const char *canonical_path, const char *home_dir
     if (err) {
         if (cbm_workspace_verdict_is_overridable(verdict)) {
             snprintf(err, err_sz,
-                     "%s: %s. To index it anyway, run: codebase-memory-mcp allow-root "
+                     "%s: %s. To index it anyway, run: codebase-memory-cli allow-root "
                      "--approve-sensitive %s",
                      canonical_path, cbm_workspace_verdict_reason(verdict), canonical_path);
         } else {

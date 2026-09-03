@@ -3,8 +3,7 @@
 # watchdog (#845). A supervised index worker (`cli --index-worker
 # index_repository …`) whose supervisor dies must exit on its own instead of
 # indexing on as an orphan (orphaned workers contributed to memory pressure
-# during the 2026-07-04 host panics). The MCP-server watchdog (#406/#407,
-# tests/test_parent_watchdog.sh) did not cover CLI worker mode.
+# during the 2026-07-04 host panics). The retired stdio-frontend watchdog (#406/#407) did not cover CLI worker mode.
 #
 # Strategy: launch the worker under a wrapper "parent" on a fixture where the
 # test-only injector (CBM_TEST_HANG_ON) busy-spins on one file, so the worker
@@ -22,7 +21,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BINARY="${CBM_TEST_BINARY:-${ROOT}/build/c/codebase-memory-mcp}"
+BINARY="${CBM_TEST_BINARY:-${ROOT}/build/c/codebase-memory-cli}"
 
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)

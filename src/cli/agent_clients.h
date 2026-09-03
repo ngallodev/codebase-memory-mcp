@@ -42,16 +42,12 @@ typedef enum {
 } cbm_agent_client_stability_t;
 
 enum {
-    CBM_AGENT_CAP_MCP = UINT32_C(1) << 0,
-    CBM_AGENT_CAP_INSTRUCTIONS = UINT32_C(1) << 1,
-    CBM_AGENT_CAP_SKILL = UINT32_C(1) << 2,
-    CBM_AGENT_CAP_AGENT = UINT32_C(1) << 3,
-    CBM_AGENT_CAP_HOOK = UINT32_C(1) << 4,
-    CBM_AGENT_CAP_PLUGIN = UINT32_C(1) << 5
+    CBM_AGENT_CAP_INSTRUCTIONS = UINT32_C(1) << 0,
+    CBM_AGENT_CAP_SKILL = UINT32_C(1) << 1,
+    CBM_AGENT_CAP_AGENT = UINT32_C(1) << 2,
+    CBM_AGENT_CAP_HOOK = UINT32_C(1) << 3,
+    CBM_AGENT_CAP_PLUGIN = UINT32_C(1) << 4
 };
-
-typedef int (*cbm_agent_legacy_mcp_remove_fn)(cbm_agent_client_id_t id, const char *config_path,
-                                               const char *binary_path);
 
 typedef struct {
     cbm_agent_client_id_t id;
@@ -59,8 +55,8 @@ typedef struct {
     const char *display_name;
     cbm_agent_client_stability_t stability;
     uint32_t capabilities;
+    bool legacy_mcp_cleanup;
     const char *detection_command;
-    cbm_agent_legacy_mcp_remove_fn remove_legacy_mcp;
 } cbm_agent_client_profile_t;
 
 typedef bool (*cbm_agent_probe_fn)(const char *value, const void *context);

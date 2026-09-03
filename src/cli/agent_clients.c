@@ -6,7 +6,6 @@
  * can clean configurations created by older releases.
  */
 #include "agent_clients.h"
-
 #include "config_json_like.h"
 #include "config_text_edit.h"
 #include "config_yaml_edit.h"
@@ -22,56 +21,41 @@
 #define AGENT_MAX_CONFIG_BYTES (8U * 1024U * 1024U)
 #define AGENT_JSON_MAX_DEPTH 64U
 
-static int agent_remove_callback(cbm_agent_client_id_t id, const char *config_path,
-                                 const char *binary_path);
-
 static const cbm_agent_client_profile_t agent_profiles[CBM_AGENT_CLIENT_COUNT] = {
     {CBM_AGENT_CLIENT_QODER, "qoder", "Qoder CLI", CBM_AGENT_STABLE,
-     CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT | CBM_AGENT_CAP_HOOK, "qodercli",
-     agent_remove_callback},
+     CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT | CBM_AGENT_CAP_HOOK, true, "qodercli"},
     {CBM_AGENT_CLIENT_KIMI, "kimi", "Kimi Code CLI", CBM_AGENT_STABLE,
-     CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_HOOK,
-     "kimi", agent_remove_callback},
+     CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_HOOK, true, "kimi"},
     {CBM_AGENT_CLIENT_GITLAB_DUO, "gitlab-duo", "GitLab Duo CLI", CBM_AGENT_STABLE,
-     CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_HOOK, "duo", agent_remove_callback},
+     CBM_AGENT_CAP_HOOK, true, "duo"},
     {CBM_AGENT_CLIENT_ROVO_DEV, "rovo-dev", "Rovo Dev CLI", CBM_AGENT_STABLE,
-     CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT,
-     "rovodev", agent_remove_callback},
+     CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT, true, "rovodev"},
     {CBM_AGENT_CLIENT_AMP, "amp", "Amp", CBM_AGENT_STABLE,
-     CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL, "amp",
-     agent_remove_callback},
+     CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL, true, "amp"},
     {CBM_AGENT_CLIENT_DEVIN, "devin", "Devin CLI / Local", CBM_AGENT_STABLE,
-     CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_HOOK,
-     "devin", agent_remove_callback},
-    {CBM_AGENT_CLIENT_TABNINE, "tabnine", "Tabnine", CBM_AGENT_STABLE, CBM_AGENT_CAP_MCP, "tabnine",
-     agent_remove_callback},
-    {CBM_AGENT_CLIENT_CONTINUE, "continue", "Continue / cn", CBM_AGENT_CONDITIONAL,
-     CBM_AGENT_CAP_MCP, "cn", agent_remove_callback},
-    {CBM_AGENT_CLIENT_VISUAL_STUDIO, "visual-studio", "Visual Studio", CBM_AGENT_CONDITIONAL,
-     CBM_AGENT_CAP_MCP, "devenv", agent_remove_callback},
-    {CBM_AGENT_CLIENT_TRAE, "trae", "TRAE", CBM_AGENT_CONDITIONAL, CBM_AGENT_CAP_MCP, NULL,
-     agent_remove_callback},
-    {CBM_AGENT_CLIENT_ROO_CODE, "roo-code", "Roo Code", CBM_AGENT_CONDITIONAL, CBM_AGENT_CAP_MCP,
-     NULL, agent_remove_callback},
-    {CBM_AGENT_CLIENT_AMAZON_Q, "amazon-q", "Amazon Q Developer IDE", CBM_AGENT_STABLE,
-     CBM_AGENT_CAP_MCP, NULL, agent_remove_callback},
+     CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_HOOK, true, "devin"},
+    {CBM_AGENT_CLIENT_TABNINE, "tabnine", "Tabnine", CBM_AGENT_STABLE, 0U, true, "tabnine"},
+    {CBM_AGENT_CLIENT_CONTINUE, "continue", "Continue / cn", CBM_AGENT_CONDITIONAL, 0U, true, "cn"},
+    {CBM_AGENT_CLIENT_VISUAL_STUDIO, "visual-studio", "Visual Studio", CBM_AGENT_CONDITIONAL, 0U,
+     true, "devenv"},
+    {CBM_AGENT_CLIENT_TRAE, "trae", "TRAE", CBM_AGENT_CONDITIONAL, 0U, true, NULL},
+    {CBM_AGENT_CLIENT_ROO_CODE, "roo-code", "Roo Code", CBM_AGENT_CONDITIONAL, 0U, true, NULL},
+    {CBM_AGENT_CLIENT_AMAZON_Q, "amazon-q", "Amazon Q Developer IDE", CBM_AGENT_STABLE, 0U, true,
+     NULL},
     {CBM_AGENT_CLIENT_CODEBUDDY, "codebuddy", "CodeBuddy Code CLI", CBM_AGENT_STABLE,
-     CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT,
-     "codebuddy", agent_remove_callback},
+     CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT, true, "codebuddy"},
     {CBM_AGENT_CLIENT_IBM_BOB_IDE, "ibm-bob-ide", "IBM Bob IDE", CBM_AGENT_CONDITIONAL,
-     CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL, NULL,
-     agent_remove_callback},
+     CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL, true, NULL},
     {CBM_AGENT_CLIENT_IBM_BOB_SHELL, "ibm-bob-shell", "IBM Bob Shell", CBM_AGENT_STABLE,
-     CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS, "bob", agent_remove_callback},
+     CBM_AGENT_CAP_INSTRUCTIONS, true, "bob"},
     {CBM_AGENT_CLIENT_POCHI, "pochi", "Pochi", CBM_AGENT_STABLE,
-     CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT,
-     "pochi", agent_remove_callback},
+     CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT, true, "pochi"},
     {CBM_AGENT_CLIENT_PI, "pi", "Pi", CBM_AGENT_STABLE,
-     CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL, "pi", NULL},
-    {CBM_AGENT_CLIENT_SOURCEGRAPH_CODY, "sourcegraph-cody", "Sourcegraph Cody", CBM_AGENT_OPT_IN,
-     CBM_AGENT_CAP_MCP, NULL, agent_remove_callback},
+     CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL, false, "pi"},
+    {CBM_AGENT_CLIENT_SOURCEGRAPH_CODY, "sourcegraph-cody", "Sourcegraph Cody",
+     CBM_AGENT_OPT_IN, 0U, true, NULL},
     {CBM_AGENT_CLIENT_OMP, "omp", "Oh My Pi (omp)", CBM_AGENT_STABLE,
-     CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT, "omp", agent_remove_callback},
+     CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT, true, "omp"},
 };
 
 size_t cbm_agent_client_count(void) {
@@ -1483,9 +1467,4 @@ int cbm_agent_client_remove_legacy_mcp(cbm_agent_client_id_t id, const char *con
     }
     return agent_json_client(id) ? agent_json_edit(id, config_path, binary_path, true)
                                  : CBM_AGENT_EDIT_NOT_APPLICABLE;
-}
-
-static int agent_remove_callback(cbm_agent_client_id_t id, const char *config_path,
-                                 const char *binary_path) {
-    return cbm_agent_client_remove_legacy_mcp(id, config_path, binary_path);
 }

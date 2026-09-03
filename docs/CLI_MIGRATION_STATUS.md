@@ -1,5 +1,4 @@
 # Codebase Memory CLI Migration — Plan and Status
-
 **Updated:** 2026-09-03  
 **Current authoritative baseline:** latest complete consolidated source attached to the project sources page  
 **Checkpoint policy:** prior overlay/checkpoint archives are historical only and are not replayed or used to reconstruct repository state.  
@@ -113,9 +112,9 @@ Rule during extraction: preserve behavior first, route all consumers to the neut
 - **COMPLETE:** the empty `MCP_SRCS` Makefile category is removed; production and test source lists no longer require MCP sources.
 - **COMPLETE:** reusable JSON argument parsing used by test/daemon surfaces has a neutral `src/operations/json_args.*` home.
 - **COMPLETE for active invariant/security harnesses:** `scripts/smoke-invariants.sh` now exercises the CLI-first workflow rather than MCP initialize/tools-list protocol behavior, and `scripts/security-audit.sh` no longer expects `src/mcp/mcp.c`.
-- **PARTIAL:** active release/package tooling still contains MCP-era product naming and publication assumptions. These are release-surface debt, not runtime architecture dependencies.
-- **REMAINING:** simplify tool-catalog metadata where MCP-era metadata is no longer useful to CLI/agent clients.
-- **REMAINING:** clean active installer/release/package/smoke assumptions while preserving ownership-aware cleanup of legacy installed MCP state.
+- **COMPLETE (through CP47):** active release/package/smoke execution and distribution identity use `codebase-memory-cli`; remaining old repository URLs refer to the historical GitHub slug, and negative smoke/security checks intentionally reject retired MCP artifacts.
+- **PARTIAL:** MCP-shaped tier-profile renderers and ownership markers remain only where update/uninstall needs byte-accurate recognition of previously released files. They are legacy removal compatibility, not active install output.
+- **COMPLETE (post-CP47 audit):** active installer metadata no longer advertises MCP as a client capability; legacy cleanup is modeled explicitly as a removal obligation rather than a product feature.
 
 No production or retained C behavioral-test source includes `mcp/mcp.h` or calls `cbm_mcp_server_*` / `cbm_mcp_handle_tool`. The obsolete protocol implementation is physically absent from the tree.
 
@@ -128,9 +127,9 @@ No production or retained C behavioral-test source includes `mcp/mcp.h` or calls
 ### Public CLI-first release
 
 - **NOT READY YET.** Primary blockers:
-  1. Legacy MCP release/install/package/smoke publishing surfaces still require cleanup or explicit quarantine as legacy removal support.
-  2. Native Windows validation evidence must be reviewed.
-  3. Final high-value end-to-end/concurrency/recovery/release verification remains.
+  1. Native Windows validation evidence must be reviewed.
+  2. Final high-value end-to-end/concurrency/recovery/release verification remains.
+  3. Post-MCP simplification and compatibility classification must finish without weakening ownership-aware legacy cleanup.
 
 ## 9. Consolidated-source policy
 
@@ -149,9 +148,28 @@ No production or retained C behavioral-test source includes `mcp/mcp.h` or calls
 7. **COMPLETE:** retire transitional `REQUEST_TOOL`; CLI/daemon application commands now use only the neutral operation request and preserve operation error status without MCP envelopes.
 8. **COMPLETE:** split the generic maintenance observer into `src/daemon/maintenance_monitor.*` and delete the orphaned `REQUEST_MCP`/JSON-RPC stdio frontend.
 9. **COMPLETE for production:** remove direct UI MCP dispatch and neutralize production utility/schema/profile ownership; unlink `src/mcp/mcp.c` from the product build.
-10. **COMPLETE for runtime/test architecture:** migrate/delete MCP-only tests and physically delete `src/mcp/`; **REMAINING:** clean legacy installer/release/package/smoke surfaces.
-11. Complete benchmark/baseline tooling and run the high-value end-to-end/concurrency/recovery/release verification appropriate for the milestone.
+10. **COMPLETE for runtime/test architecture:** migrate/delete MCP-only tests and physically delete `src/mcp/`.
+11. **COMPLETE through CP47:** active installer/release/package/smoke execution is CLI-first; retain only ownership-aware legacy removal state, persisted compatibility paths, negative guards, and historical repository URLs.
+12. **IN PROGRESS:** post-MCP architectural simplification audit: remove transition-only wrappers/vocabulary and stale active product identity while preserving correctness and legacy removal safety.
+13. Complete benchmark/baseline tooling and run the high-value end-to-end/concurrency/recovery/release verification appropriate for the milestone.
 
 ## 11. Drift assessment
 
-**On target.** Runtime Assurance and concurrency work was front-loaded before the second read-heavy extraction group. Subprocess cancellation/supervision, indexing, ADR, deletion, trace-ingest, and cross-repository behavior have now crossed the neutral operation boundary without leaving duplicate authoritative handlers in MCP. The project is at the intended next phase boundary: normal daemon operation state (store, root/project policy, cancellation) is neutral and does not allocate MCP. The production runtime and product link are now MCP-free. The remaining MCP-era work is now release/package/documentation cleanup rather than runtime architecture: remove obsolete protocol assumptions and product naming while preserving legacy owned-state cleanup where compatibility requires it.
+**On target.** Runtime Assurance and concurrency work was front-loaded before the second read-heavy extraction group. Subprocess cancellation/supervision, indexing, ADR, deletion, trace-ingest, and cross-repository behavior have crossed the neutral operation boundary without duplicate authoritative MCP handlers. CP47 is already merged into the authoritative source. The current phase is therefore post-MCP simplification: remove transition-only vocabulary, dead creation helpers, and stale active product identity while preserving legacy owned-state cleanup, persisted locations, and coordination/recovery semantics. An explicit final Linux production link is being re-established from this authoritative post-CP47 baseline before this document claims build verification; native Windows validation remains separate evidence.
+
+## 12. Post-CP47 simplification audit
+
+- **COMPLETE:** authoritative baseline confirmed to have `src/mcp/` physically absent and no production `cbm_mcp_server_*`, `cbm_mcp_handle_tool`, `REQUEST_MCP`, or `REQUEST_TOOL` references.
+- **COMPLETE:** removed three dormant MCP creation/preflight helpers that had no callers and caused the post-CP47 production build to fail its own `-Werror=unused-function` policy.
+- **COMPLETE:** renamed the stale generic daemon `MCP_CLIENT` process role to `BOOTSTRAP_CLIENT`; default/unknown public invocations remain stateless and the retained bootstrap path is protocol-neutral.
+- **COMPLETE:** removed dead JSON-RPC/MCP bootstrap formatting/watchdog residue from the generic product entrypoint.
+- **COMPLETE:** agent-client registry metadata no longer models MCP as an active capability or carries a one-implementation removal callback; profiles record only whether legacy MCP cleanup applies and call the shared removal routine directly.
+- **COMPLETE:** removed no-op tier-profile install wrappers/calls. Ownership-aware tier-profile renderers remain reachable only from update/uninstall cleanup so previously released MCP-bound files can be recognized conservatively.
+- **COMPLETE:** corrected stale active product identity in workspace guidance, update-manager suggestions, UI process monitoring, graph UI messaging, generated artifact comments, and the native-Windows guard wrapper.
+- **PRESERVED:** legacy `codebase-memory-mcp` cache/config locations, old owned-entry names/markers, cleanup matchers, negative security/release guards, and historical GitHub repository URLs remain where changing them would break persisted compatibility, safe removal, or repository addressing.
+- **COMPLETE:** explicit Linux production link succeeds as `build/c/codebase-memory-cli`; changed production C surfaces compile under the project's `-Wall -Wextra -Werror` policy.
+- **COMPLETE:** removed the obsolete MCP-stdio parent-watchdog harness from the active test graph; retained the supervised worker parent-death watchdog because it protects a real CLI worker containment property.
+- **COMPLETE:** active runtime/regression scripts that build or execute the product now default to `build/c/codebase-memory-cli`; canonical benchmark parsing no longer carries an MCP content-envelope fallback.
+- **COMPLETE:** graph-UI missed-coverage guidance now instructs agents to use the canonical CLI status command rather than an MCP tool call.
+- **PARTIAL:** substantial MCP-protocol Windows red-test infrastructure remains and must be migrated or retired in a dedicated Windows-test reconciliation slice rather than mechanically renamed.
+- **BLOCKED/EXTERNAL:** native Windows execution/validation evidence.

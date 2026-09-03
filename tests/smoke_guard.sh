@@ -11,7 +11,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BINARY="$PROJECT_ROOT/build/c/codebase-memory-mcp"
+BINARY="$PROJECT_ROOT/build/c/codebase-memory-cli"
 FAKE_PROJECT="nonexistent_smoke_test_xyz"
 CACHE_DIR="${HOME}/.cache/codebase-memory-mcp"
 GHOST_FILE="$CACHE_DIR/${FAKE_PROJECT}.db"

@@ -126,25 +126,24 @@ TEST(agent_clients_registry_is_stable_and_cleanup_driven) {
         "omp",
     };
     static const uint32_t expected_capabilities[] = {
-        CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT | CBM_AGENT_CAP_HOOK,
-        CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_HOOK,
-        CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_HOOK,
-        CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT,
-        CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL,
-        CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_HOOK,
-        CBM_AGENT_CAP_MCP,
-        CBM_AGENT_CAP_MCP,
-        CBM_AGENT_CAP_MCP,
-        CBM_AGENT_CAP_MCP,
-        CBM_AGENT_CAP_MCP,
-        CBM_AGENT_CAP_MCP,
-        CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT,
-        CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL,
-        CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS,
-        CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT,
+        CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT | CBM_AGENT_CAP_HOOK,
+        CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_HOOK,
+        CBM_AGENT_CAP_HOOK,
+        CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT,
         CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL,
-        CBM_AGENT_CAP_MCP,
-        CBM_AGENT_CAP_MCP | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT,
+        CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_HOOK,
+        0U, 0U, 0U, 0U, 0U, 0U,
+        CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT,
+        CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL,
+        CBM_AGENT_CAP_INSTRUCTIONS,
+        CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT,
+        CBM_AGENT_CAP_INSTRUCTIONS | CBM_AGENT_CAP_SKILL,
+        0U,
+        CBM_AGENT_CAP_SKILL | CBM_AGENT_CAP_AGENT,
+    };
+    static const bool expected_legacy_mcp_cleanup[] = {
+        true, true, true, true, true, true, true, true, true, true,
+        true, true, true, true, true, true, false, true, true,
     };
     ASSERT_EQ(cbm_agent_client_count(), CBM_AGENT_CLIENT_COUNT);
     ASSERT_EQ(CBM_AGENT_CLIENT_COUNT, sizeof(expected) / sizeof(expected[0]));
@@ -157,13 +156,7 @@ TEST(agent_clients_registry_is_stable_and_cleanup_driven) {
         ASSERT_STR_EQ(profile->stable_id, expected[i]);
         ASSERT_EQ(profile->capabilities, expected_capabilities[i]);
         ASSERT_NOT_NULL(profile->display_name);
-        if (profile->id == CBM_AGENT_CLIENT_PI) {
-            ASSERT(!(profile->capabilities & CBM_AGENT_CAP_MCP));
-            ASSERT_NULL(profile->remove_legacy_mcp);
-        } else {
-            ASSERT(profile->capabilities & CBM_AGENT_CAP_MCP);
-            ASSERT_NOT_NULL(profile->remove_legacy_mcp);
-        }
+        ASSERT_EQ(profile->legacy_mcp_cleanup, expected_legacy_mcp_cleanup[i]);
         ASSERT(cbm_agent_client_by_id(profile->id) == profile);
         ASSERT(cbm_agent_client_by_stable_id(profile->stable_id) == profile);
     }
@@ -237,8 +230,8 @@ TEST(agent_clients_next_wave_metadata_matches_supported_surfaces) {
     ASSERT(gitlab->capabilities & CBM_AGENT_CAP_HOOK);
     ASSERT(!(devin->capabilities & CBM_AGENT_CAP_AGENT));
     ASSERT_EQ(roo->stability, CBM_AGENT_CONDITIONAL);
-    ASSERT(roo->capabilities & CBM_AGENT_CAP_MCP);
-    ASSERT(amazon_q->capabilities & CBM_AGENT_CAP_MCP);
+    ASSERT(roo->legacy_mcp_cleanup);
+    ASSERT(amazon_q->legacy_mcp_cleanup);
     ASSERT_STR_EQ(amazon_q->display_name, "Amazon Q Developer IDE");
     ASSERT_EQ(codebuddy->stability, CBM_AGENT_STABLE);
     ASSERT(codebuddy->capabilities & CBM_AGENT_CAP_AGENT);
@@ -254,13 +247,13 @@ TEST(agent_clients_next_wave_metadata_matches_supported_surfaces) {
     ASSERT_EQ(pochi->stability, CBM_AGENT_STABLE);
     ASSERT(pochi->capabilities & CBM_AGENT_CAP_AGENT);
     ASSERT_STR_EQ(pochi->detection_command, "pochi");
-    ASSERT(!(pi->capabilities & CBM_AGENT_CAP_MCP));
+    ASSERT(!pi->legacy_mcp_cleanup);
     ASSERT(pi->capabilities & CBM_AGENT_CAP_INSTRUCTIONS);
     ASSERT(pi->capabilities & CBM_AGENT_CAP_SKILL);
-    ASSERT_NULL(pi->remove_legacy_mcp);
+    ASSERT(!pi->legacy_mcp_cleanup);
     ASSERT_EQ(cody->stability, CBM_AGENT_OPT_IN);
-    ASSERT_EQ(cody->capabilities, CBM_AGENT_CAP_MCP);
-    ASSERT_NOT_NULL(cody->remove_legacy_mcp);
+    ASSERT_EQ(cody->capabilities, 0U);
+    ASSERT(cody->legacy_mcp_cleanup);
     PASS();
 }
 
@@ -672,7 +665,7 @@ TEST(agent_clients_pi_has_no_mcp_path_or_mutation) {
         1);
     ASSERT(cbm_agent_client_detect(CBM_AGENT_CLIENT_PI, &options));
 
-    ASSERT_NULL(cbm_agent_client_by_id(CBM_AGENT_CLIENT_PI)->remove_legacy_mcp);
+    ASSERT(!cbm_agent_client_by_id(CBM_AGENT_CLIENT_PI)->legacy_mcp_cleanup);
     PASS();
 }
 
@@ -730,7 +723,7 @@ TEST(agent_clients_omp_profile_does_not_register_global_instructions_capability)
         cbm_agent_client_by_id(CBM_AGENT_CLIENT_OMP);
     ASSERT_NOT_NULL(profile);
     ASSERT_EQ(profile->capabilities & CBM_AGENT_CAP_INSTRUCTIONS, 0U);
-    ASSERT_NEQ(profile->capabilities & CBM_AGENT_CAP_MCP, 0U);
+    ASSERT(profile->legacy_mcp_cleanup);
     ASSERT_NEQ(profile->capabilities & CBM_AGENT_CAP_SKILL, 0U);
     ASSERT_NEQ(profile->capabilities & CBM_AGENT_CAP_AGENT, 0U);
     PASS();

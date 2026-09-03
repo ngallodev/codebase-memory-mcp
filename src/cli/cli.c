@@ -1549,38 +1549,6 @@ static const char CBM_SCOUT_MCP_SERVER_NAME[] = "codebase-memory-scout";
 static const char CBM_ANALYSIS_PROFILE_ARGUMENT[] = "--tool-profile=analysis";
 static const char CBM_SCOUT_PROFILE_ARGUMENT[] = "--tool-profile=scout";
 
-static char *cbm_build_json_mcp_entry(const char *binary_path, cbm_json_mcp_schema_t schema,
-                                      const char *argument) {
-    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
-    if (!doc) {
-        return NULL;
-    }
-    yyjson_mut_val *root = yyjson_mut_obj(doc);
-    bool command_is_array = cbm_json_mcp_command_is_array(schema);
-    yyjson_mut_val *command =
-        command_is_array ? yyjson_mut_arr(doc) : yyjson_mut_strcpy(doc, binary_path);
-    bool ok = root && command;
-    if (ok && command_is_array) {
-        ok = yyjson_mut_arr_add_strcpy(doc, command, binary_path);
-    }
-    if (ok) {
-        yyjson_mut_doc_set_root(doc, root);
-        ok = yyjson_mut_obj_add_val(doc, root, "command", command);
-    }
-    if (ok && !command_is_array) {
-        yyjson_mut_val *args = yyjson_mut_arr(doc);
-        ok = args && (!argument || yyjson_mut_arr_add_strcpy(doc, args, argument)) &&
-             yyjson_mut_obj_add_val(doc, root, "args", args);
-    }
-    const char *type = cbm_json_mcp_required_type(schema);
-    if (ok && type) {
-        ok = yyjson_mut_obj_add_strcpy(doc, root, "type", type);
-    }
-    char *json = ok ? yyjson_mut_write(doc, YYJSON_WRITE_NOFLAG, NULL) : NULL;
-    yyjson_mut_doc_free(doc);
-    return json;
-}
-
 static size_t cbm_json_mcp_ownership_fields(cbm_json_mcp_schema_t schema, const char *argument,
                                             cbm_json_like_object_field_t fields[3]) {
     fields[0] = (cbm_json_like_object_field_t){
@@ -1983,30 +1951,6 @@ static int cbm_json_mcp_snapshot_ownership(const char *document, size_t document
 
 /* Render just the `command` member's VALUE for a schema — the raw JSON the
  * field-level repair splices in place of a moved install's stale path. */
-static char *cbm_json_mcp_render_command_value(const char *binary_path,
-                                               cbm_json_mcp_schema_t schema) {
-    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
-    if (!doc) {
-        return NULL;
-    }
-    yyjson_mut_val *command = cbm_json_mcp_command_is_array(schema)
-                                  ? yyjson_mut_arr(doc)
-                                  : yyjson_mut_strcpy(doc, binary_path);
-    bool ok = command != NULL;
-    if (ok && cbm_json_mcp_command_is_array(schema)) {
-        ok = yyjson_mut_arr_add_strcpy(doc, command, binary_path);
-    }
-    char *json = NULL;
-    if (ok) {
-        yyjson_mut_doc_set_root(doc, command);
-        json = yyjson_mut_write(doc, YYJSON_WRITE_NOFLAG, NULL);
-    }
-    yyjson_mut_doc_free(doc);
-    return json;
-}
-
-
-
 static int cbm_remove_json_named_mcp(const char *config_path, const char *const *object_path,
                                      size_t path_len, cbm_json_mcp_schema_t schema,
                                      const char *entry_name, const char *argument,
@@ -3631,43 +3575,6 @@ int cbm_remove_antigravity_mcp_owned(const char *binary_path, const char *config
 }
 
 /* ── Junie MCP config (JSON, same mcpServers format) ──────────── */
-
-static int cbm_junie_mcp_preflight(const char *binary_path, const char *config_path) {
-    static const char *const path[] = {"mcpServers"};
-    static const struct {
-        const char *name;
-        const char *argument;
-    } entries[] = {
-        {CBM_DEFAULT_MCP_SERVER_NAME, NULL},
-        {CBM_SCOUT_MCP_SERVER_NAME, CBM_SCOUT_PROFILE_ARGUMENT},
-        {CBM_ANALYSIS_MCP_SERVER_NAME, CBM_ANALYSIS_PROFILE_ARGUMENT},
-    };
-    char *document = NULL;
-    size_t document_length = 0U;
-    int read_result = cbm_json_like_read_document(config_path, &document, &document_length);
-    if (read_result == 1) {
-        free(document);
-        return CLI_OK;
-    }
-    if (read_result < 0) {
-        free(document);
-        return CLI_ERR;
-    }
-    int result = CLI_OK;
-    for (size_t i = 0U; i < sizeof(entries) / sizeof(entries[0]); i++) {
-        int ownership = cbm_json_mcp_snapshot_ownership(
-            document, document_length, path, 1U, CBM_JSON_MCP_STANDARD, entries[i].name,
-            entries[i].argument, binary_path, g_previous_managed_mcp_command, NULL);
-        if (ownership != CBM_JSON_LIKE_OBJECT_MATCH && ownership != CBM_JSON_LIKE_OBJECT_MISSING &&
-            ownership != CBM_JSON_MCP_OWNERSHIP_STALE) {
-            result = CLI_ERR;
-            break;
-        }
-    }
-    free(document);
-    return result;
-}
-
 
 #ifdef CBM_CLI_ENABLE_TEST_API
 #endif
@@ -7274,11 +7181,7 @@ typedef struct {
     bool force_handoff;
 } cbm_tiered_profile_set_t;
 
-static void install_tiered_agent_profiles(cbm_tiered_profile_set_t profiles, bool dry_run);
 static void uninstall_tiered_agent_profiles(cbm_tiered_profile_set_t profiles, bool dry_run);
-static void install_tiered_profile_prompts(const char *label, const char *verify_path,
-                                           cbm_graph_profile_dialect_t dialect,
-                                           const char *legacy_verify_content, bool dry_run);
 static void uninstall_tiered_profile_prompts(const char *label, const char *verify_path,
                                              cbm_graph_profile_dialect_t dialect,
                                              const char *legacy_verify_content, bool dry_run);
@@ -7297,15 +7200,6 @@ static void install_claude_code_config(const char *home, const char *binary_path
         char p[CLI_BUF_1K];
         snprintf(p, sizeof(p), "%s/codebase-memory/SKILL.md", skills_dir);
         plan_record("Claude Code", "skill", p);
-        install_tiered_agent_profiles(
-            (cbm_tiered_profile_set_t){
-                .label = "Claude Code",
-                .verify_path = agent_path,
-                .binary_path = binary_path,
-                .legacy_verify_content = legacy_claude_verify_agent_content,
-                .dialect = CBM_GRAPH_DIALECT_CLAUDE,
-            },
-            dry_run);
         snprintf(p, sizeof(p), "%s/settings.json", config_dir);
         plan_record("Claude Code", "hook", p);
         snprintf(p, sizeof(p), "%s/hooks/%s", config_dir, CMM_HOOK_GATE_SCRIPT);
@@ -7321,15 +7215,6 @@ static void install_claude_code_config(const char *home, const char *binary_path
 
     int skill_count = cbm_install_skills(skills_dir, force, dry_run);
     printf("  skills: %d installed\n", skill_count);
-    install_tiered_agent_profiles(
-        (cbm_tiered_profile_set_t){
-            .label = "Claude Code",
-            .verify_path = agent_path,
-            .binary_path = binary_path,
-            .legacy_verify_content = legacy_claude_verify_agent_content,
-            .dialect = CBM_GRAPH_DIALECT_CLAUDE,
-        },
-        dry_run);
 
     if (cbm_remove_old_monolithic_skill(skills_dir, dry_run)) {
         printf("  removed old monolithic skill\n");
@@ -7559,12 +7444,6 @@ static cbm_graph_access_t cbm_tiered_profile_set_access(cbm_tiered_profile_set_t
                : CBM_GRAPH_ACCESS_HANDOFF;
 }
 
-static void install_tiered_agent_profiles(cbm_tiered_profile_set_t profiles, bool dry_run) {
-    /* Legacy MCP-bound tier profiles are removal-only compatibility state. */
-    (void)profiles;
-    (void)dry_run;
-}
-
 static void uninstall_tiered_agent_profiles(cbm_tiered_profile_set_t profiles, bool dry_run) {
     cbm_graph_access_t access = cbm_tiered_profile_set_access(profiles);
     for (int value = 0; value < (int)CBM_GRAPH_TIER_COUNT; value++) {
@@ -7617,17 +7496,6 @@ static void uninstall_tiered_agent_profiles(cbm_tiered_profile_set_t profiles, b
     }
 }
 
-static void install_tiered_profile_prompts(const char *label, const char *verify_path,
-                                           cbm_graph_profile_dialect_t dialect,
-                                           const char *legacy_verify_content, bool dry_run) {
-    /* Legacy MCP-bound prompt profiles are removal-only compatibility state. */
-    (void)label;
-    (void)verify_path;
-    (void)dialect;
-    (void)legacy_verify_content;
-    (void)dry_run;
-}
-
 static void uninstall_tiered_profile_prompts(const char *label, const char *verify_path,
                                              cbm_graph_profile_dialect_t dialect,
                                              const char *legacy_verify_content, bool dry_run) {
@@ -7675,15 +7543,6 @@ static void install_copilot_durable_context(const char *home, const char *binary
     snprintf(skills_dir, sizeof(skills_dir), "%s/skills", config_dir);
     snprintf(agent_path, sizeof(agent_path), "%s/agents/codebase-memory.agent.md", config_dir);
     install_agent_skill("Copilot", skills_dir, force, dry_run);
-    install_tiered_agent_profiles(
-        (cbm_tiered_profile_set_t){
-            .label = "Copilot",
-            .verify_path = agent_path,
-            .binary_path = binary_path,
-            .legacy_verify_content = legacy_copilot_verify_agent_content,
-            .dialect = CBM_GRAPH_DIALECT_COPILOT,
-        },
-        dry_run);
     if (g_install_plan) {
         plan_record("Copilot", "hook", hook_path);
         return;
@@ -7844,15 +7703,6 @@ static void install_qoder_durable_context(const char *home, const char *binary_p
     snprintf(skills_dir, sizeof(skills_dir), "%s/.qoder/skills", home);
     snprintf(agent_path, sizeof(agent_path), "%s/.qoder/agents/codebase-memory.md", home);
     install_agent_skill("Qoder CLI", skills_dir, force, dry_run);
-    install_tiered_agent_profiles(
-        (cbm_tiered_profile_set_t){
-            .label = "Qoder CLI",
-            .verify_path = agent_path,
-            .binary_path = binary_path,
-            .legacy_verify_content = legacy_qoder_verify_agent_content,
-            .dialect = CBM_GRAPH_DIALECT_QODER,
-        },
-        dry_run);
     bool hook_supported = cbm_optional_hook_supported("qoder", cbm_current_platform_is_windows());
     if (g_install_plan) {
         if (hook_supported) {
@@ -8043,14 +7893,6 @@ static void install_rovo_durable_context(const char *home, bool force, bool dry_
     snprintf(agent_path, sizeof(agent_path), "%s/.rovodev/subagents/codebase-memory.md", home);
     install_managed_agent_instructions("Rovo Dev CLI", instructions_path, dry_run);
     install_agent_skill("Rovo Dev CLI", skills_dir, force, dry_run);
-    install_tiered_agent_profiles(
-        (cbm_tiered_profile_set_t){
-            .label = "Rovo Dev CLI",
-            .verify_path = agent_path,
-            .legacy_verify_content = legacy_rovo_verify_agent_content,
-            .dialect = CBM_GRAPH_DIALECT_ROVO,
-        },
-        dry_run);
 }
 
 static void install_amp_durable_context(const char *home, bool force, bool dry_run) {
@@ -8071,14 +7913,6 @@ static void install_codebuddy_durable_context(const char *home, bool force, bool
     snprintf(agent_path, sizeof(agent_path), "%s/.codebuddy/agents/codebase-memory.md", home);
     install_managed_agent_instructions("CodeBuddy Code CLI", instructions_path, dry_run);
     install_agent_skill("CodeBuddy Code CLI", skills_dir, force, dry_run);
-    install_tiered_agent_profiles(
-        (cbm_tiered_profile_set_t){
-            .label = "CodeBuddy Code CLI",
-            .verify_path = agent_path,
-            .legacy_verify_content = legacy_codebuddy_verify_agent_content,
-            .dialect = CBM_GRAPH_DIALECT_CODEBUDDY,
-        },
-        dry_run);
 }
 
 static void install_bob_durable_context(const char *home, bool ide, bool force, bool dry_run) {
@@ -8101,14 +7935,6 @@ static void install_pochi_durable_context(const char *home, bool force, bool dry
     snprintf(agent_path, sizeof(agent_path), "%s/.pochi/agents/codebase-memory.md", home);
     install_managed_agent_instructions("Pochi", instructions_path, dry_run);
     install_agent_skill("Pochi", skills_dir, force, dry_run);
-    install_tiered_agent_profiles(
-        (cbm_tiered_profile_set_t){
-            .label = "Pochi",
-            .verify_path = agent_path,
-            .legacy_verify_content = legacy_pochi_verify_agent_content,
-            .dialect = CBM_GRAPH_DIALECT_POCHI,
-        },
-        dry_run);
 }
 
 static void install_omp_durable_context(const cbm_agent_registry_context_t *registry, bool force,
@@ -8131,14 +7957,6 @@ static void install_omp_durable_context(const cbm_agent_registry_context_t *regi
     snprintf(skills_dir, sizeof(skills_dir), "%s/skills", agent_dir);
     snprintf(agent_path, sizeof(agent_path), "%s/agents/codebase-memory.md", agent_dir);
     install_agent_skill("Oh My Pi (omp)", skills_dir, force, dry_run);
-    install_tiered_agent_profiles(
-        (cbm_tiered_profile_set_t){
-            .label = "Oh My Pi (omp)",
-            .verify_path = agent_path,
-            .legacy_verify_content = legacy_omp_verify_agent_content,
-            .dialect = CBM_GRAPH_DIALECT_OMP,
-        },
-        dry_run);
 }
 
 static void install_agent_client_registry(const char *home, const char *binary_path,
@@ -8197,15 +8015,6 @@ static void install_gemini_config(const char *home, const char *binary_path, boo
     snprintf(ip, sizeof(ip), "%s/.gemini/GEMINI.md", home);
     snprintf(ap, sizeof(ap), "%s/.gemini/agents/codebase-memory.md", home);
     install_generic_agent_config("Gemini CLI", ip, dry_run);
-    install_tiered_agent_profiles(
-        (cbm_tiered_profile_set_t){
-            .label = "Gemini CLI",
-            .verify_path = ap,
-            .binary_path = binary_path,
-            .legacy_verify_content = legacy_gemini_verify_agent_content,
-            .dialect = CBM_GRAPH_DIALECT_GEMINI,
-        },
-        dry_run);
     if (g_install_plan) {
         plan_record("Gemini CLI", "hook", cp); /* BeforeTool + SessionStart in settings.json */
         return;
@@ -8275,15 +8084,6 @@ static void install_cli_agent_configs(const cbm_detected_agents_t *agents, const
         }
         install_generic_agent_config("Codex CLI", ip, dry_run);
         install_agent_skill("Codex CLI", skills_dir, force, dry_run);
-        install_tiered_agent_profiles(
-            (cbm_tiered_profile_set_t){
-                .label = "Codex CLI",
-                .verify_path = ap,
-                .binary_path = binary_path,
-                .legacy_verify_content = legacy_codex_verify_agent_content,
-                .dialect = CBM_GRAPH_DIALECT_CODEX,
-            },
-            dry_run);
         /* Choose the hook target: if ~/.codex/hooks.json already exists, the
          * user manages Codex hooks via the JSON representation — write the
          * SessionStart reminder there instead of config.toml. Writing both
@@ -8327,15 +8127,6 @@ static void install_cli_agent_configs(const cbm_detected_agents_t *agents, const
         snprintf(ap, sizeof(ap), "%s/.config/opencode/agents/codebase-memory.md", home);
         install_generic_agent_config("OpenCode", ip, dry_run);
         install_agent_skill("OpenCode", skills_dir, force, dry_run);
-        install_tiered_agent_profiles(
-            (cbm_tiered_profile_set_t){
-                .label = "OpenCode",
-                .verify_path = ap,
-                .binary_path = binary_path,
-                .legacy_verify_content = legacy_opencode_verify_agent_content,
-                .dialect = CBM_GRAPH_DIALECT_OPENCODE,
-            },
-            dry_run);
     }
     if (agents->antigravity) {
         char cp[CLI_BUF_1K];
@@ -8440,15 +8231,6 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         snprintf(ip, sizeof(ip), "%s/.config/kilo/rules/codebase-memory-mcp.md", home);
         snprintf(ap, sizeof(ap), "%s/.config/kilo/agents/codebase-memory.md", home);
         install_generic_agent_config("KiloCode", ip, dry_run);
-        install_tiered_agent_profiles(
-            (cbm_tiered_profile_set_t){
-                .label = "KiloCode",
-                .verify_path = ap,
-                .binary_path = binary_path,
-                .legacy_verify_content = legacy_kilo_verify_agent_content,
-                .dialect = CBM_GRAPH_DIALECT_KILO,
-            },
-            dry_run);
         if (!dry_run && !g_install_plan) {
             if (cbm_json_like_add_unique_string(cp, "instructions", ip) != CLI_OK) {
                 record_agent_config_error(false, "KiloCode", "instruction_reference_install", cp);
@@ -8500,15 +8282,6 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         snprintf(ap, sizeof(ap), "%s/.cursor/agents/codebase-memory.md", home);
         install_generic_agent_config("Cursor", NULL, dry_run);
         install_agent_skill("Cursor", skills_dir, force, dry_run);
-        install_tiered_agent_profiles(
-            (cbm_tiered_profile_set_t){
-                .label = "Cursor",
-                .verify_path = ap,
-                .binary_path = binary_path,
-                .legacy_verify_content = legacy_cursor_verify_agent_content,
-                .dialect = CBM_GRAPH_DIALECT_CURSOR,
-            },
-            dry_run);
         /* Cursor documents sessionStart additional_context, but current stable
          * releases have a confirmed delivery race in the IDE. Skills and the
          * read-only subagent are the reliable durable surfaces; do not install
@@ -8588,15 +8361,6 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         if (!legacy_agent_content) {
             record_agent_config_error(false, "Kiro", "legacy_agent_build", ap);
         }
-        install_tiered_agent_profiles(
-            (cbm_tiered_profile_set_t){
-                .label = "Kiro",
-                .verify_path = ap,
-                .binary_path = binary_path,
-                .legacy_verify_content = legacy_agent_content,
-                .dialect = CBM_GRAPH_DIALECT_KIRO,
-            },
-            dry_run);
         free(legacy_agent_content);
     }
     if (agents->junie) {
@@ -8616,16 +8380,6 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         if (!direct_profiles_ready && !g_install_plan) {
             printf("  subagents: direct MCP withheld; installed parent-handoff profiles\n");
         }
-        install_tiered_agent_profiles(
-            (cbm_tiered_profile_set_t){
-                .label = "Junie",
-                .verify_path = agent_path,
-                .binary_path = binary_path,
-                .legacy_verify_content = legacy_junie_verify_agent_content,
-                .dialect = CBM_GRAPH_DIALECT_JUNIE,
-                .force_handoff = !direct_profiles_ready,
-            },
-            dry_run);
     }
 }
 
@@ -8680,15 +8434,6 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         snprintf(coverage_hp, sizeof(coverage_hp), "%s/.augment/hooks/%s", home,
                  AUGMENT_COVERAGE_SCRIPT);
         install_generic_agent_config("Augment/Auggie", ip, dry_run);
-        install_tiered_agent_profiles(
-            (cbm_tiered_profile_set_t){
-                .label = "Augment/Auggie",
-                .verify_path = ap,
-                .binary_path = binary_path,
-                .legacy_verify_content = legacy_augment_verify_agent_content,
-                .dialect = CBM_GRAPH_DIALECT_AUGMENT,
-            },
-            dry_run);
         if (g_install_plan) {
             plan_record("Augment/Auggie", "hook", cp);
             plan_record("Augment/Auggie", "hook", session_hp);
@@ -8754,15 +8499,6 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         snprintf(ap, sizeof(ap), "%s/agents/codebase-memory.md", qwen_home);
         install_generic_agent_config("Qwen Code", ip, dry_run);
         install_agent_skill("Qwen Code", skills_dir, force, dry_run);
-        install_tiered_agent_profiles(
-            (cbm_tiered_profile_set_t){
-                .label = "Qwen Code",
-                .verify_path = ap,
-                .binary_path = binary_path,
-                .legacy_verify_content = legacy_qwen_verify_agent_content,
-                .dialect = CBM_GRAPH_DIALECT_QWEN,
-            },
-            dry_run);
         if (g_install_plan) {
             plan_record("Qwen Code", "hook", cp);
         } else if (!dry_run) {
@@ -8803,15 +8539,6 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         snprintf(skills_dir, sizeof(skills_dir), "%s/.factory/skills", home);
         install_generic_agent_config("Factory Droid", ip, dry_run);
         install_agent_skill("Factory Droid", skills_dir, force, dry_run);
-        install_tiered_agent_profiles(
-            (cbm_tiered_profile_set_t){
-                .label = "Factory Droid",
-                .verify_path = ap,
-                .binary_path = binary_path,
-                .legacy_verify_content = legacy_factory_verify_agent_content,
-                .dialect = CBM_GRAPH_DIALECT_FACTORY,
-            },
-            dry_run);
         bool hook_supported =
             cbm_optional_hook_supported("factory", cbm_current_platform_is_windows());
         if (g_install_plan) {
@@ -8877,17 +8604,6 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         snprintf(prompt_path, sizeof(prompt_path), "%s/prompts/codebase-memory.md", config_dir);
         install_generic_agent_config("Mistral Vibe", ip, dry_run);
         install_agent_skill("Mistral Vibe", skills_dir, force, dry_run);
-        install_tiered_agent_profiles(
-            (cbm_tiered_profile_set_t){
-                .label = "Mistral Vibe",
-                .verify_path = ap,
-                .binary_path = binary_path,
-                .legacy_verify_content = legacy_vibe_verify_agent_content,
-                .dialect = CBM_GRAPH_DIALECT_VIBE,
-            },
-            dry_run);
-        install_tiered_profile_prompts("Mistral Vibe", prompt_path, CBM_GRAPH_DIALECT_VIBE,
-                                       legacy_vibe_verify_prompt_content, dry_run);
     }
     if (agents->grok) {
         char config_dir[CLI_BUF_1K];
@@ -8904,14 +8620,6 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         snprintf(ap, sizeof(ap), "%s/agents/codebase-memory.md", config_dir);
         install_generic_agent_config("Grok Build", ip, dry_run);
         install_agent_skill("Grok Build", skills_dir, force, dry_run);
-        install_tiered_agent_profiles(
-            (cbm_tiered_profile_set_t){
-                .label = "Grok Build",
-                .verify_path = ap,
-                .binary_path = binary_path,
-                .dialect = CBM_GRAPH_DIALECT_GROK,
-            },
-            dry_run);
         /* Grok's passive hook events (SessionStart, SubagentStart, PostToolUse)
          * discard stdout and PreToolUse honors only decision/updatedInput, so
          * the context augmenter would run for nothing: no hook is installed. */
@@ -10414,17 +10122,18 @@ static void uninstall_agent_client_registry(const char *home, bool dry_run) {
         printf("%s:\n", profile->display_name);
         char config_path[CLI_BUF_1K] = {0};
         bool config_resolved = false;
-        if ((profile->capabilities & CBM_AGENT_CAP_MCP) != 0U) {
+        if (profile->legacy_mcp_cleanup) {
             int resolved = cbm_agent_client_resolve_path(profile->id, &registry.options,
                                                          config_path, sizeof(config_path));
-            if (resolved != 0 || !profile->remove_legacy_mcp) {
+            if (resolved != 0) {
                 record_agent_config_error(true, profile->display_name, "mcp_resolve",
                                           profile->stable_id);
             } else {
                 config_resolved = true;
-                int edit_result = dry_run
-                                      ? CBM_AGENT_EDIT_OK
-                                      : profile->remove_legacy_mcp(profile->id, config_path, binary_path);
+                int edit_result =
+                    dry_run ? CBM_AGENT_EDIT_OK
+                            : cbm_agent_client_remove_legacy_mcp(profile->id, config_path,
+                                                                 binary_path);
                 if (edit_result == CBM_AGENT_EDIT_FOREIGN) {
                     printf("  mcp: preserved modified or foreign entry in %s\n", config_path);
                 } else if (edit_result != CBM_AGENT_EDIT_OK) {
@@ -11848,9 +11557,9 @@ int cbm_cmd_update(int argc, char **argv) {
                           "  %s\n",
                           manager ? manager : "another installer", self_path);
             if (manager && strcmp(manager, "mise") == 0) {
-                (void)fprintf(stderr, "  update it with: mise upgrade codebase-memory-mcp\n");
+                (void)fprintf(stderr, "  update it with: mise upgrade codebase-memory-cli\n");
             } else if (manager && strcmp(manager, "Homebrew") == 0) {
-                (void)fprintf(stderr, "  update it with: brew upgrade codebase-memory-mcp\n");
+                (void)fprintf(stderr, "  update it with: brew upgrade codebase-memory-cli\n");
             } else {
                 (void)fprintf(stderr, "  update it through whichever tool installed it.\n");
             }

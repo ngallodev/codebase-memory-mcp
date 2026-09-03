@@ -44,25 +44,16 @@ ELAPSED=$((END_MS - START_MS))
 echo "$INDEX_JSON" > "$OUT/00-index.json"
 echo "$ELAPSED" > "$OUT/index-time.txt"
 
-# Extract node/edge counts (CLI wraps in MCP content envelope)
+# Extract node/edge counts from canonical CLI JSON
 NODES=$(echo "$INDEX_JSON" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
-# Unwrap MCP content envelope if present
-if 'content' in d:
-    inner=json.loads(d['content'][0]['text'])
-else:
-    inner=d
-print(inner.get('nodes',0))
+print(d.get('nodes',0))
 " 2>/dev/null || echo "0")
 EDGES=$(echo "$INDEX_JSON" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
-if 'content' in d:
-    inner=json.loads(d['content'][0]['text'])
-else:
-    inner=d
-print(inner.get('edges',0))
+print(d.get('edges',0))
 " 2>/dev/null || echo "0")
 PROJECT=$(echo "$INDEX_JSON" | python3 -c "
 import json,sys

@@ -12,9 +12,7 @@ FROM ubuntu:noble@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebff
 
 # Minimal: gcc + zlib only. sqlite3 is vendored (compiled from source with ASan).
 # curl + zsh mirror the GitHub runner images: the self-update tests shell out
-# to curl, and the shell-activation tests exercise zsh rc files. zip backs
-# scripts/package-release.sh (.mcpb bundles), which the MCPB bundle contract
-# exercises on every leg.
+# to curl, and the shell-activation tests exercise zsh rc files. zip backs release archive construction and extraction checks.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ make \
     zlib1g-dev \

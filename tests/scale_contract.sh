@@ -21,7 +21,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/build/c/codebase-memory-mcp"
+BIN="$ROOT/build/c/codebase-memory-cli"
 BENCH="${CBM_BENCH_DIR:-$HOME/cbm-bench-validate}"
 PY="${PYTHON:-python3.9}"
 FAILURES=0

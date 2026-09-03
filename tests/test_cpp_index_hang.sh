@@ -30,7 +30,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/build/c/codebase-memory-mcp"
+BIN="$ROOT/build/c/codebase-memory-cli"
 
 # Number of classes/methods in the synthetic TU. Each class has a method that
 # calls the next class's method by value-of-known-type → routes through the

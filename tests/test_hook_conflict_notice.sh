@@ -24,7 +24,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BINARY="${CBM_TEST_BINARY:-${ROOT}/build/c/codebase-memory-mcp}"
+BINARY="${CBM_TEST_BINARY:-${ROOT}/build/c/codebase-memory-cli}"
 if [[ ! -x "${BINARY}" && -x "${BINARY}.exe" ]]; then
   BINARY="${BINARY}.exe"
 fi
