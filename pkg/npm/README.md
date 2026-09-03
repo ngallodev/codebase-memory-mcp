@@ -1,97 +1,56 @@
-# codebase-memory-mcp
+# codebase-memory-cli
 
-[![npm](https://img.shields.io/npm/v/codebase-memory-mcp?style=flat&color=blue)](https://www.npmjs.com/package/codebase-memory-mcp)
-[![GitHub Release](https://img.shields.io/github/v/release/DeusData/codebase-memory-mcp?style=flat&color=blue)](https://github.com/DeusData/codebase-memory-mcp/releases/latest)
-[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/DeusData/codebase-memory-mcp/blob/main/LICENSE)
-[![Platform](https://img.shields.io/badge/macOS_%7C_Linux_%7C_Windows-supported-lightgrey)](https://github.com/DeusData/codebase-memory-mcp/releases/latest)
+`codebase-memory-cli` is the npm distribution wrapper for Codebase Memory, a local CLI-first code-intelligence application designed for coding agents and humans.
 
-**The fastest and most efficient code intelligence engine for AI coding agents.** Full-indexes an average repository in milliseconds, the Linux kernel (28M LOC, 75K files) in 3 minutes. Answers structural queries in under 1ms. This npm wrapper downloads, verifies, and caches the selected native runtime set: the executable, its authenticated integration asset, and—when requested—the content-addressed UI pack.
-
-High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-sitter/) AST analysis across 162 languages — producing a persistent knowledge graph of functions, classes, call chains, HTTP routes, and cross-service links. 15 MCP tools. No hosted service or API key; this package requires Node.js to manage and launch the cached native runtime set. Plug and play across 45 automatic/conditional client surfaces.
+The package downloads and verifies the native runtime set for the current platform, then exposes the `codebase-memory-cli` executable on `PATH`.
 
 ## Installation
 
 ```bash
-npm install -g codebase-memory-mcp
+npm install -g codebase-memory-cli
 ```
 
-The runtime set for your platform is downloaded automatically at install time. There is one composition per platform and the graph UI is always included — the former `CBM_VARIANT=ui` opt-in is obsolete.
+## Quick start
 
-Then configure your coding agents:
+From a repository:
 
 ```bash
-codebase-memory-mcp install
+codebase-memory-cli index .
+codebase-memory-cli status
+codebase-memory-cli search "ClaimValidator"
+codebase-memory-cli snippet ClaimValidator.validate
+codebase-memory-cli trace ClaimValidator.validate --direction both
 ```
 
-Restart your agent. Say **"Index this project"** — done.
+For scripts and agents, request stable machine-readable output with `--json` where supported:
 
-## Why codebase-memory-mcp
+```bash
+codebase-memory-cli search "ClaimValidator" --json
+```
 
-- **Extreme indexing speed** — Linux kernel (28M LOC, 75K files) in 3 minutes. RAM-first pipeline with LZ4 compression and in-memory SQLite.
-- **Plug and play** — verified native runtime sets for macOS (arm64/amd64), Linux (arm64/amd64), and Windows (arm64/amd64). No Docker or API keys; Node.js owns package download, cache repair, and launch.
-- **162 languages** — vendored tree-sitter grammars compiled into the binary. Nothing to install, nothing that breaks.
-- **120x fewer tokens** — 5 structural queries: ~3,400 tokens vs ~412,000 via file-by-file search.
-- **45 supported automatic/conditional client surfaces** — `install` configures the appropriate MCP, durable-context, and documented hook surfaces without widening client permissions.
-- **Detected automatically (39)** — Claude Code, Codex CLI, Gemini CLI, Zed, OpenCode, Antigravity, Aider, KiloCode, VS Code, Cursor, Windsurf, Augment / Auggie, OpenClaw, Kiro, Junie, Hermes, OpenHands, Cline, Warp, Qwen Code, GitHub Copilot CLI, Factory Droid, Crush, Goose, Mistral Vibe, Grok Build, Qoder CLI, Kimi Code CLI, GitLab Duo CLI, Rovo Dev CLI, Amp, Devin CLI / Local, Tabnine, Amazon Q Developer IDE, CodeBuddy Code CLI, IBM Bob Shell, Pochi, Pi, and Oh My Pi (omp).
-- **Conditional or explicit (6)** — Continue / cn, Visual Studio, TRAE, Roo Code, IBM Bob IDE, and Sourcegraph Cody. Bob IDE is touched only when `~/.bob/mcp.json` already exists.
-- **New documented adapters** — CodeBuddy uses `~/.codebuddy/.mcp.json` while preserving active older files; Bob Shell uses `~/.bob/mcp_settings.json`; Pochi uses the `mcp` section in `~/.pochi/config.jsonc`; Amazon Q Developer IDE defaults to `~/.aws/amazonq/default.json` while preserving either documented alternative.
-- **Lifecycle hooks stay conservative** — Kimi uses `UserPromptSubmit`; on macOS/Linux, GitLab Duo gets a fail-open user `SessionStart`, while Devin gets `UserPromptSubmit`, `PostCompaction`, and a deduplicated `SessionStart` when Claude does not already provide it. Qoder, GitLab Duo, Devin, and Factory hooks are withheld on Windows without a documented shell/executor contract. Cline's auto-activating file hooks are withheld because their context output is not reliably consumed, CodeBuddy beta hooks are not auto-installed, and Cursor context hooks remain withheld.
-- **Subagent access is explicit** — Claude, Gemini, Kiro, Qwen, CodeBuddy, KiloCode, Mistral Vibe, Grok Build, Qoder, Junie, and Factory get documented graph profiles with the narrowest tool/server filters their schemas support. KiloCode and Vibe enumerate read-only query tools rather than using server wildcards. Cursor, Rovo, Pochi, and Cline use explicit parent handoff where child MCP is unavailable or unsafe; IBM Bob receives no invented hook or agent.
-- **Manual, UI, cloud, or repository-managed (not counted)** — Qodo, Warp MCP, JetBrains AI/ACP, GitHub Copilot coding agent, Jules, CodeRabbit, Replit, BLACKBOX AI, Plandex, and SWE-agent. Warp is counted above for its detected skill installation; its MCP connection remains manual.
-- **15 MCP tools** — search, trace, architecture, impact analysis, Cypher queries, dead code detection, cross-service HTTP linking, ADR management, and more.
+Running `codebase-memory-cli --help` shows the installed command surface. Operational failures return a non-zero exit status.
 
-## Supported Platforms
+## Agent integrations
 
-| OS      | Architecture |
-|---------|-------------|
-| macOS   | arm64, amd64 |
-| Linux   | arm64, amd64 |
+The CLI can install compatible skills, durable instructions, and lifecycle/context hooks for detected coding agents:
+
+```bash
+codebase-memory-cli install --skip-binary
+```
+
+Use `codebase-memory-cli install --plan` to inspect planned writes before applying them. New installs do not create MCP server registrations.
+
+## Supported platforms
+
+| OS | Architecture |
+|---|---|
+| macOS | arm64, amd64 |
+| Linux | arm64, amd64 |
 | Windows | arm64, amd64 |
 
-## Usage
+## Documentation
 
-```bash
-codebase-memory-mcp install          # configure all detected coding agents
-codebase-memory-mcp --version
-codebase-memory-mcp --help
-codebase-memory-mcp update           # update to latest release
-codebase-memory-mcp uninstall        # remove agent configs
-```
-
-### CLI Mode
-
-Every MCP tool is also available directly from the command line:
-
-```bash
-codebase-memory-mcp cli index_repository '{"repo_path": "/path/to/repo"}'
-codebase-memory-mcp cli search_graph '{"name_pattern": ".*Handler.*", "label": "Function"}'
-codebase-memory-mcp cli trace_call_path '{"function_name": "main", "direction": "both"}'
-codebase-memory-mcp cli get_architecture '{}'
-```
-
-## MCP Tools
-
-| Category | Tools |
-|----------|-------|
-| **Indexing** | `index_repository`, `list_projects`, `delete_project`, `index_status` |
-| **Querying** | `search_graph`, `trace_call_path`, `detect_changes`, `query_graph` |
-| **Analysis** | `get_architecture`, `get_graph_schema`, `get_code_snippet`, `search_code` |
-| **Advanced** | `manage_adr`, `ingest_traces` |
-
-## Performance
-
-Benchmarked on Apple M3 Pro:
-
-| Operation | Time |
-|-----------|------|
-| Linux kernel full index (28M LOC, 75K files) | 3 min |
-| Django full index | ~6s |
-| Cypher query | <1ms |
-| Trace call path (depth=5) | <10ms |
-
-## Full Documentation
-
-See [github.com/DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) for the full README including all MCP tools, configuration options, graph data model, and language support details.
+The source repository and full documentation remain at https://github.com/DeusData/codebase-memory-mcp.
 
 ## License
 

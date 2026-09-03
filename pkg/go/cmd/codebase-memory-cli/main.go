@@ -1,4 +1,4 @@
-// codebase-memory-mcp — Go installer wrapper.
+// codebase-memory-cli — Go installer wrapper.
 //
 // On first run, downloads the pre-built binary for the current platform from
 // GitHub Releases, caches it, and replaces the current process with it.
@@ -6,7 +6,7 @@
 //
 // Install:
 //
-//	go install github.com/DeusData/codebase-memory-mcp/pkg/go/cmd/codebase-memory-mcp@latest
+//	go install github.com/DeusData/codebase-memory-mcp/pkg/go/cmd/codebase-memory-cli@latest
 package main
 
 import (
@@ -37,7 +37,7 @@ import (
 const (
 	repo              = "DeusData/codebase-memory-mcp"
 	version           = "0.10.8"
-	windowsBinaryName = "codebase-memory-mcp.exe"
+	windowsBinaryName = "codebase-memory-cli.exe"
 
 	maxRedirects            = 5
 	requestTimeout          = 2 * time.Minute
@@ -50,7 +50,7 @@ const (
 	maxArchiveMemberSize    = int64(256 * 1024 * 1024)
 	maxArchiveExpandedSize  = int64(512 * 1024 * 1024)
 
-	runtimeSetLockName               = ".codebase-memory-mcp-runtime.lock"
+	runtimeSetLockName               = ".codebase-memory-cli-runtime.lock"
 	runtimeSetLockWait               = 45 * time.Second
 	runtimeSetOwnerlessStale         = 30 * time.Second
 	runtimeSetLockLease              = 5 * time.Minute
@@ -122,13 +122,13 @@ func main() {
 	if mutation == "update" {
 		fmt.Fprintln(
 			os.Stderr,
-			"This Go wrapper is maintained by Go. Update it with \"go install github.com/DeusData/codebase-memory-mcp/pkg/go/cmd/codebase-memory-mcp@latest\".",
+			"This Go wrapper is maintained by Go. Update it with \"go install github.com/DeusData/codebase-memory-mcp/pkg/go/cmd/codebase-memory-cli@latest\".",
 		)
 		os.Exit(2)
 	}
 	executable, err := ensureBinary()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "codebase-memory-mcp: %v\n", err)
+		fmt.Fprintf(os.Stderr, "codebase-memory-cli: %v\n", err)
 		os.Exit(1)
 	}
 	args := nativeArgs(os.Args[1:])
@@ -145,7 +145,7 @@ func main() {
 				os.Exit(exitErr.ExitCode())
 			}
 		}
-		fmt.Fprintf(os.Stderr, "codebase-memory-mcp: %v\n", err)
+		fmt.Fprintf(os.Stderr, "codebase-memory-cli: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -177,7 +177,7 @@ func binaryNameForOS(targetOS string) string {
 	if targetOS == "windows" {
 		return windowsBinaryName
 	}
-	return "codebase-memory-mcp"
+	return "codebase-memory-cli"
 }
 
 func executionPathForOS(binary, targetOS string) string {
@@ -189,12 +189,12 @@ func printPortableMutationGuidance(args []string) {
 	if action != "uninstall" {
 		return
 	}
-	packageCommand := "Remove-Item (Get-Command codebase-memory-mcp).Source"
+	packageCommand := "Remove-Item (Get-Command codebase-memory-cli).Source"
 	fmt.Fprintf(
 		os.Stderr,
 		"This Go Windows copy is portable. Use %q for package maintenance, or run %q once to create a managed installation with coordinated self-update/uninstall.\n",
 		packageCommand,
-		"codebase-memory-mcp install --yes",
+		"codebase-memory-cli install --yes",
 	)
 }
 
@@ -224,12 +224,12 @@ func defaultManagedInstallDir() string {
 				base = filepath.Join(home, "AppData", "Local")
 			}
 		}
-		return filepath.Join(base, "Programs", "codebase-memory-mcp")
+		return filepath.Join(base, "Programs", "codebase-memory-cli")
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		return filepath.Join(home, ".local", "bin")
 	}
-	return filepath.Join(os.TempDir(), "codebase-memory-mcp-managed")
+	return filepath.Join(os.TempDir(), "codebase-memory-cli-managed")
 }
 
 func nativeArgs(args []string) []string {
@@ -306,20 +306,20 @@ func cacheDir() string {
 	switch runtime.GOOS {
 	case "windows":
 		if d := os.Getenv("LOCALAPPDATA"); d != "" {
-			return filepath.Join(d, "codebase-memory-mcp")
+			return filepath.Join(d, "codebase-memory-cli")
 		}
 	case "darwin":
 		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, "Library", "Caches", "codebase-memory-mcp")
+			return filepath.Join(home, "Library", "Caches", "codebase-memory-cli")
 		}
 	}
 	if d := os.Getenv("XDG_CACHE_HOME"); d != "" {
-		return filepath.Join(d, "codebase-memory-mcp")
+		return filepath.Join(d, "codebase-memory-cli")
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".cache", "codebase-memory-mcp")
+		return filepath.Join(home, ".cache", "codebase-memory-cli")
 	}
-	return filepath.Join(os.TempDir(), "codebase-memory-mcp")
+	return filepath.Join(os.TempDir(), "codebase-memory-cli")
 }
 
 func goos() string {
@@ -372,13 +372,13 @@ func download(dest string) error {
 		portable = "-portable"
 	}
 	archive := fmt.Sprintf(
-		"codebase-memory-mcp-%s-%s%s.%s",
+		"codebase-memory-cli-%s-%s%s.%s",
 		platform, arch, portable, ext,
 	)
 	url := fmt.Sprintf("https://github.com/%s/releases/download/v%s/%s", repo, version, archive)
 	checksumURL := fmt.Sprintf("https://github.com/%s/releases/download/v%s/checksums.txt", repo, version)
 
-	fmt.Fprintf(os.Stderr, "codebase-memory-mcp: downloading v%s for %s/%s...\n", version, platform, arch)
+	fmt.Fprintf(os.Stderr, "codebase-memory-cli: downloading v%s for %s/%s...\n", version, platform, arch)
 
 	tmp, err := os.MkdirTemp("", "cbm-install-*")
 	if err != nil {
@@ -2276,7 +2276,7 @@ func execBinaryWithRuntimeLockAndRunner(
 		if cleanupErr := runtimeMutationSnapshotCleanup(snapshotDirectory); cleanupErr != nil {
 			fmt.Fprintf(
 				os.Stderr,
-				"codebase-memory-mcp: warning: private mutation snapshot cleanup failed: %v\n",
+				"codebase-memory-cli: warning: private mutation snapshot cleanup failed: %v\n",
 				cleanupErr,
 			)
 		}

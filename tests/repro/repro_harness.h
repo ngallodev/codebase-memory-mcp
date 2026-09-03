@@ -17,7 +17,7 @@
 #include <foundation/compat.h>
 #include "test_helpers.h" /* th_rmtree */
 #include "cbm.h"
-#include <mcp/mcp.h>
+#include "test_operation_host.h"
 #include <store/store.h>
 #include <pipeline/pipeline.h> /* cbm_project_name_from_path */
 
@@ -34,7 +34,7 @@ typedef struct {
     char cachedir[256];
     char dbpath[512];
     char *project;
-    cbm_mcp_server_t *srv;
+    cbm_test_operation_host_t *srv;
 } RProj;
 
 typedef struct {
@@ -69,11 +69,11 @@ static inline cbm_store_t *rh_open_indexed(RProj *lp) {
     cbm_setenv("CBM_CACHE_DIR", lp->cachedir, 1);
 
     cbm_store_t *store = NULL;
-    lp->srv = cbm_mcp_server_new(NULL);
+    lp->srv = cbm_test_operation_host_new(NULL);
     if (lp->srv) {
         char args[700];
         snprintf(args, sizeof(args), "{\"repo_path\":\"%s\"}", lp->tmpdir);
-        char *resp = cbm_mcp_handle_tool(lp->srv, "index_repository", args);
+        char *resp = cbm_test_operation_execute(lp->srv, "index_repository", args);
         if (resp)
             free(resp);
         /* Repro consumers only inspect the graph. Keep this connection query-only
@@ -133,7 +133,7 @@ static inline void rh_cleanup(RProj *lp, cbm_store_t *store) {
     if (store)
         cbm_store_close(store);
     if (lp->srv) {
-        cbm_mcp_server_free(lp->srv);
+        cbm_test_operation_host_free(lp->srv);
         lp->srv = NULL;
     }
     free(lp->project);

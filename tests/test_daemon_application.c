@@ -16,8 +16,9 @@
 #include "foundation/sha256.h"
 #include "foundation/subprocess.h"
 #include "foundation/workspace.h"
-#include "mcp/mcp.h"
-#include "mcp/mcp_internal.h"
+#include "operations/index_admission.h"
+#include "operations/json_args.h"
+#include "operations/tool_profile.h"
 #include "pipeline/pipeline.h"
 #include "store/store.h"
 #include "ui/config.h"
@@ -166,7 +167,7 @@ static cbm_daemon_runtime_application_status_t app_test_request(
 }
 
 static bool app_test_context_request_options(const char *root, const char *allowed,
-                                             cbm_mcp_tool_profile_t tool_profile,
+                                             cbm_tool_profile_t tool_profile,
                                              const char *hook_event, const char *hook_dialect,
                                              uint8_t **request_out, uint32_t *length_out) {
     size_t root_length = strlen(root);
@@ -219,7 +220,7 @@ static bool app_test_context_request_options(const char *root, const char *allow
 
 static bool app_test_context_request(const char *root, const char *allowed, uint8_t **request_out,
                                      uint32_t *length_out) {
-    return app_test_context_request_options(root, allowed, CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL,
+    return app_test_context_request_options(root, allowed, CBM_TOOL_PROFILE_ALL, NULL, NULL,
                                             request_out, length_out);
 }
 
@@ -832,7 +833,7 @@ TEST(daemon_application_restricted_profile_owns_no_background_surfaces) {
     uint32_t index_call_length = 0;
     bool encoded =
         db_ok && session &&
-        app_test_context_request_options(root, root, CBM_MCP_TOOL_PROFILE_SCOUT, NULL, NULL,
+        app_test_context_request_options(root, root, CBM_TOOL_PROFILE_SCOUT, NULL, NULL,
                                          &context, &context_length) &&
         app_test_text_request(
             (cbm_daemon_application_request_kind_t)2,
@@ -936,7 +937,7 @@ TEST(daemon_application_hook_context_preserves_event_and_dialect) {
     uint32_t hook_length = 0;
     bool encoded =
         root_ok && session &&
-        app_test_context_request_options(root, root, CBM_MCP_TOOL_PROFILE_ALL, "SessionStart",
+        app_test_context_request_options(root, root, CBM_TOOL_PROFILE_ALL, "SessionStart",
                                          "copilot", &context, &context_length) &&
         app_test_text_request(CBM_DAEMON_APPLICATION_REQUEST_HOOK_AUGMENT, input, &hook,
                               &hook_length);
@@ -1377,8 +1378,8 @@ static int app_fake_worker_start(void *opaque, const char *args_json, size_t mem
         return -1;
     }
     if (context->project_locks) {
-        char *repo_path = cbm_mcp_get_string_arg(args_json, "repo_path");
-        char *name_override = cbm_mcp_get_string_arg(args_json, "name");
+        char *repo_path = cbm_json_string_arg(args_json, "repo_path");
+        char *name_override = cbm_json_string_arg(args_json, "name");
         worker->project_key = cbm_project_name_from_path(
             name_override && name_override[0] ? name_override : repo_path);
         free(name_override);
@@ -1874,7 +1875,7 @@ static cbm_daemon_application_update_ops_t app_fake_update_ops(app_fake_update_c
 
 static bool app_test_initialize_profile(const cbm_daemon_runtime_application_callbacks_t *callbacks,
                                         cbm_daemon_runtime_application_session_t *session,
-                                        const char *root, cbm_mcp_tool_profile_t profile,
+                                        const char *root, cbm_tool_profile_t profile,
                                         const char *hook_event, const char *hook_dialect) {
     uint8_t *context = NULL;
     uint32_t context_length = 0;
@@ -2001,9 +2002,9 @@ TEST(daemon_application_initialize_coalesces_auto_index_for_full_sessions) {
 
     int bg_baseline = cbm_daemon_application_background_initializes_for_test();
     bool scout_initialized = app_test_initialize_profile(&callbacks, sessions[2], root,
-                                                         CBM_MCP_TOOL_PROFILE_SCOUT, NULL, NULL);
+                                                         CBM_TOOL_PROFILE_SCOUT, NULL, NULL);
     bool hook_initialized = app_test_initialize_profile(
-        &callbacks, sessions[3], root, CBM_MCP_TOOL_PROFILE_ALL, "SessionStart", "copilot");
+        &callbacks, sessions[3], root, CBM_TOOL_PROFILE_ALL, "SessionStart", "copilot");
     bool admissions_evaluated = app_wait_for_background_initializes(bg_baseline + 2);
     bool restricted_started_nothing =
         admissions_evaluated && atomic_load(&fake.starts) == 0 && application && project &&
@@ -2011,12 +2012,12 @@ TEST(daemon_application_initialize_coalesces_auto_index_for_full_sessions) {
         atomic_load(&update.starts) == 0;
 
     bool first_initialized = app_test_initialize_profile(&callbacks, sessions[0], root,
-                                                         CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+                                                         CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool first_owned = first_initialized && project &&
                        app_wait_for_subscribers(application, project, 1) &&
                        app_wait_for_atomic_int(&fake.starts, 1);
     bool second_initialized = app_test_initialize_profile(&callbacks, sessions[1], root,
-                                                          CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+                                                          CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool coalesced = first_owned && second_initialized && project &&
                      app_wait_for_subscribers(application, project, 2) &&
                      cbm_daemon_application_active_jobs(application) == 1 &&
@@ -2153,14 +2154,14 @@ TEST(daemon_application_sensitive_root_blocks_auto_index_but_preserves_controls)
 
     int background_baseline = cbm_daemon_application_background_initializes_for_test();
     bool sensitive_initialized = app_test_initialize_profile(
-        &callbacks, sensitive_session, sensitive, CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+        &callbacks, sensitive_session, sensitive, CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool sensitive_evaluated = app_wait_for_background_initializes(background_baseline + 1);
     bool sensitive_blocked = sensitive_initialized && sensitive_evaluated &&
                              atomic_load(&fake.starts) == 0 &&
                              cbm_daemon_application_active_jobs(application) == 0;
 
     bool ordinary_initialized = app_test_initialize_profile(&callbacks, ordinary_session, ordinary,
-                                                            CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+                                                            CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool ordinary_admitted = ordinary_initialized && app_wait_for_atomic_int(&fake.starts, 1) &&
                              cbm_daemon_application_active_jobs(application) == 1;
     if (ordinary_session) {
@@ -2177,7 +2178,7 @@ TEST(daemon_application_sensitive_root_blocks_auto_index_but_preserves_controls)
                                                                grant_error, sizeof(grant_error));
     bool approved_initialized =
         approved && app_test_initialize_profile(&callbacks, approved_session, sensitive,
-                                                CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+                                                CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool approved_admitted = approved_initialized && app_wait_for_atomic_int(&fake.starts, 2) &&
                              cbm_daemon_application_active_jobs(application) == 1;
 
@@ -2287,10 +2288,10 @@ TEST(daemon_application_sensitive_root_blocks_watch_but_preserves_controls) {
         application ? app_test_open(&callbacks, 4035) : NULL;
 
     bool sensitive_initialized = app_test_initialize_profile(
-        &callbacks, sensitive_session, sensitive, CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+        &callbacks, sensitive_session, sensitive, CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool sensitive_blocked = sensitive_initialized && cbm_watcher_watch_count(watcher) == 0;
     bool ordinary_initialized = app_test_initialize_profile(&callbacks, ordinary_session, ordinary,
-                                                            CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+                                                            CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool ordinary_watched = ordinary_initialized && cbm_watcher_watch_count(watcher) == 1;
     if (ordinary_session) {
         callbacks.session_close(callbacks.context, ordinary_session);
@@ -2303,7 +2304,7 @@ TEST(daemon_application_sensitive_root_blocks_watch_but_preserves_controls) {
                                                                  grant_error, sizeof(grant_error));
     bool approved_initialized =
         approved && app_test_initialize_profile(&callbacks, approved_session, sensitive,
-                                                CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+                                                CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool approved_watched = approved_initialized && cbm_watcher_watch_count(watcher) == 1;
 
     if (sensitive_session) {
@@ -2396,7 +2397,7 @@ TEST(daemon_application_auto_index_honors_tracked_file_limit) {
         application ? app_test_open(&callbacks, 4190) : NULL;
     int bg_baseline = cbm_daemon_application_background_initializes_for_test();
     bool initialized = app_test_initialize_profile(&callbacks, session, root,
-                                                   CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+                                                   CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool admission_evaluated = app_wait_for_background_initializes(bg_baseline + 1);
     bool limit_prevented_admission = initialized && admission_evaluated &&
                                      atomic_load(&fake.starts) == 0 &&
@@ -2439,7 +2440,7 @@ TEST(daemon_application_auto_index_file_count_handles_literal_metacharacter_path
     bool renamed = source_ready && literal_written > 0 &&
                    (size_t)literal_written < sizeof(literal) && rename(original, literal) == 0;
     int file_count = -1;
-    bool within_limit = renamed && cbm_mcp_auto_index_within_file_limit(literal, 1, &file_count);
+    bool within_limit = renamed && cbm_auto_index_within_file_limit(literal, 1, &file_count);
 
     (void)th_rmtree(renamed ? literal : original);
 
@@ -2461,9 +2462,9 @@ TEST(daemon_application_auto_index_file_count_supports_non_git_roots) {
     (void)snprintf(source, sizeof(source), "%s/source.c", root);
     bool source_ready = root_ready && app_test_create_empty_file(source);
     int rejected_count = -1;
-    bool rejected = source_ready && cbm_mcp_auto_index_within_file_limit(root, 0, &rejected_count);
+    bool rejected = source_ready && cbm_auto_index_within_file_limit(root, 0, &rejected_count);
     int admitted_count = -1;
-    bool admitted = source_ready && cbm_mcp_auto_index_within_file_limit(root, 1, &admitted_count);
+    bool admitted = source_ready && cbm_auto_index_within_file_limit(root, 1, &admitted_count);
 
     (void)th_rmtree(root);
 
@@ -2535,7 +2536,7 @@ TEST(daemon_application_auto_index_retries_transient_busy_admission) {
     int bg_baseline = cbm_daemon_application_background_initializes_for_test();
     bool initialized =
         occupied_admitted && app_test_initialize_profile(&callbacks, session, auto_root,
-                                                         CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+                                                         CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool admission_evaluated = app_wait_for_background_initializes(bg_baseline + 1);
     bool initially_deferred = initialized && admission_evaluated && atomic_load(&fake.starts) == 1;
 
@@ -2601,7 +2602,7 @@ TEST(daemon_application_update_generation_notifies_initial_and_late_sessions_onc
     cbm_daemon_runtime_application_session_t *initial =
         application ? app_test_open(&callbacks, 4211) : NULL;
     bool initial_initialized = app_test_initialize_profile(&callbacks, initial, root,
-                                                           CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+                                                           CBM_TOOL_PROFILE_ALL, NULL, NULL);
 
     uint64_t request_id = 42000;
     uint8_t *initial_notice = NULL;
@@ -2621,7 +2622,7 @@ TEST(daemon_application_update_generation_notifies_initial_and_late_sessions_onc
         application ? app_test_open(&callbacks, 4212) : NULL;
     bool late_initialized =
         initial_notified &&
-        app_test_initialize_profile(&callbacks, late, root, CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+        app_test_initialize_profile(&callbacks, late, root, CBM_TOOL_PROFILE_ALL, NULL, NULL);
     uint8_t *late_notice = NULL;
     bool late_notified =
         late_initialized && app_wait_for_update_notice(&callbacks, late, &request_id, &late_notice);
@@ -2682,7 +2683,7 @@ TEST(daemon_application_update_generation_retries_worker_start_failure) {
     cbm_daemon_runtime_application_session_t *session =
         application ? app_test_open(&callbacks, 4261) : NULL;
     bool initialized = app_test_initialize_profile(&callbacks, session, root,
-                                                   CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+                                                   CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool failed_generation_started = initialized && app_wait_for_atomic_int(&update.starts, 1);
     uint64_t request_id = 42610;
     uint8_t *notice = NULL;
@@ -2725,10 +2726,10 @@ TEST(daemon_application_update_generation_retries_cancelled_check) {
     cbm_daemon_runtime_application_session_t *scout =
         application ? app_test_open(&callbacks, 4272) : NULL;
     bool scout_initialized = app_test_initialize_profile(&callbacks, scout, root,
-                                                         CBM_MCP_TOOL_PROFILE_SCOUT, NULL, NULL);
+                                                         CBM_TOOL_PROFILE_SCOUT, NULL, NULL);
     bool first_initialized =
         scout_initialized &&
-        app_test_initialize_profile(&callbacks, first, root, CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+        app_test_initialize_profile(&callbacks, first, root, CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool first_started = first_initialized && app_wait_for_atomic_int(&update.starts, 1);
     if (first) {
         callbacks.session_cancel(callbacks.context, first);
@@ -2743,7 +2744,7 @@ TEST(daemon_application_update_generation_retries_cancelled_check) {
         application ? app_test_open(&callbacks, 4273) : NULL;
     bool retry_initialized =
         first_cancelled &&
-        app_test_initialize_profile(&callbacks, retry, root, CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+        app_test_initialize_profile(&callbacks, retry, root, CBM_TOOL_PROFILE_ALL, NULL, NULL);
     uint64_t request_id = 42710;
     uint8_t *notice = NULL;
     bool retry_notified =
@@ -2810,7 +2811,7 @@ TEST(daemon_application_final_disconnect_cancels_and_joins_update_generation) {
     cbm_daemon_runtime_application_session_t *session =
         application ? app_test_open(&callbacks, 4311) : NULL;
     bool initialized = app_test_initialize_profile(&callbacks, session, root,
-                                                   CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL);
+                                                   CBM_TOOL_PROFILE_ALL, NULL, NULL);
     bool generation_started = initialized && app_wait_for_atomic_int(&update.starts, 1);
 
     app_final_disconnect_thread_t disconnect = {

@@ -79,7 +79,6 @@ extern void suite_repro_issue520(void);
 extern void suite_repro_issue333(void);
 extern void suite_repro_issue570(void);
 extern void suite_repro_issue409(void);
-extern void suite_repro_issue431(void);
 extern void suite_repro_issue607(void);
 extern void suite_repro_issue403(void);
 extern void suite_repro_issue434(void);
@@ -124,7 +123,7 @@ extern void suite_repro_lsp_java_cs(void);
 extern void suite_repro_lsp_kt_php_rust(void);
 
 int main(void) {
-    /* #845 belt-and-suspenders: this binary EMBEDS cbm_mcp_handle_tool and its
+    /* #845 belt-and-suspenders: this binary EMBEDS cbm_test_operation_execute and its
      * main() IGNORES argv — spawned as `<self> cli --index-worker …` it would
      * re-run EVERY repro suite recursively (the observed 11-min hangs). The
      * supervisor gate already ignores unmarked hosts; pin the kill switch too.
@@ -177,7 +176,6 @@ int main(void) {
     RUN_SUITE(repro_issue333);
     RUN_SUITE(repro_issue570);
     RUN_SUITE(repro_issue409);
-    RUN_SUITE(repro_issue431);
     RUN_SUITE(repro_issue607);
     RUN_SUITE(repro_issue403);
     RUN_SUITE(repro_issue434);

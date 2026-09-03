@@ -37,13 +37,11 @@ long cbm_max_file_bytes(void);
  * CBM_CYPHER_MAX_DEPTH (a positive integer). Default 10. */
 int cbm_cypher_max_depth(void);
 
-/* Maximum traversal depth for client-driven MCP graph tools (trace_call_path,
+/* Maximum traversal depth for client-driven graph operations (trace_call_path,
  * detect_changes): the client `depth` argument is WARN-clamped to this so an
  * arbitrarily large value cannot drive an unbounded BFS over the shared store.
  * Override with CBM_MCP_MAX_DEPTH (a positive integer). Default 15. */
 int cbm_operation_max_depth(void);
 
-/* Compatibility alias for legacy MCP adapters. */
-int cbm_mcp_max_depth(void);
 
 #endif /* CBM_LIMITS_H */

@@ -4,7 +4,7 @@
 #include "test_framework.h"
 
 #include "daemon/daemon.h"
-#include "mcp/mcp.h"
+#include "operations/session_state.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -356,114 +356,20 @@ TEST(daemon_frame_header_rejects_wrong_protocol_and_oversize) {
     PASS();
 }
 
-static FILE *message_stream_bytes(const void *bytes, size_t length) {
-    FILE *f = tmpfile();
-    if (!f) {
-        return NULL;
-    }
-    (void)fwrite(bytes, 1, length, f);
-    rewind(f);
-    return f;
-}
-
-static FILE *message_stream(const char *bytes) {
-    return message_stream_bytes(bytes, strlen(bytes));
-}
-
-TEST(daemon_bridge_reads_newline_and_content_length_messages) {
-    char *message = NULL;
-    bool framed = false;
-
-    FILE *line = message_stream("{\"jsonrpc\":\"2.0\",\"method\":\"ping\"}\n");
-    ASSERT_NOT_NULL(line);
-    ASSERT_EQ(cbm_mcp_read_message(line, &message, &framed), 1);
-    ASSERT_FALSE(framed);
-    ASSERT_STR_EQ(message, "{\"jsonrpc\":\"2.0\",\"method\":\"ping\"}");
-    free(message);
-    message = NULL;
-    fclose(line);
-
-    const char *body = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/list\"}";
-    char wire[512];
-    snprintf(wire, sizeof(wire), "Content-Length: %zu\r\nX-Test: yes\r\n\r\n%s", strlen(body),
-             body);
-    FILE *content_length = message_stream(wire);
-    ASSERT_NOT_NULL(content_length);
-    ASSERT_EQ(cbm_mcp_read_message(content_length, &message, &framed), 1);
-    ASSERT_TRUE(framed);
-    ASSERT_STR_EQ(message, body);
-    free(message);
-    fclose(content_length);
-    PASS();
-}
-
-TEST(daemon_bridge_rejects_malformed_content_length) {
-    char *message = NULL;
-    bool framed = false;
-    FILE *wire = message_stream("Content-Length: 4junk\r\n\r\nping");
-    ASSERT_NOT_NULL(wire);
-    ASSERT_EQ(cbm_mcp_read_message(wire, &message, &framed), -1);
-    ASSERT_NULL(message);
-    fclose(wire);
-    PASS();
-}
-
-TEST(daemon_bridge_rejects_embedded_nul_body) {
-    static const unsigned char wire[] = {
-        'C', 'o', 'n', 't', 'e',  'n',  't',  '-',  'L', 'e',  'n', 'g', 't',
-        'h', ':', ' ', '4', '\r', '\n', '\r', '\n', 'a', '\0', 'b', 'c',
-    };
-    char *message = NULL;
-    bool framed = false;
-    FILE *stream = message_stream_bytes(wire, sizeof(wire));
-    ASSERT_NOT_NULL(stream);
-    ASSERT_EQ(cbm_mcp_read_message(stream, &message, &framed), -1);
-    ASSERT_NULL(message);
-    fclose(stream);
-    PASS();
-}
-
-TEST(daemon_bridge_rejects_oversized_headers) {
-    const size_t fill_length = 9000;
-    const char prefix[] = "Content-Length: 2\r\nX-Fill: ";
-    const char suffix[] = "\r\n\r\n{}";
-    size_t wire_length = sizeof(prefix) - 1 + fill_length + sizeof(suffix) - 1;
-    char *wire_bytes = malloc(wire_length);
-    ASSERT_NOT_NULL(wire_bytes);
-    memcpy(wire_bytes, prefix, sizeof(prefix) - 1);
-    memset(wire_bytes + sizeof(prefix) - 1, 'x', fill_length);
-    memcpy(wire_bytes + sizeof(prefix) - 1 + fill_length, suffix, sizeof(suffix) - 1);
-
-    char *message = NULL;
-    bool framed = false;
-    FILE *stream = message_stream_bytes(wire_bytes, wire_length);
-    free(wire_bytes);
-    ASSERT_NOT_NULL(stream);
-    ASSERT_EQ(cbm_mcp_read_message(stream, &message, &framed), -1);
-    ASSERT_NULL(message);
-    fclose(stream);
-    PASS();
-}
-
 TEST(daemon_sessions_keep_distinct_roots_and_allowed_root_policy) {
-    cbm_mcp_server_t *a = cbm_mcp_server_new(NULL);
-    cbm_mcp_server_t *b = cbm_mcp_server_new(NULL);
+    cbm_operation_session_state_t *a = cbm_operation_session_state_new();
+    cbm_operation_session_state_t *b = cbm_operation_session_state_new();
     ASSERT_NOT_NULL(a);
     ASSERT_NOT_NULL(b);
-
-    ASSERT_TRUE(cbm_mcp_server_set_session_context(a, "/tmp/cbm-session-a", "/tmp"));
-    ASSERT_TRUE(cbm_mcp_server_set_session_context(b, "/tmp/cbm-session-b", NULL));
-    cbm_mcp_server_set_background_tasks(a, false);
-    cbm_mcp_server_set_background_tasks(b, false);
-
-    ASSERT_STR_EQ(cbm_mcp_server_session_root(a), "/tmp/cbm-session-a");
-    ASSERT_STR_EQ(cbm_mcp_server_allowed_root(a), "/tmp");
-    ASSERT_STR_EQ(cbm_mcp_server_session_root(b), "/tmp/cbm-session-b");
-    ASSERT_NULL(cbm_mcp_server_allowed_root(b));
-    ASSERT_STR_NEQ(cbm_mcp_server_session_project(a), cbm_mcp_server_session_project(b));
-
-    cbm_mcp_server_free(a);
-    cbm_mcp_server_free(b);
+    ASSERT_TRUE(cbm_operation_session_state_set_context(a, "/tmp/cbm-session-a", "/tmp", true));
+    ASSERT_TRUE(cbm_operation_session_state_set_context(b, "/tmp/cbm-session-b", NULL, false));
+    ASSERT_STR_EQ(cbm_operation_session_root(a), "/tmp/cbm-session-a");
+    ASSERT_STR_EQ(cbm_operation_session_allowed_root(a), "/tmp");
+    ASSERT_STR_EQ(cbm_operation_session_root(b), "/tmp/cbm-session-b");
+    ASSERT_NULL(cbm_operation_session_allowed_root(b));
+    ASSERT_STR_NEQ(cbm_operation_session_project(a), cbm_operation_session_project(b));
+    cbm_operation_session_state_free(a);
+    cbm_operation_session_state_free(b);
     PASS();
 }
 
@@ -475,9 +381,5 @@ SUITE(daemon) {
     RUN_TEST(daemon_last_client_stops_immediately_and_releases_owned_work);
     RUN_TEST(daemon_completed_job_is_not_cancelled_on_later_disconnect);
     RUN_TEST(daemon_frame_header_rejects_wrong_protocol_and_oversize);
-    RUN_TEST(daemon_bridge_reads_newline_and_content_length_messages);
-    RUN_TEST(daemon_bridge_rejects_malformed_content_length);
-    RUN_TEST(daemon_bridge_rejects_embedded_nul_body);
-    RUN_TEST(daemon_bridge_rejects_oversized_headers);
     RUN_TEST(daemon_sessions_keep_distinct_roots_and_allowed_root_policy);
 }

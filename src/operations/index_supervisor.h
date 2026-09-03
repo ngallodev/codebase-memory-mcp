@@ -105,7 +105,7 @@ const char *cbm_index_worker_argv_status_message(cbm_index_worker_argv_status_t 
 /* Host marking (#845): the supervisor gate is OPT-IN per process. Only the real
  * codebase-memory-mcp binary calls this (first thing in main(), before any
  * subcommand dispatch, so MCP server + CLI + HTTP paths are all covered).
- * EMBEDDERS of cbm_mcp_handle_tool (test binaries, future library users) never
+ * EMBEDDERS of neutral operation execution (test binaries, future library users) never
  * call it, so they index in-process by default. Without this gate the supervisor
  * resolved the CURRENT executable and re-invoked it as
  * `<self> cli --index-worker …` — a test binary ignores those args and re-runs

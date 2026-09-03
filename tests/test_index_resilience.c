@@ -106,13 +106,13 @@ static cbm_store_t *ri_index_capture(RProj *lp, char **out_resp) {
     cbm_mkdir(cache_dir);
     snprintf(lp->dbpath, sizeof(lp->dbpath), "%s/%s.db", cache_dir, lp->project);
     unlink(lp->dbpath);
-    lp->srv = cbm_mcp_server_new(NULL);
+    lp->srv = cbm_test_operation_host_new(NULL);
     if (!lp->srv) {
         return NULL;
     }
     char args[700];
     snprintf(args, sizeof(args), "{\"repo_path\":\"%s\"}", lp->tmpdir);
-    char *resp = cbm_mcp_handle_tool(lp->srv, "index_repository", args);
+    char *resp = cbm_test_operation_execute(lp->srv, "index_repository", args);
     if (out_resp) {
         *out_resp = resp;
     } else if (resp) {
@@ -393,7 +393,7 @@ TEST(index_parse_partial_reported) {
 
     char qargs[900];
     snprintf(qargs, sizeof(qargs), "{\"project\":\"%s\"}", lp.project);
-    char *qresp = cbm_mcp_handle_tool(lp.srv, "index_status", qargs);
+    char *qresp = cbm_test_operation_execute(lp.srv, "index_status", qargs);
     ASSERT_NOT_NULL(qresp);
     ASSERT_NOT_NULL(strstr(qresp, "split.c"));
     ASSERT_NOT_NULL(strstr(qresp, "parse_partial"));
@@ -404,13 +404,13 @@ TEST(index_parse_partial_reported) {
      * precisely anchored); the note never fires for clean files. */
     snprintf(qargs, sizeof(qargs), "{\"project\":\"%s\",\"qualified_name\":\"ok_before\"}",
              lp.project);
-    char *sresp = cbm_mcp_handle_tool(lp.srv, "get_code_snippet", qargs);
+    char *sresp = cbm_test_operation_execute(lp.srv, "get_code_snippet", qargs);
     ASSERT_NOT_NULL(sresp);
     ASSERT_NOT_NULL(strstr(sresp, "coverage_note"));
     ASSERT_NOT_NULL(strstr(sresp, "PARTIALLY indexed"));
     free(sresp);
     snprintf(qargs, sizeof(qargs), "{\"project\":\"%s\",\"qualified_name\":\"alpha\"}", lp.project);
-    char *cresp2 = cbm_mcp_handle_tool(lp.srv, "get_code_snippet", qargs);
+    char *cresp2 = cbm_test_operation_execute(lp.srv, "get_code_snippet", qargs);
     ASSERT_NOT_NULL(cresp2);
     ASSERT_NULL(strstr(cresp2, "coverage_note")); /* good.py: no note */
     free(cresp2);
@@ -423,7 +423,7 @@ TEST(index_parse_partial_reported) {
              "{\"project\":\"%s\",\"graph\":\"missed\",\"query\":\"MATCH (f:File) WHERE "
              "f.kind = \\\"parse_partial\\\" RETURN f.file_path, f.detail\"}",
              lp.project);
-    char *gresp = cbm_mcp_handle_tool(lp.srv, "query_graph", qargs);
+    char *gresp = cbm_test_operation_execute(lp.srv, "query_graph", qargs);
     ASSERT_NOT_NULL(gresp);
     ASSERT_NOT_NULL(strstr(gresp, "split.c"));
     free(gresp);
@@ -431,7 +431,7 @@ TEST(index_parse_partial_reported) {
              "{\"project\":\"%s\",\"query\":\"MATCH (f:File) WHERE f.kind = "
              "\\\"parse_partial\\\" RETURN f.file_path\"}",
              lp.project);
-    char *cresp = cbm_mcp_handle_tool(lp.srv, "query_graph", qargs);
+    char *cresp = cbm_test_operation_execute(lp.srv, "query_graph", qargs);
     ASSERT_NOT_NULL(cresp);
     ASSERT_NULL(strstr(cresp, "split.c")); /* code graph: no coverage rows */
     free(cresp);
@@ -450,7 +450,7 @@ TEST(index_parse_partial_reported) {
     ri_write_text(lp.tmpdir, "good.py", "def alpha():\n    return 2\n");
     char iargs[700];
     snprintf(iargs, sizeof(iargs), "{\"repo_path\":\"%s\"}", lp.tmpdir);
-    char *iresp = cbm_mcp_handle_tool(lp.srv, "index_repository", iargs);
+    char *iresp = cbm_test_operation_execute(lp.srv, "index_repository", iargs);
     ASSERT_NOT_NULL(iresp);
     yyjson_doc *idoc = yyjson_read(iresp, strlen(iresp), 0);
     ASSERT_NOT_NULL(idoc);
@@ -517,7 +517,7 @@ TEST(index_parse_partial_clears_on_fix) {
     /* Flagged after the first (full) index. */
     char qargs[900];
     snprintf(qargs, sizeof(qargs), "{\"project\":\"%s\"}", lp.project);
-    char *cov1 = cbm_mcp_handle_tool(lp.srv, "index_status", qargs);
+    char *cov1 = cbm_test_operation_execute(lp.srv, "index_status", qargs);
     ASSERT_NOT_NULL(cov1);
     ASSERT_NOT_NULL(strstr(cov1, "flaky.c"));
     free(cov1);
@@ -534,11 +534,11 @@ TEST(index_parse_partial_clears_on_fix) {
     /* Re-index WITHOUT deleting the DB → routes through the incremental path. */
     char iargs[700];
     snprintf(iargs, sizeof(iargs), "{\"repo_path\":\"%s\"}", lp.tmpdir);
-    char *resp2 = cbm_mcp_handle_tool(lp.srv, "index_repository", iargs);
+    char *resp2 = cbm_test_operation_execute(lp.srv, "index_repository", iargs);
     ASSERT_NOT_NULL(resp2);
     free(resp2);
 
-    char *cov2 = cbm_mcp_handle_tool(lp.srv, "index_status", qargs);
+    char *cov2 = cbm_test_operation_execute(lp.srv, "index_status", qargs);
     ASSERT_NOT_NULL(cov2);
     ASSERT_NULL(strstr(cov2, "flaky.c"));
     free(cov2);
@@ -636,7 +636,7 @@ TEST(index_not_indexed_by_design_reported) {
     /* index_status carries the persisted by-design section. */
     char qargs[900];
     snprintf(qargs, sizeof(qargs), "{\"project\":\"%s\"}", lp.project);
-    char *sresp = cbm_mcp_handle_tool(lp.srv, "index_status", qargs);
+    char *sresp = cbm_test_operation_execute(lp.srv, "index_status", qargs);
     ASSERT_NOT_NULL(sresp);
     ASSERT_NOT_NULL(strstr(sresp, "not_indexed"));
     ASSERT_NOT_NULL(strstr(sresp, "secret.py"));
@@ -650,7 +650,7 @@ TEST(index_not_indexed_by_design_reported) {
              "{\"project\":\"%s\",\"graph\":\"missed\",\"query\":\"MATCH (f) RETURN "
              "f.file_path\"}",
              lp.project);
-    char *gresp = cbm_mcp_handle_tool(lp.srv, "query_graph", qargs);
+    char *gresp = cbm_test_operation_execute(lp.srv, "query_graph", qargs);
     ASSERT_NOT_NULL(gresp);
     ASSERT_NULL(strstr(gresp, "secret.py"));
     ASSERT_NULL(strstr(gresp, "generated"));
@@ -660,10 +660,10 @@ TEST(index_not_indexed_by_design_reported) {
      * the rebuild + deleted-file prune and stay fresh. */
     char iargs[700];
     snprintf(iargs, sizeof(iargs), "{\"repo_path\":\"%s\"}", lp.tmpdir);
-    char *resp2 = cbm_mcp_handle_tool(lp.srv, "index_repository", iargs);
+    char *resp2 = cbm_test_operation_execute(lp.srv, "index_repository", iargs);
     ASSERT_NOT_NULL(resp2);
     free(resp2);
-    char *sresp2 = cbm_mcp_handle_tool(lp.srv, "index_status", qargs);
+    char *sresp2 = cbm_test_operation_execute(lp.srv, "index_status", qargs);
     ASSERT_NOT_NULL(sresp2);
     ASSERT_NOT_NULL(strstr(sresp2, "secret.py"));
     ASSERT_NOT_NULL(strstr(sresp2, "generated"));
@@ -736,7 +736,7 @@ TEST(index_relative_repo_path_canonicalized) {
     snprintf(lp.dbpath, sizeof(lp.dbpath), "%s/%s.db", cache_dir, lp.project);
     unlink(lp.dbpath);
 
-    lp.srv = cbm_mcp_server_new(NULL);
+    lp.srv = cbm_test_operation_host_new(NULL);
     if (!lp.srv) {
         FAIL("server alloc failed");
     }
@@ -749,7 +749,7 @@ TEST(index_relative_repo_path_canonicalized) {
     if (chdir(lp.tmpdir) != 0) {
         FAIL("chdir failed");
     }
-    char *resp = cbm_mcp_handle_tool(lp.srv, "index_repository", "{\"repo_path\":\".\"}");
+    char *resp = cbm_test_operation_execute(lp.srv, "index_repository", "{\"repo_path\":\".\"}");
     int rc_back = chdir(oldcwd);
     if (rc_back != 0) {
         free(resp);

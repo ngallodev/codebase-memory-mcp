@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
-$packageName = 'codebase-memory-mcp'
+$packageName = 'codebase-memory-cli'
 $version     = '0.10.8'
-$url64       = "https://github.com/DeusData/codebase-memory-mcp/releases/download/v${version}/codebase-memory-mcp-windows-amd64.zip"
+$url64       = "https://github.com/DeusData/codebase-memory-mcp/releases/download/v${version}/codebase-memory-cli-windows-amd64.zip"
 $checksum64  = 'b43ad982994c4d829670749e08d3b622a74bb20041fc0a7d02bef6113f81c34d'
 $installDir  = Join-Path $env:ChocolateyBinRoot $packageName
 
@@ -14,5 +14,5 @@ Install-ChocolateyZipPackage `
   -UnzipLocation $installDir
 
 # Shim the binary so it is on PATH
-$binPath = Join-Path $installDir 'codebase-memory-mcp.exe'
-Install-BinFile -Name 'codebase-memory-mcp' -Path $binPath
+$binPath = Join-Path $installDir 'codebase-memory-cli.exe'
+Install-BinFile -Name 'codebase-memory-cli' -Path $binPath

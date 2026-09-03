@@ -55,4 +55,3 @@ int cbm_operation_max_depth(void) {
     return env_positive_int("CBM_MCP_MAX_DEPTH", 15);
 }
 
-int cbm_mcp_max_depth(void) { return cbm_operation_max_depth(); }

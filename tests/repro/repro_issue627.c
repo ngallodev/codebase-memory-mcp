@@ -183,7 +183,7 @@ TEST(repro_issue627_query_graph_no_crash) {
     pid_t pid = fork();
     if (pid == 0) {
         /* Child: run query_graph; exit cleanly if no crash. */
-        char *r = cbm_mcp_handle_tool(lp.srv, "query_graph", args);
+        char *r = cbm_test_operation_execute(lp.srv, "query_graph", args);
         if (r)
             free(r);
         _exit(0);
@@ -204,7 +204,7 @@ TEST(repro_issue627_query_graph_no_crash) {
     /* Run the query in the parent to inspect the result content.
      * Even on small graphs where the crash does not occur, the wrong-binding
      * bug causes query_graph to return an incorrect result set. */
-    char *resp = cbm_mcp_handle_tool(lp.srv, "query_graph", args);
+    char *resp = cbm_test_operation_execute(lp.srv, "query_graph", args);
     ASSERT_NOT_NULL(resp);
 
     /* Must not be an error response. */

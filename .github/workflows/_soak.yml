@@ -80,16 +80,16 @@ jobs:
         if: ${{ inputs.use_release_artifacts }}
         run: |
           mkdir -p "$RUNNER_TEMP/cbm-selected-artifact"
-          tar -xzf "$RUNNER_TEMP/cbm-selected-container/codebase-memory-mcp-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" \
-            -C "$RUNNER_TEMP/cbm-selected-artifact" codebase-memory-mcp
-          chmod +x "$RUNNER_TEMP/cbm-selected-artifact/codebase-memory-mcp"
-          "$RUNNER_TEMP/cbm-selected-artifact/codebase-memory-mcp" --version
+          tar -xzf "$RUNNER_TEMP/cbm-selected-container/codebase-memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" \
+            -C "$RUNNER_TEMP/cbm-selected-artifact" codebase-memory-cli
+          chmod +x "$RUNNER_TEMP/cbm-selected-artifact/codebase-memory-cli"
+          "$RUNNER_TEMP/cbm-selected-artifact/codebase-memory-cli" --version
       # The soak SEQUENCE and its guards live in the ONE canonical entry
       # scripts/soak-legs.sh — never in workflow YAML. Leg selection is a
       # workflow input so a long #581-only run needs no separate workflow.
       - name: Soak legs (${{ inputs.legs }}, ${{ inputs.duration_minutes }} min each)
         env:
-          SELECTED_BINARY: ${{ runner.temp }}/cbm-selected-artifact/codebase-memory-mcp
+          SELECTED_BINARY: ${{ runner.temp }}/cbm-selected-artifact/codebase-memory-cli
           USE_RELEASE_ARTIFACTS: ${{ inputs.use_release_artifacts }}
         run: |
           binary=build/c/codebase-memory-cli
@@ -293,13 +293,13 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/cbm-selected-artifact"
           tar -xzf "$RUNNER_TEMP/cbm-selected-container/codebase-memory-cli-linux-${{ matrix.arch }}-portable.tar.gz" \
-            -C "$RUNNER_TEMP/cbm-selected-artifact" codebase-memory-mcp
-          chmod +x "$RUNNER_TEMP/cbm-selected-artifact/codebase-memory-mcp"
-          "$RUNNER_TEMP/cbm-selected-artifact/codebase-memory-mcp" --version
+            -C "$RUNNER_TEMP/cbm-selected-artifact" codebase-memory-cli
+          chmod +x "$RUNNER_TEMP/cbm-selected-artifact/codebase-memory-cli"
+          "$RUNNER_TEMP/cbm-selected-artifact/codebase-memory-cli" --version
       - name: Soak selected portable legs (${{ inputs.legs }}, ${{ inputs.duration_minutes }} min each)
         run: |
           scripts/soak-legs.sh --legs "${{ inputs.legs }}" \
-            "$RUNNER_TEMP/cbm-selected-artifact/codebase-memory-mcp" \
+            "$RUNNER_TEMP/cbm-selected-artifact/codebase-memory-cli" \
             ${{ inputs.duration_minutes }}
       - name: Upload metrics
         if: always()

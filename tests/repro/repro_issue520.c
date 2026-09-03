@@ -43,7 +43,7 @@
 #include <foundation/compat.h>
 #include "test_framework.h"
 #include "test_helpers.h"
-#include <mcp/mcp.h>
+#include "test_operation_host.h"
 #include <pipeline/pipeline.h> /* cbm_project_name_from_path */
 
 #include <string.h>
@@ -112,16 +112,16 @@ TEST(repro_issue520_detect_changes_includes_new_untracked_file) {
     }
 
     /* --- index the repo via the MCP production flow ----------------- */
-    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    cbm_test_operation_host_t *srv = cbm_test_operation_host_new(NULL);
     if (!srv) {
         th_rmtree(tmpdir);
-        FAIL("cbm_mcp_server_new returned NULL");
+        FAIL("cbm_test_operation_host_new returned NULL");
     }
 
     {
         char args[512];
         snprintf(args, sizeof(args), "{\"repo_path\":\"%s\"}", tmpdir);
-        char *resp = cbm_mcp_handle_tool(srv, "index_repository", args);
+        char *resp = cbm_test_operation_execute(srv, "index_repository", args);
         free(resp);
     }
 
@@ -147,7 +147,7 @@ TEST(repro_issue520_detect_changes_includes_new_untracked_file) {
      * derived from the indexed repo path exactly as the pipeline derives it. */
     char *dc_project = cbm_project_name_from_path(tmpdir);
     if (!dc_project) {
-        cbm_mcp_server_free(srv);
+        cbm_test_operation_host_free(srv);
         th_rmtree(tmpdir);
         FAIL("cbm_project_name_from_path failed");
     }
@@ -155,7 +155,7 @@ TEST(repro_issue520_detect_changes_includes_new_untracked_file) {
     snprintf(dc_args, sizeof(dc_args),
              "{\"base_branch\":\"main\",\"project\":\"%s\"}", dc_project);
     free(dc_project);
-    char *dc_resp = cbm_mcp_handle_tool(srv, "detect_changes", dc_args);
+    char *dc_resp = cbm_test_operation_execute(srv, "detect_changes", dc_args);
 
     /* --- assert the new file is reported ---------------------------- */
     /* Expected: dc_resp contains "new_func.py" in the changed_files list.
@@ -165,7 +165,7 @@ TEST(repro_issue520_detect_changes_includes_new_untracked_file) {
     int found = (strstr(dc_resp, "new_func.py") != NULL) ? 1 : 0;
 
     free(dc_resp);
-    cbm_mcp_server_free(srv);
+    cbm_test_operation_host_free(srv);
     th_rmtree(tmpdir);
 
     /* This is the reproduce-first assertion: RED until the fix lands.

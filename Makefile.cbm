@@ -300,11 +300,9 @@ STORE_SRCS = src/store/store.c
 # Cypher module (new)
 CYPHER_SRCS = src/cypher/cypher.c
 
-# MCP server module (new)
-MCP_SRCS =
-OPERATION_SRCS = src/operations/registry.c src/operations/reliability_events.c src/operations/execute.c src/operations/result_wire.c src/operations/tool_catalog.c src/operations/index_admission.c src/operations/store_host.c src/operations/session_state.c src/operations/mutation.c src/operations/adr.c src/operations/cross_repo.c src/operations/index.c src/operations/project_arg.c src/operations/index_supervisor.c src/operations/command_runner.c src/operations/read.c src/operations/coverage.c src/operations/snippet.c src/operations/search.c src/operations/trace.c src/operations/trace_ingest.c src/operations/schema.c src/operations/query.c src/operations/architecture.c src/operations/changes.c src/operations/source_search.c src/operations/file_outline.c src/operations/compare.c src/operations/compact_out.c
+OPERATION_SRCS = src/operations/registry.c src/operations/json_args.c src/operations/reliability_events.c src/operations/execute.c src/operations/result_wire.c src/operations/tool_catalog.c src/operations/index_admission.c src/operations/store_host.c src/operations/session_state.c src/operations/mutation.c src/operations/adr.c src/operations/cross_repo.c src/operations/index.c src/operations/project_arg.c src/operations/index_supervisor.c src/operations/command_runner.c src/operations/read.c src/operations/coverage.c src/operations/snippet.c src/operations/search.c src/operations/trace.c src/operations/trace_ingest.c src/operations/schema.c src/operations/query.c src/operations/architecture.c src/operations/changes.c src/operations/source_search.c src/operations/file_outline.c src/operations/compare.c src/operations/compact_out.c
 
-# Shared MCP daemon coordination and local transport
+# Shared daemon coordination and local transport
 DAEMON_SRCS = \
     src/daemon/daemon.c \
     src/daemon/project_lock.c \
@@ -382,7 +380,7 @@ WATCHER_SRCS = src/watcher/watcher.c
 GIT_SRCS = src/git/git_context.c
 
 # CLI module (new)
-CLI_SRCS = src/cli/cli.c src/cli/progress_sink.c src/cli/hook_augment.c src/cli/client_adapter.c \
+CLI_SRCS = src/cli/cli.c src/cli/progress_sink.c src/cli/hook_augment.c \
 	src/cli/agent_clients.c src/cli/agent_profiles.c \
 	src/cli/config_json_like.c src/cli/config_toml_edit.c src/cli/config_yaml_edit.c \
 	src/cli/config_text_edit.c src/cli/activation_transaction.c
@@ -480,7 +478,7 @@ TRE_CFLAGS = -std=c11 -g -O1 -w -Ivendored/tre
 YYJSON_SRC = vendored/yyjson/yyjson.c
 
 # All production sources
-PROD_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(OPERATION_SRCS) $(MCP_SRCS) $(DAEMON_SRCS) $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) $(TRACES_SRCS) $(WATCHER_SRCS) $(GIT_SRCS) $(CLI_SRCS) $(UI_SRCS) $(YYJSON_SRC)
+PROD_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(OPERATION_SRCS) $(DAEMON_SRCS) $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) $(TRACES_SRCS) $(WATCHER_SRCS) $(GIT_SRCS) $(CLI_SRCS) $(UI_SRCS) $(YYJSON_SRC)
 EXISTING_C_SRCS = $(EXTRACTION_SRCS) $(LSP_SRCS) $(TS_RUNTIME_SRC) \
                   $(GRAMMAR_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC)
 
@@ -540,10 +538,7 @@ TEST_STORE_SRCS = \
 TEST_CYPHER_SRCS = \
     tests/test_cypher.c
 
-# DEPRECATED: MCP-dependent tests are inventoried in
-# tests/DEPRECATED_MCP_TESTS.md and are outside CLI validation.
-TEST_MCP_SRCS = \
-    tests/test_mcp.c \
+TEST_OPERATION_SRCS = \
     tests/test_index_supervisor.c
 
 TEST_DAEMON_SRCS = \
@@ -669,7 +664,6 @@ TEST_REPRO_SRCS = \
     tests/repro/repro_issue333.c \
     tests/repro/repro_issue570.c \
     tests/repro/repro_issue409.c \
-    tests/repro/repro_issue431.c \
     tests/repro/repro_issue607.c \
     tests/repro/repro_issue403.c \
     tests/repro/repro_issue434.c \
@@ -708,7 +702,9 @@ TEST_REPRO_SRCS = \
     tests/repro/repro_lsp_java_cs.c \
     tests/repro/repro_lsp_kt_php_rust.c
 
-ALL_TEST_SRCS =$(TEST_FOUNDATION_SRCS) $(TEST_EXTRACTION_SRCS) $(TEST_STORE_SRCS) $(TEST_CYPHER_SRCS) $(TEST_MCP_SRCS) $(TEST_DAEMON_SRCS) $(TEST_DISCOVER_SRCS) $(TEST_GRAPH_BUFFER_SRCS) $(TEST_PIPELINE_SRCS) $(TEST_WATCHER_SRCS) $(TEST_LZ4_SRCS) $(TEST_ZSTD_SRCS) $(TEST_ARTIFACT_SRCS) $(TEST_SQLITE_WRITER_SRCS) $(TEST_GO_LSP_SRCS) $(TEST_C_LSP_SRCS) $(TEST_PHP_LSP_SRCS) $(TEST_CS_LSP_SRCS) $(TEST_CS_LSP_BENCH_SRCS) $(TEST_PERL_LSP_SRCS) $(TEST_SCOPE_SRCS) $(TEST_TYPE_REP_SRCS) $(TEST_PY_LSP_SRCS) $(TEST_PY_LSP_BENCH_SRCS) $(TEST_PY_LSP_STRESS_SRCS) $(TEST_PY_LSP_SCALE_SRCS) $(TEST_TS_LSP_SRCS) $(TEST_JAVA_LSP_SRCS) $(TEST_KOTLIN_LSP_SRCS) $(TEST_RUST_LSP_SRCS) $(TEST_TRACES_SRCS) $(TEST_CLI_SRCS) $(TEST_MEM_SRCS) $(TEST_UI_SRCS) $(TEST_HTTPD_SRCS) $(TEST_SECURITY_SRCS) $(TEST_YAML_SRCS) $(TEST_SEMANTIC_SRCS) $(TEST_AST_PROFILE_SRCS) $(TEST_SLAB_ALLOC_SRCS) $(TEST_SIMHASH_SRCS) $(TEST_STACK_OVERFLOW_SRCS) $(TEST_INTEGRATION_SRCS)
+TEST_OPERATION_HOST_SRCS = tests/test_operation_host.c
+
+ALL_TEST_SRCS =$(TEST_OPERATION_HOST_SRCS) $(TEST_FOUNDATION_SRCS) $(TEST_EXTRACTION_SRCS) $(TEST_STORE_SRCS) $(TEST_CYPHER_SRCS) $(TEST_OPERATION_SRCS) $(TEST_DAEMON_SRCS) $(TEST_DISCOVER_SRCS) $(TEST_GRAPH_BUFFER_SRCS) $(TEST_PIPELINE_SRCS) $(TEST_WATCHER_SRCS) $(TEST_LZ4_SRCS) $(TEST_ZSTD_SRCS) $(TEST_ARTIFACT_SRCS) $(TEST_SQLITE_WRITER_SRCS) $(TEST_GO_LSP_SRCS) $(TEST_C_LSP_SRCS) $(TEST_PHP_LSP_SRCS) $(TEST_CS_LSP_SRCS) $(TEST_CS_LSP_BENCH_SRCS) $(TEST_PERL_LSP_SRCS) $(TEST_SCOPE_SRCS) $(TEST_TYPE_REP_SRCS) $(TEST_PY_LSP_SRCS) $(TEST_PY_LSP_BENCH_SRCS) $(TEST_PY_LSP_STRESS_SRCS) $(TEST_PY_LSP_SCALE_SRCS) $(TEST_TS_LSP_SRCS) $(TEST_JAVA_LSP_SRCS) $(TEST_KOTLIN_LSP_SRCS) $(TEST_RUST_LSP_SRCS) $(TEST_TRACES_SRCS) $(TEST_CLI_SRCS) $(TEST_MEM_SRCS) $(TEST_UI_SRCS) $(TEST_HTTPD_SRCS) $(TEST_SECURITY_SRCS) $(TEST_YAML_SRCS) $(TEST_SEMANTIC_SRCS) $(TEST_AST_PROFILE_SRCS) $(TEST_SLAB_ALLOC_SRCS) $(TEST_SIMHASH_SRCS) $(TEST_STACK_OVERFLOW_SRCS) $(TEST_INTEGRATION_SRCS)
 
 
 # ── Build directories ────────────────────────────────────────────
@@ -949,8 +945,8 @@ test-repro: $(BUILD_DIR)/test-repro-runner
 # Every threaded production surface that runs clean AND stable under TSan:
 # allocator concurrency (mem, slab_alloc), the parallel extraction worker pool
 # (parallel, worker_pool, pipeline), the filesystem watcher (watcher), the
-# embedded HTTP server (httpd), diagnostics sampling (diagnostics), the MCP
-# server + mutation guard (mcp, mcp_mutation_guard), subprocess supervision
+# embedded HTTP server (httpd), diagnostics sampling (diagnostics), index
+# supervision, subprocess supervision
 # (subprocess), and the runnable daemon-coordination paths (daemon,
 # daemon_application). Was `mem slab_alloc parallel` — a keyhole that ran TSan
 # over no real threaded production code.
@@ -966,7 +962,7 @@ test-repro: $(BUILD_DIR)/test-repro-runner
 #     workers), now fixed with atomics in log.c. Excluding the suite is what
 #     had hidden it.
 TEST_TSAN_SUITES ?= mem slab_alloc parallel worker_pool watcher httpd pipeline \
-                    diagnostics mcp mcp_mutation_guard subprocess daemon daemon_application \
+                    diagnostics index_supervisor subprocess daemon daemon_application \
                     daemon_runtime daemon_ipc
 # halt_on_error: a race is a bug, stop at the first one.
 #
@@ -1114,7 +1110,7 @@ SYSROOT = $(shell xcrun --show-sdk-path 2>/dev/null)
 SYSROOT_FLAG = $(if $(SYSROOT),-isysroot $(SYSROOT),)
 
 # Our source files (excluding vendored, grammars, tree-sitter runtime)
-LINT_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(OPERATION_SRCS) $(MCP_SRCS) $(DAEMON_SRCS) \
+LINT_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(OPERATION_SRCS) $(DAEMON_SRCS) \
             $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) \
             $(TRACES_SRCS) $(WATCHER_SRCS) $(CLI_SRCS) $(EXTRACTION_SRCS) $(AC_LZ4_SRCS) \
             $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) $(MAIN_SRC)

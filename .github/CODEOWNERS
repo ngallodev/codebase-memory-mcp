@@ -1,4 +1,4 @@
-# Binding ownership policy for codebase-memory-mcp.
+# Binding ownership policy for codebase-memory-cli.
 #
 # This repository is user-owned, so ownership is expressed with individual
 # GitHub handles rather than organization teams.
@@ -27,8 +27,6 @@
 /pkg/ @DeusData
 /install.sh @DeusData
 /install.ps1 @DeusData
-/server.json @DeusData
-/glama.json @DeusData
 /flake.nix @DeusData
 /flake.lock @DeusData
 /THIRD_PARTY.md @DeusData
@@ -40,7 +38,6 @@
 /src/store/ @DeusData
 /src/cypher/ @DeusData
 /src/graph_buffer/ @DeusData
-/src/mcp/ @DeusData
 /src/cli/ @DeusData
 /src/discover/ @DeusData
 /src/watcher/ @DeusData

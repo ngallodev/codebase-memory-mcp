@@ -133,7 +133,7 @@ TEST(repro_issue480_trace_path_nonempty_with_calls) {
              "\"depth\":2}",
              lp.project);
 
-    char *resp = cbm_mcp_handle_tool(lp.srv, "trace_path", args);
+    char *resp = cbm_test_operation_execute(lp.srv, "trace_path", args);
     ASSERT_NOT_NULL(resp);
 
     /* The response must NOT be a "function not found" error.

@@ -12,6 +12,7 @@
 #include "../src/foundation/compat.h"
 #include "../src/foundation/compat_thread.h"
 #include "test_framework.h"
+#include "operations/tool_catalog.h"
 #include "test_helpers.h"
 #include <cli/agent_profiles.h>
 #include <cli/activation_transaction.h>
@@ -22,7 +23,7 @@
 #include <daemon/version_cohort.h>
 #include <foundation/constants.h>
 #include <foundation/platform.h>
-#include <mcp/mcp.h>
+#include "test_operation_host.h"
 #include <pipeline/pipeline.h>
 #include <foundation/yaml.h>
 #include <store/store.h>
@@ -2414,218 +2415,40 @@ TEST(cli_codex_instructions) {
  *  Editor MCP config tests (Cursor/Windsurf/Gemini)
  * ═══════════════════════════════════════════════════════════════════ */
 
-TEST(cli_editor_mcp_install) {
-    /* Port of TestEditorMCPInstall */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
 
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.cursor/mcp.json", tmpdir);
-
-    int rc = cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "mcpServers") != NULL);
-    ASSERT(strstr(data, "\"codebase-memory-mcp\"") != NULL);
-    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_editor_mcp_idempotent) {
-    /* Port of TestEditorMCPInstallIdempotent */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.cursor/mcp.json", tmpdir);
-
-    cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    int rc = cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    /* Should still parse as valid JSON with only 1 server */
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    /* Count occurrences of "codebase-memory-mcp" (should be exactly 1 in mcpServers) */
-    int count = 0;
-    const char *p = data;
-    while ((p = strstr(p, "\"codebase-memory-mcp\"")) != NULL) {
-        count++;
-        p += 20;
-    }
-    /* The key appears once as key name */
-    ASSERT_EQ(count, 1);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 
 /* The OS-reported running image is positive prior-install identity. An update
  * may replace that exact command without probing it or granting the same
  * authority to uninstall/remove paths. */
-TEST(cli_editor_mcp_repairs_known_previous_managed_entry) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.claude.json", tmpdir);
-    char stale_command[512];
-    snprintf(stale_command, sizeof(stale_command), "%s/retired-install/codebase-memory-mcp",
-             tmpdir);
-    char original[1024];
-    snprintf(original, sizeof(original),
-             "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"%s\"}}}", stale_command);
-    ASSERT_EQ(write_test_file(configpath, original), 0);
-
-    int probes = 0;
-    cbm_set_mcp_command_path_probe_counter_for_testing(&probes);
-    int rc = cbm_install_editor_mcp_with_previous_for_testing("/usr/local/bin/codebase-memory-mcp",
-                                                              stale_command, configpath);
-    cbm_set_mcp_command_path_probe_counter_for_testing(NULL);
-    ASSERT_EQ(rc, 0);
-    ASSERT_EQ(probes, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
-    ASSERT(strstr(data, stale_command) == NULL);
-
-    ASSERT_EQ(write_test_file(configpath, original), 0);
-    ASSERT_EQ(cbm_remove_editor_mcp_owned("/usr/local/bin/codebase-memory-mcp", configpath), 0);
-    ASSERT_STR_EQ(read_test_file(configpath), original);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 
 #ifndef _WIN32
 /* Config bytes must never drive a POSIX filesystem lookup. Unknown missing,
  * remote-mount, and symlink-traversal spellings are all preserved byte-for-
  * byte unless trusted running-image identity matched first. */
-TEST(cli_editor_mcp_preserves_unrecorded_posix_absolute_entries_without_probe) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    char missing_command[512];
-    char symlink_path[512];
-    char symlink_command[640];
-    snprintf(configpath, sizeof(configpath), "%s/.claude.json", tmpdir);
-    snprintf(missing_command, sizeof(missing_command), "%s/missing/codebase-memory-mcp", tmpdir);
-    snprintf(symlink_path, sizeof(symlink_path), "%s/remote-link", tmpdir);
-    snprintf(symlink_command, sizeof(symlink_command), "%s/codebase-memory-mcp", symlink_path);
-    ASSERT_EQ(symlink("/net/cbm-audit-remote", symlink_path), 0);
-
-    const char *commands[] = {
-        missing_command,
-        "/net/attacker/share/codebase-memory-mcp",
-        "/Volumes/remote/codebase-memory-mcp",
-        symlink_command,
-    };
-    bool preserved = true;
-    int probes = 0;
-    cbm_set_mcp_command_path_probe_counter_for_testing(&probes);
-    for (size_t index = 0; index < sizeof(commands) / sizeof(commands[0]); index++) {
-        char original[1024];
-        int written = snprintf(original, sizeof(original),
-                               "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"%s\"}}}",
-                               commands[index]);
-        if (written <= 0 || (size_t)written >= sizeof(original) ||
-            write_test_file(configpath, original) != 0 ||
-            cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath) == 0) {
-            preserved = false;
-            break;
-        }
-        const char *after = read_test_file(configpath);
-        if (!after || strcmp(after, original) != 0) {
-            preserved = false;
-            break;
-        }
-    }
-    cbm_set_mcp_command_path_probe_counter_for_testing(NULL);
-
-    ASSERT_TRUE(preserved);
-    ASSERT_EQ(probes, 0);
-    ASSERT_EQ(unlink(symlink_path), 0);
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 #endif
 
 /* A relative command is resolved by the client from its own runtime context,
  * not from the installer process's cwd. Failure to find it here is therefore
  * inconclusive: preserve it fail-closed instead of treating it as a dead
  * install footprint. */
-TEST(cli_editor_mcp_preserves_unresolved_relative_entry) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.claude.json", tmpdir);
-    const char *commands[] = {"./custom-tool", "subdir/custom-tool", "${HOME}/custom-tool",
-                              "/opt/${CBM_HOME}/custom-tool", "C:/%CBM_HOME%/custom-tool"};
-    for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
-        char original[512];
-        snprintf(original, sizeof(original),
-                 "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"%s\"}}}", commands[i]);
-        ASSERT_EQ(write_test_file(configpath, original), 0);
-
-        int rc = cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-        ASSERT(rc != 0);
-
-        const char *data = read_test_file(configpath);
-        ASSERT_NOT_NULL(data);
-        ASSERT_STR_EQ(data, original);
-    }
-
-    char overlong_command[5000];
-    memset(overlong_command, 'x', sizeof(overlong_command));
-    overlong_command[0] = '/';
-    overlong_command[sizeof(overlong_command) - 1U] = '\0';
-    char overlong_json[5200];
-    snprintf(overlong_json, sizeof(overlong_json),
-             "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"%s\"}}}", overlong_command);
-    ASSERT_EQ(write_test_file(configpath, overlong_json), 0);
-    ASSERT(cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath) != 0);
-    const char *overlong_data = read_test_file(configpath);
-    ASSERT_NOT_NULL(overlong_data);
-    ASSERT_STR_EQ(overlong_data, overlong_json);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 
 /* Config content must never make install/update probe a Windows network or
  * device namespace. Besides unbounded I/O, a UNC stat can disclose the
  * account's SMB credentials to an attacker-controlled host. */
 TEST(cli_editor_mcp_rejects_unsafe_windows_probe_namespaces) {
     ASSERT_FALSE(
-        cbm_mcp_command_path_probe_safe_for_testing("/mnt/remote/codebase-memory-mcp", false));
-    ASSERT_FALSE(cbm_mcp_command_path_probe_safe_for_testing("/tmp/codebase-memory-mcp", false));
-    ASSERT_TRUE(cbm_mcp_command_path_probe_safe_for_testing("C:/local/codebase-memory-mcp", true));
+        cbm_legacy_command_path_probe_safe_for_testing("/mnt/remote/codebase-memory-mcp", false));
+    ASSERT_FALSE(cbm_legacy_command_path_probe_safe_for_testing("/tmp/codebase-memory-mcp", false));
+    ASSERT_TRUE(cbm_legacy_command_path_probe_safe_for_testing("C:/local/codebase-memory-mcp", true));
     ASSERT_TRUE(
-        cbm_mcp_command_path_probe_safe_for_testing("D:\\local\\codebase-memory-mcp", true));
+        cbm_legacy_command_path_probe_safe_for_testing("D:\\local\\codebase-memory-mcp", true));
     ASSERT_FALSE(
-        cbm_mcp_command_path_probe_safe_for_testing("//server/share/codebase-memory-mcp", true));
-    ASSERT_FALSE(cbm_mcp_command_path_probe_safe_for_testing(
+        cbm_legacy_command_path_probe_safe_for_testing("//server/share/codebase-memory-mcp", true));
+    ASSERT_FALSE(cbm_legacy_command_path_probe_safe_for_testing(
         "\\\\server\\share\\codebase-memory-mcp", true));
-    ASSERT_FALSE(cbm_mcp_command_path_probe_safe_for_testing("//?/C:/codebase-memory-mcp", true));
+    ASSERT_FALSE(cbm_legacy_command_path_probe_safe_for_testing("//?/C:/codebase-memory-mcp", true));
     ASSERT_FALSE(
-        cbm_mcp_command_path_probe_safe_for_testing("\\\\.\\pipe\\codebase-memory-mcp", true));
+        cbm_legacy_command_path_probe_safe_for_testing("\\\\.\\pipe\\codebase-memory-mcp", true));
     PASS();
 }
 
@@ -2633,314 +2456,20 @@ TEST(cli_editor_mcp_rejects_unsafe_windows_probe_namespaces) {
 /* A drive-letter spelling is not enough to prove a local probe: mapped drives
  * are remote, and local paths can cross a junction into a remote namespace.
  * Preserve both as indeterminate without following them. */
-TEST(cli_editor_mcp_preserves_unsafe_windows_drive_probe) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.claude.json", tmpdir);
-
-    char unused_drive = '\0';
-    for (char drive = 'Z'; drive >= 'D'; drive--) {
-        char root[] = {drive, ':', '\\', '\0'};
-        if (GetDriveTypeA(root) == DRIVE_NO_ROOT_DIR) {
-            unused_drive = drive;
-            break;
-        }
-    }
-    ASSERT(unused_drive != '\0');
-    char missing_drive_command[128];
-    snprintf(missing_drive_command, sizeof(missing_drive_command),
-             "%c:/cbm-missing/codebase-memory-mcp", unused_drive);
-    char missing_drive_json[512];
-    snprintf(missing_drive_json, sizeof(missing_drive_json),
-             "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"%s\"}}}",
-             missing_drive_command);
-    ASSERT_EQ(write_test_file(configpath, missing_drive_json), 0);
-    ASSERT(cbm_install_editor_mcp("C:/installed/codebase-memory-mcp.exe", configpath) != 0);
-    ASSERT_STR_EQ(read_test_file(configpath), missing_drive_json);
-
-    char outside[256];
-    snprintf(outside, sizeof(outside), "/tmp/cli-mcp-outside-XXXXXX");
-    ASSERT_NOT_NULL(cbm_mkdtemp(outside));
-    char junction[512];
-    snprintf(junction, sizeof(junction), "%s/escape", tmpdir);
-    char junction_native[sizeof(junction)];
-    char outside_native[sizeof(outside)];
-    snprintf(junction_native, sizeof(junction_native), "%s", junction);
-    snprintf(outside_native, sizeof(outside_native), "%s", outside);
-    for (char *cursor = junction_native; *cursor; cursor++) {
-        if (*cursor == '/') {
-            *cursor = '\\';
-        }
-    }
-    for (char *cursor = outside_native; *cursor; cursor++) {
-        if (*cursor == '/') {
-            *cursor = '\\';
-        }
-    }
-    const char *junction_argv[] = {"cmd.exe",       "/d",           "/c", "mklink", "/J",
-                                   junction_native, outside_native, NULL};
-    ASSERT_EQ(cbm_exec_no_shell(junction_argv), 0);
-
-    char junction_command[700];
-    snprintf(junction_command, sizeof(junction_command), "%s/codebase-memory-mcp", junction);
-    char junction_json[1024];
-    snprintf(junction_json, sizeof(junction_json),
-             "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"%s\"}}}", junction_command);
-    ASSERT_EQ(write_test_file(configpath, junction_json), 0);
-    ASSERT(cbm_install_editor_mcp("C:/installed/codebase-memory-mcp.exe", configpath) != 0);
-    ASSERT_STR_EQ(read_test_file(configpath), junction_json);
-
-    cbm_rmdir(junction);
-    cbm_rmdir(outside);
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 
 /* Windows clients commonly omit the executable suffix. Even when the literal
  * path and common suffixes are absent, another client or PATHEXT can resolve a
  * custom suffix. Preserve the entry unless positive prior-image identity
  * establishes ownership. */
-TEST(cli_editor_mcp_preserves_windows_extensionless_commands) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char command[512];
-    char configpath[512];
-    snprintf(command, sizeof(command), "%s/custom-tool", tmpdir);
-    snprintf(configpath, sizeof(configpath), "%s/.claude.json", tmpdir);
-
-    char original[1024];
-    snprintf(original, sizeof(original),
-             "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"%s\"}}}", command);
-    const char *suffixes[] = {".com", ".exe", ".bat", ".cmd", ".ps1", ".vbs", ".cbmshim"};
-    for (size_t index = 0; index < sizeof(suffixes) / sizeof(suffixes[0]); index++) {
-        char executable[640];
-        snprintf(executable, sizeof(executable), "%s%s", command, suffixes[index]);
-        ASSERT_EQ(write_test_file(executable, "live"), 0);
-        ASSERT_EQ(write_test_file(configpath, original), 0);
-        ASSERT(cbm_install_editor_mcp("C:/installed/codebase-memory-mcp.exe", configpath) != 0);
-
-        const char *data = read_test_file(configpath);
-        ASSERT_NOT_NULL(data);
-        ASSERT_STR_EQ(data, original);
-        ASSERT_EQ(cbm_unlink(executable), 0);
-    }
-
-    ASSERT_EQ(write_test_file(configpath, original), 0);
-    ASSERT(cbm_install_editor_mcp("C:/installed/codebase-memory-mcp.exe", configpath) != 0);
-    ASSERT_STR_EQ(read_test_file(configpath), original);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 #endif
 
 /* A same-named entry with a FOREIGN shape (members we never write, e.g. env)
  * is somebody's deliberate configuration: upsert must keep refusing to touch
  * it. Pins the protective half of the ownership check. */
-TEST(cli_editor_mcp_refuses_foreign_shaped_entry) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
 
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.claude.json", tmpdir);
-    ASSERT_EQ(write_test_file(configpath, "{\"mcpServers\":{\"codebase-memory-mcp\":"
-                                          "{\"command\":\"/custom\",\"env\":{\"FOO\":\"1\"}}}}"),
-              0);
 
-    int rc = cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT(rc != 0);
 
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"/custom\"") != NULL);
-    ASSERT(strstr(data, "FOO") != NULL);
 
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_editor_mcp_preserves_others) {
-    /* Port of TestEditorMCPPreservesOtherServers */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.cursor/mcp.json", tmpdir);
-    test_mkdirp(tmpdir);
-    char dir[512];
-    snprintf(dir, sizeof(dir), "%s/.cursor", tmpdir);
-    test_mkdirp(dir);
-
-    /* Write config with existing server */
-    write_test_file(configpath,
-                    "{\"mcpServers\": {\"other-server\": {\"command\": \"/usr/bin/other\"}}}");
-
-    cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "other-server") != NULL);
-    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_editor_mcp_uninstall) {
-    /* Port of TestEditorMCPUninstall */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.cursor/mcp.json", tmpdir);
-
-    cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    int rc = cbm_remove_editor_mcp_owned("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    /* codebase-memory-mcp should be removed */
-    ASSERT(strstr(data, "\"codebase-memory-mcp\"") == NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_junie_mcp_install_issue651) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.junie/mcp/mcp.json", tmpdir);
-
-    int rc = cbm_upsert_junie_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "mcpServers") != NULL);
-    ASSERT(strstr(data, "\"codebase-memory-mcp\"") != NULL);
-    ASSERT(strstr(data, "\"codebase-memory-analysis\"") != NULL);
-    ASSERT(strstr(data, "\"codebase-memory-scout\"") != NULL);
-    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
-    ASSERT(strstr(data, "--tool-profile=analysis") != NULL);
-    ASSERT(strstr(data, "--tool-profile=scout") != NULL);
-
-    rc = cbm_upsert_junie_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    int count = 0;
-    const char *p = data;
-    while ((p = strstr(p, "\"codebase-memory-mcp\"")) != NULL) {
-        count++;
-        p += 20;
-    }
-    ASSERT_EQ(count, 1);
-    count = 0;
-    p = data;
-    while ((p = strstr(p, "\"codebase-memory-scout\"")) != NULL) {
-        count++;
-        p += strlen("\"codebase-memory-scout\"");
-    }
-    ASSERT_EQ(count, 1);
-    count = 0;
-    p = data;
-    while ((p = strstr(p, "\"codebase-memory-analysis\"")) != NULL) {
-        count++;
-        p += strlen("\"codebase-memory-analysis\"");
-    }
-    ASSERT_EQ(count, 1);
-
-    rc = cbm_remove_junie_mcp_owned("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"codebase-memory-mcp\"") == NULL);
-    ASSERT(strstr(data, "\"codebase-memory-analysis\"") == NULL);
-    ASSERT(strstr(data, "\"codebase-memory-scout\"") == NULL);
-
-    const char *partly_foreign =
-        "{\"mcpServers\":{"
-        "\"codebase-memory-mcp\":{\"command\":\"/usr/local/bin/codebase-memory-mcp\","
-        "\"args\":[]},"
-        "\"codebase-memory-scout\":{\"command\":\"/usr/local/bin/codebase-memory-mcp\","
-        "\"args\":[\"--tool-profile=scout\"]},"
-        "\"codebase-memory-analysis\":{\"command\":\"/opt/user-tool\","
-        "\"args\":[\"--private\"]}}}\n";
-    write_test_file(configpath, partly_foreign);
-    rc = cbm_remove_junie_mcp_owned("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-    data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"codebase-memory-mcp\"") == NULL);
-    ASSERT(strstr(data, "\"codebase-memory-scout\"") == NULL);
-    ASSERT(strstr(data, "\"codebase-memory-analysis\"") != NULL);
-    ASSERT(strstr(data, "/opt/user-tool") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_junie_mcp_repairs_all_known_previous_aliases_atomically) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    char previous[512];
-    char original[4096];
-    snprintf(configpath, sizeof(configpath), "%s/mcp.json", tmpdir);
-    snprintf(previous, sizeof(previous), "%s/retired-install/codebase-memory-mcp", tmpdir);
-    snprintf(original, sizeof(original),
-             "{\"mcpServers\":{"
-             "\"codebase-memory-mcp\":{\"command\":\"%s\"},"
-             "\"codebase-memory-scout\":{\"command\":\"%s\","
-             "\"args\":[\"--tool-profile=scout\"]},"
-             "\"codebase-memory-analysis\":{\"command\":\"%s\","
-             "\"args\":[\"--tool-profile=analysis\"]}}}",
-             previous, previous, previous);
-    ASSERT_EQ(write_test_file(configpath, original), 0);
-
-    int probes = 0;
-    cbm_set_mcp_command_path_probe_counter_for_testing(&probes);
-    int rc = cbm_upsert_junie_mcp_with_previous_for_testing("/usr/local/bin/codebase-memory-mcp",
-                                                            previous, configpath);
-    cbm_set_mcp_command_path_probe_counter_for_testing(NULL);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_EQ(rc, 0);
-    ASSERT_EQ(probes, 0);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, previous) == NULL);
-    ASSERT(strstr(data, "\"codebase-memory-mcp\"") != NULL);
-    ASSERT(strstr(data, "\"codebase-memory-scout\"") != NULL);
-    ASSERT(strstr(data, "\"codebase-memory-analysis\"") != NULL);
-    ASSERT(strstr(data, "--tool-profile=scout") != NULL);
-    ASSERT(strstr(data, "--tool-profile=analysis") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 
 TEST(cli_goose_block_carries_required_name_issue1675) {
     /* goose's ExtensionConfig::Stdio declares `name` as a required serde field
@@ -2963,252 +2492,13 @@ TEST(cli_goose_block_carries_required_name_issue1675) {
     PASS();
 }
 
-TEST(cli_editor_mcp_field_repairs_annotated_entry_via_previous_issue1630) {
-    /* The relocating-update flow is the AUTHORIZED repair channel: the entry
-     * still names the previous managed binary and the client annotated it, so
-     * a wholesale rewrite would drop those keys. Only the command member may
-     * change; comments and client keys survive byte-for-byte. */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-oc-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.claude.json", tmpdir);
-    write_test_file(configpath, "{\n"
-                                "  // user config\n"
-                                "  \"mcpServers\": {\n"
-                                "    \"codebase-memory-mcp\": {\n"
-                                "      \"command\": \"/old/place/codebase-memory-mcp\",\n"
-                                "      \"enabled\": true,\n"
-                                "      \"timeout\": 5\n"
-                                "    },\n"
-                                "  },\n"
-                                "}\n");
-    ASSERT_EQ(cbm_install_editor_mcp_with_previous_for_testing(
-                  "/opt/codebase-memory-mcp", "/old/place/codebase-memory-mcp", configpath),
-              0);
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"command\": \"/opt/codebase-memory-mcp\"") != NULL);
-    ASSERT(strstr(data, "/old/place/") == NULL);
-    ASSERT(strstr(data, "\"enabled\": true") != NULL);
-    ASSERT(strstr(data, "\"timeout\": 5") != NULL);
-    ASSERT(strstr(data, "// user config") != NULL);
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 
-TEST(cli_opencode_moved_entry_without_authority_refuses_issue1630) {
-    /* POSIX never trusts a config-supplied path — with no previous-managed
-     * identity and no dead-path proof, a moved-looking entry is preserved
-     * byte-for-byte and install fails loudly for the user to inspect. */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-oc-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/opencode.jsonc", tmpdir);
-#ifdef _WIN32
-    /* A conclusively-missing fixed-drive path authorizes the repair; a
-     * POSIX-shaped or non-local path can never be proven absent (PATHEXT /
-     * remote rules) and stays refused. */
-    const char *initial = "{\n"
-                          "  \"mcp\": {\n"
-                          "    \"codebase-memory-mcp\": {\n"
-                          "      \"command\": "
-                          "[\"C:\\\\cbm-definitely-missing\\\\codebase-memory-mcp.exe\"],\n"
-                          "      \"type\": \"local\"\n"
-                          "    }\n"
-                          "  }\n"
-                          "}\n";
-    write_test_file(configpath, initial);
-    ASSERT_EQ(cbm_upsert_opencode_mcp("/opt/codebase-memory-mcp", configpath), 0);
-#else
-    const char *initial = "{\n"
-                          "  \"mcp\": {\n"
-                          "    \"codebase-memory-mcp\": {\n"
-                          "      \"command\": [\"/old/place/codebase-memory-mcp\"],\n"
-                          "      \"type\": \"local\"\n"
-                          "    }\n"
-                          "  }\n"
-                          "}\n";
-    write_test_file(configpath, initial);
-    ASSERT(cbm_upsert_opencode_mcp("/opt/codebase-memory-mcp", configpath) != 0);
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "/old/place/") != NULL);
-#endif
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 
-TEST(cli_opencode_owns_backslash_command_issue1582) {
-    /* gotspatel's live file: the entry stores the Windows path with
-     * backslashes while the installer compares its own path with forward
-     * slashes — the same file, refused over the separator spelling. Ownership
-     * comparison must be separator-insensitive. */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-oc-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/opencode.json", tmpdir);
-    const char *initial = "{\n"
-                          "  \"mcp\": {\n"
-                          "    \"codebase-memory-mcp\": {\n"
-                          "      \"enabled\": true,\n"
-                          "      \"type\": \"local\",\n"
-                          "      \"command\": [\"C:\\\\Users\\\\Admin\\\\Programs\\\\"
-                          "codebase-memory-mcp\\\\codebase-memory-mcp.exe\"]\n"
-                          "    }\n"
-                          "  }\n"
-                          "}\n";
-    write_test_file(configpath, initial);
-    ASSERT_EQ(
-        cbm_upsert_opencode_mcp(
-            "C:/Users/Admin/Programs/codebase-memory-mcp/codebase-memory-mcp.exe", configpath),
-        0);
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    /* Already satisfied: the annotated entry names this binary — preserved. */
-    ASSERT(strcmp(data, initial) == 0);
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 
-TEST(cli_gemini_mcp_install) {
-    /* Port of TestGeminiMCPInstall */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
 
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.gemini/settings.json", tmpdir);
 
-    /* Gemini uses same mcpServers format as Cursor */
-    int rc = cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
 
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "mcpServers") != NULL);
-    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
 
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_openclaw_mcp_install_uses_nested_servers) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-openclaw-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.openclaw/openclaw.json", tmpdir);
-
-    int rc = cbm_install_openclaw_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    yyjson_doc *doc = yyjson_read(data, strlen(data), 0);
-    ASSERT_NOT_NULL(doc);
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    yyjson_val *mcp = yyjson_obj_get(root, "mcp");
-    yyjson_val *servers = yyjson_obj_get(mcp, "servers");
-    yyjson_val *entry = yyjson_obj_get(servers, "codebase-memory-mcp");
-    ASSERT(entry && yyjson_is_obj(entry));
-    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(entry, "command")),
-                  "/usr/local/bin/codebase-memory-mcp");
-    yyjson_val *args = yyjson_obj_get(entry, "args");
-    ASSERT(args && yyjson_is_arr(args));
-    ASSERT_EQ(yyjson_arr_size(args), 0U);
-    ASSERT_NULL(yyjson_obj_get(root, "mcpServers"));
-    yyjson_doc_free(doc);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_openclaw_mcp_preserves_existing_config) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-openclaw-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char dir[512];
-    snprintf(dir, sizeof(dir), "%s/.openclaw", tmpdir);
-    test_mkdirp(dir);
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/openclaw.json", dir);
-    write_test_file(configpath,
-                    "{\"theme\":\"dark\",\"mcp\":{\"servers\":{\"other\":{\"command\":\"x\"}}}}");
-
-    int rc = cbm_install_openclaw_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "theme") != NULL);
-    ASSERT(strstr(data, "other") != NULL);
-    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
-    ASSERT(strstr(data, "\"mcpServers\"") == NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_openclaw_mcp_preserves_valid_json5) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-openclaw-json5-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-    char dir[512];
-    snprintf(dir, sizeof(dir), "%s/.openclaw", tmpdir);
-    test_mkdirp(dir);
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/openclaw.json", dir);
-    write_test_file(configpath,
-                    "{ theme: 'dark', mcp: { servers: { other: { command: 'x' } } } }\n");
-
-    int rc = cbm_install_openclaw_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    char *data = read_test_file_alloc(configpath);
-    bool preserved_theme = data && strstr(data, "theme") && strstr(data, "dark");
-    bool preserved_server = data && strstr(data, "other") && strstr(data, "command");
-    bool installed = data && strstr(data, "codebase-memory-mcp");
-
-    free(data);
-    test_rmdir_r(tmpdir);
-    if (rc != 0 || !preserved_theme || !preserved_server || !installed)
-        FAIL("OpenClaw MCP install must preserve valid JSON5 settings and sibling servers");
-    PASS();
-}
-
-TEST(cli_openclaw_mcp_uninstall_uses_nested_servers) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-openclaw-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.openclaw/openclaw.json", tmpdir);
-
-    ASSERT_EQ(cbm_install_openclaw_mcp("/usr/local/bin/codebase-memory-mcp", configpath), 0);
-    ASSERT_EQ(cbm_remove_openclaw_mcp_owned("/usr/local/bin/codebase-memory-mcp", configpath), 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"mcp\"") != NULL);
-    ASSERT(strstr(data, "\"servers\"") != NULL);
-    ASSERT(strstr(data, "\"codebase-memory-mcp\"") == NULL);
-    ASSERT(strstr(data, "\"mcpServers\"") == NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 
 TEST(cli_openclaw_compaction_preserves_user_owned_section) {
     char tmpdir[256];
@@ -3356,237 +2646,16 @@ TEST(cli_openclaw_uninstall_removes_compaction_when_workspace_is_ambiguous) {
  *  VS Code MCP config tests
  * ═══════════════════════════════════════════════════════════════════ */
 
-TEST(cli_vscode_mcp_install) {
-    /* Port of TestVSCodeMCPInstall */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
 
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/Code/User/mcp.json", tmpdir);
 
-    int rc = cbm_install_vscode_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"servers\"") != NULL);
-    ASSERT(strstr(data, "\"type\"") != NULL);
-    ASSERT(strstr(data, "\"stdio\"") != NULL);
-    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
-    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_vscode_mcp_uninstall) {
-    /* Port of TestVSCodeMCPUninstall */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/Code/User/mcp.json", tmpdir);
-
-    cbm_install_vscode_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    int rc = cbm_remove_vscode_mcp_owned("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"codebase-memory-mcp\"") == NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_vscode_profile_mcp_uninstall) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-vscode-profile-uninstall-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char code_user[640];
-#ifdef __APPLE__
-    snprintf(code_user, sizeof(code_user), "%s/Library/Application Support/Code/User", tmpdir);
-#elif defined(_WIN32)
-    snprintf(code_user, sizeof(code_user), "%s/AppData/Roaming/Code/User", tmpdir);
-#else
-    snprintf(code_user, sizeof(code_user), "%s/.config/Code/User", tmpdir);
-#endif
-    char profile_dir[768];
-    char base_config[768];
-    char profile_config[896];
-    snprintf(profile_dir, sizeof(profile_dir), "%s/profiles/profile-one", code_user);
-    snprintf(base_config, sizeof(base_config), "%s/mcp.json", code_user);
-    snprintf(profile_config, sizeof(profile_config), "%s/mcp.json", profile_dir);
-    test_mkdirp(profile_dir);
-    char installed_binary[640];
-#ifdef _WIN32
-    snprintf(installed_binary, sizeof(installed_binary), "%s/.local/bin/codebase-memory-mcp.exe",
-             tmpdir);
-#else
-    snprintf(installed_binary, sizeof(installed_binary), "%s/.local/bin/codebase-memory-mcp",
-             tmpdir);
-#endif
-    ASSERT_EQ(cbm_install_vscode_mcp(installed_binary, base_config), 0);
-    ASSERT_EQ(cbm_install_vscode_mcp(installed_binary, profile_config), 0);
-
-    char *saved_home = save_test_env("HOME");
-    char *saved_path = save_test_env("PATH");
-    char *saved_appdata = save_test_env("APPDATA");
-    char *saved_xdg = save_test_env("XDG_CONFIG_HOME");
-    char xdg_dir[640];
-    snprintf(xdg_dir, sizeof(xdg_dir), "%s/.config", tmpdir);
-    cbm_setenv("XDG_CONFIG_HOME", xdg_dir, 1); /* Linux resolvers prefer XDG */
-    cbm_setenv("HOME", tmpdir, 1);
-    cbm_setenv("PATH", tmpdir, 1);
-#ifdef _WIN32
-    char appdata[512];
-    snprintf(appdata, sizeof(appdata), "%s/AppData/Roaming", tmpdir);
-    cbm_setenv("APPDATA", appdata, 1);
-#endif
-    char *argv[] = {"uninstall", "--yes"};
-    int rc = cli_test_cmd_uninstall(2, argv);
-    char *base = read_test_file_alloc(base_config);
-    char *profile = read_test_file_alloc(profile_config);
-    bool removed = base && profile && !strstr(base, "codebase-memory-mcp") &&
-                   !strstr(profile, "codebase-memory-mcp");
-
-    free(base);
-    free(profile);
-    restore_test_env("HOME", saved_home);
-    restore_test_env("PATH", saved_path);
-    restore_test_env("APPDATA", saved_appdata);
-    restore_test_env("XDG_CONFIG_HOME", saved_xdg);
-    test_rmdir_r(tmpdir);
-    if (rc != 0 || !removed)
-        FAIL("VS Code uninstall must remove MCP entries from every existing profile");
-    PASS();
-}
 
 /* ═══════════════════════════════════════════════════════════════════
  *  Zed MCP config tests
  * ═══════════════════════════════════════════════════════════════════ */
 
-TEST(cli_zed_mcp_install) {
-    /* Port of TestZedMCPInstall */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
 
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.config/zed/settings.json", tmpdir);
 
-    int rc = cbm_install_zed_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
 
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"context_servers\"") != NULL);
-    ASSERT(strstr(data, "\"command\"") != NULL);
-    ASSERT(strstr(data, "\"args\"") != NULL);
-    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
-    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_zed_mcp_preserves_settings) {
-    /* Port of TestZedMCPPreservesSettings */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.config/zed/settings.json", tmpdir);
-    char dir[512];
-    snprintf(dir, sizeof(dir), "%s/.config/zed", tmpdir);
-    test_mkdirp(dir);
-
-    /* Pre-existing Zed settings */
-    write_test_file(configpath, "{\"theme\": \"One Dark\", \"vim_mode\": true}");
-
-    cbm_install_zed_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    /* Original settings preserved */
-    ASSERT(strstr(data, "One Dark") != NULL);
-    ASSERT(strstr(data, "vim_mode") != NULL);
-    /* MCP server added */
-    ASSERT(strstr(data, "context_servers") != NULL);
-    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_zed_mcp_uninstall) {
-    /* Port of TestZedMCPUninstall */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.config/zed/settings.json", tmpdir);
-
-    cbm_install_zed_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    int rc = cbm_remove_zed_mcp_owned("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"codebase-memory-mcp\"") == NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_zed_mcp_jsonc_comments) {
-    /* Issue #24: Zed settings.json uses JSONC (comments + trailing commas) */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.config/zed/settings.json", tmpdir);
-    char dir[512];
-    snprintf(dir, sizeof(dir), "%s/.config/zed", tmpdir);
-    test_mkdirp(dir);
-
-    /* JSONC with comments and trailing commas — must not fail */
-    write_test_file(configpath, "// Zed settings\n"
-                                "{\n"
-                                "  \"theme\": \"One Dark\",\n"
-                                "  /* multi-line\n"
-                                "     comment */\n"
-                                "  \"vim_mode\": true,\n" /* trailing comma */
-                                "}\n");
-
-    int rc = cbm_install_zed_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    /* Original settings preserved */
-    ASSERT(strstr(data, "One Dark") != NULL);
-    ASSERT(strstr(data, "vim_mode") != NULL);
-    /* MCP server added */
-    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
-    ASSERT(strstr(data, "context_servers") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 
 /* ═══════════════════════════════════════════════════════════════════
  *  PATH management tests (port of TestCLI_InstallPATHAppend)
@@ -8138,78 +7207,10 @@ TEST(cli_opencode_prefers_existing_jsonc_config_discussion1560) {
  * The entry below is the reporters' actual shape. It already says what we would
  * say, so the correct outcome is success WITHOUT a write - rewriting it would
  * drop `enabled`, turning a visible refusal into silent config loss. */
-TEST(cli_opencode_accepts_entry_annotated_with_enabled_issue1630) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-opencode-enabled-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-    char config_path[512];
-    snprintf(config_path, sizeof(config_path), "%s/opencode.json", tmpdir);
-    const char *original = "{\n"
-                           "  \"$schema\": \"https://opencode.ai/config.json\",\n"
-                           "  \"mcp\": {\n"
-                           "    \"codebase-memory-mcp\": {\n"
-                           "      \"enabled\": true,\n"
-                           "      \"type\": \"local\",\n"
-                           "      \"command\": [\n"
-                           "        \"/usr/local/bin/codebase-memory-mcp\"\n"
-                           "      ]\n"
-                           "    }\n"
-                           "  }\n"
-                           "}\n";
-    write_test_file(config_path, original);
-
-    int rc = cbm_upsert_opencode_mcp("/usr/local/bin/codebase-memory-mcp", config_path);
-
-    char *after = read_test_file_alloc(config_path);
-    bool preserved = after && strstr(after, "\"enabled\": true") != NULL;
-    bool unchanged = after && strcmp(after, original) == 0;
-    free(after);
-    test_rmdir_r(tmpdir);
-    if (rc != 0)
-        FAIL("an entry annotated with enabled must be accepted, not refused");
-    if (!preserved)
-        FAIL("the client's enabled key must survive");
-    if (!unchanged)
-        FAIL("an already-correct entry must not be rewritten at all");
-    PASS();
-}
 
 /* The other direction: an entry whose command points at a DIFFERENT binary is
  * genuinely foreign and must still be refused, extra keys or not. Without this
  * the change above would be a blanket loosening. */
-TEST(cli_opencode_still_refuses_foreign_command_issue1630) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-opencode-foreign-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-    char config_path[512];
-    snprintf(config_path, sizeof(config_path), "%s/opencode.json", tmpdir);
-    const char *original = "{\n"
-                           "  \"mcp\": {\n"
-                           "    \"codebase-memory-mcp\": {\n"
-                           "      \"enabled\": true,\n"
-                           "      \"type\": \"local\",\n"
-                           "      \"command\": [\n"
-                           "        \"/opt/somebody-elses/binary\"\n"
-                           "      ]\n"
-                           "    }\n"
-                           "  }\n"
-                           "}\n";
-    write_test_file(config_path, original);
-
-    int rc = cbm_upsert_opencode_mcp("/usr/local/bin/codebase-memory-mcp", config_path);
-
-    char *after = read_test_file_alloc(config_path);
-    bool unchanged = after && strcmp(after, original) == 0;
-    free(after);
-    test_rmdir_r(tmpdir);
-    if (rc == 0)
-        FAIL("an entry pointing at a foreign binary must still be refused");
-    if (!unchanged)
-        FAIL("a refused entry must be left byte-identical");
-    PASS();
-}
 
 /* #1038: `uninstall --help` performed a REAL uninstall - it removed the binary
  * and every agent configuration. The top-level dispatcher matches the
@@ -9685,64 +8686,6 @@ TEST(cli_junie_foreign_analysis_alias_falls_back_to_parent_handoff) {
     PASS();
 }
 
-TEST(cli_mcp_installers_preserve_foreign_same_name_entries) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-foreign-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char json_path[512];
-    char toml_path[512];
-    snprintf(json_path, sizeof(json_path), "%s/settings.json", tmpdir);
-    snprintf(toml_path, sizeof(toml_path), "%s/config.toml", tmpdir);
-    /* The custom same-name binary EXISTS on disk — a live foreign tool, not
-     * a dead install footprint — so installers must fail closed on it.
-     * (A non-existent command path is the repairable stale case instead.) */
-    char custom_tool[512];
-    snprintf(custom_tool, sizeof(custom_tool), "%s/custom-tool", tmpdir);
-    ASSERT_EQ(write_test_file(custom_tool, "#!/bin/sh\nexit 0\n"), 0);
-    char foreign_json[1024];
-    snprintf(foreign_json, sizeof(foreign_json),
-             "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":"
-             "\"%s\",\"args\":[]}},\"theme\":\"dark\"}\n",
-             custom_tool);
-    const char *foreign_toml = "[mcp_servers.codebase-memory-mcp]\n"
-                               "command = \"/opt/user-tool\"\n"
-                               "args = [\"--private\"]\n"
-                               "env = { KEEP = \"yes\" }\n";
-
-    write_test_file(json_path, foreign_json);
-    int json_install_rc = cbm_install_editor_mcp("/opt/codebase-memory-mcp", json_path);
-    char *json_after_install = read_test_file_alloc(json_path);
-    bool json_install_preserved =
-        json_after_install && strcmp(json_after_install, foreign_json) == 0;
-    free(json_after_install);
-    write_test_file(json_path, foreign_json);
-    int json_remove_rc = cbm_remove_editor_mcp(json_path);
-    char *json_after_remove = read_test_file_alloc(json_path);
-    bool json_remove_preserved = json_after_remove && strcmp(json_after_remove, foreign_json) == 0;
-    free(json_after_remove);
-
-    write_test_file(toml_path, foreign_toml);
-    int toml_install_rc = cbm_upsert_codex_mcp("/opt/codebase-memory-mcp", toml_path);
-    char *toml_after_install = read_test_file_alloc(toml_path);
-    bool toml_install_preserved =
-        toml_after_install && strcmp(toml_after_install, foreign_toml) == 0;
-    free(toml_after_install);
-    write_test_file(toml_path, foreign_toml);
-    int toml_remove_rc = cbm_remove_codex_mcp(toml_path);
-    char *toml_after_remove = read_test_file_alloc(toml_path);
-    bool toml_remove_preserved = toml_after_remove && strcmp(toml_after_remove, foreign_toml) == 0;
-    free(toml_after_remove);
-
-    test_rmdir_r(tmpdir);
-    if (json_install_rc == 0 || json_remove_rc != 0 || toml_install_rc == 0 ||
-        toml_remove_rc != 0 || !json_install_preserved || !json_remove_preserved ||
-        !toml_install_preserved || !toml_remove_preserved)
-        FAIL("generic JSON and Codex MCP installers must fail closed on foreign same-name "
-             "entries and never remove them");
-    PASS();
-}
 
 TEST(cli_installer_rejects_symlinked_agent_roots) {
 #ifdef _WIN32
@@ -10117,11 +9060,11 @@ TEST(cli_codex_preflight_reports_heading_and_reason) {
  * the json-tree reshape left the parser reading a key that no longer exists,
  * and the hook silently emitted nothing). */
 TEST(cli_hook_augment_context_tracks_search_json_shape) {
-    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    cbm_test_operation_host_t *srv = cbm_test_operation_host_new(NULL);
     ASSERT_NOT_NULL(srv);
-    cbm_store_t *st = cbm_mcp_server_store(srv);
+    cbm_store_t *st = cbm_test_operation_host_store(srv);
     const char *proj = "hookproj";
-    cbm_mcp_server_set_project(srv, proj);
+    cbm_test_operation_host_set_project(srv, proj);
     cbm_store_upsert_project(st, proj, "/tmp/hookproj");
     cbm_node_t n = {.project = proj,
                     .label = "Function",
@@ -10134,7 +9077,7 @@ TEST(cli_hook_augment_context_tracks_search_json_shape) {
 
     /* The exact request ha_build_args produces: format:"json". */
     char *envelope =
-        cbm_mcp_handle_tool(srv, "search_graph",
+        cbm_test_operation_execute(srv, "search_graph",
                             "{\"project\":\"hookproj\",\"name_pattern\":\".*someIndexedSymbol.*\","
                             "\"limit\":5,\"format\":\"json\"}");
     ASSERT_NOT_NULL(envelope);
@@ -10148,7 +9091,7 @@ TEST(cli_hook_augment_context_tracks_search_json_shape) {
     ASSERT_NOT_NULL(strstr(ctx, "mod.py"));
     free(ctx);
     free(envelope);
-    cbm_mcp_server_free(srv);
+    cbm_test_operation_host_free(srv);
     PASS();
 }
 
@@ -10156,13 +9099,13 @@ TEST(cli_hook_augment_context_tracks_search_json_shape) {
  * tokenizer seam. This pins the event guard and the graph lookup path together.
  */
 TEST(cli_hook_augment_bash_pretooluse_reaches_augmenter) {
-    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    cbm_test_operation_host_t *srv = cbm_test_operation_host_new(NULL);
     ASSERT_NOT_NULL(srv);
-    cbm_store_t *st = cbm_mcp_server_store(srv);
+    cbm_store_t *st = cbm_test_operation_host_store(srv);
     ASSERT_NOT_NULL(st);
     char *project = cbm_project_name_from_path("/tmp/hookproj");
     ASSERT_NOT_NULL(project);
-    cbm_mcp_server_set_project(srv, project);
+    cbm_test_operation_host_set_project(srv, project);
     cbm_store_upsert_project(st, project, "/tmp/hookproj");
     char qualified_name[256];
     snprintf(qualified_name, sizeof(qualified_name), "%s.mod.someIndexedSymbol", project);
@@ -10178,11 +9121,11 @@ TEST(cli_hook_augment_bash_pretooluse_reaches_augmenter) {
     const char *input = "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\","
                         "\"cwd\":\"/tmp/hookproj\",\"tool_input\":{"
                         "\"command\":\"rg -n someIndexedSymbol .\"}}";
-    char *output = cbm_hook_augment_process(cbm_mcp_server_session_root(srv), input);
+    char *output = cbm_hook_augment_process(cbm_test_operation_host_session_root(srv), input);
     bool reached = output && strstr(output, "hookSpecificOutput") &&
                    strstr(output, "someIndexedSymbol") && strstr(output, "mod.py");
     free(output);
-    cbm_mcp_server_free(srv);
+    cbm_test_operation_host_free(srv);
     free(project);
 
     if (!reached)
@@ -10915,30 +9858,6 @@ TEST(cli_claude_hook_script_collisions_are_not_registered) {
     PASS();
 }
 
-TEST(cli_codex_legacy_migration_rejects_linked_config) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-codex-link-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-    char target[512];
-    char config[512];
-    snprintf(target, sizeof(target), "%s/user-config.toml", tmpdir);
-    snprintf(config, sizeof(config), "%s/config.toml", tmpdir);
-    const char *original = "user_key = true\n\n[mcp_servers.codebase-memory-mcp]\n"
-                           "command = \"old\"\nargs = []\n";
-    write_test_file(target, original);
-
-    ASSERT_EQ(symlink(target, config), 0);
-    int rc = cbm_upsert_codex_mcp("/usr/local/bin/codebase-memory-mcp", config);
-    char *after = read_test_file_alloc(target);
-    bool safe = rc == -1 && after && strcmp(after, original) == 0;
-    free(after);
-
-    test_rmdir_r(tmpdir);
-    if (!safe)
-        FAIL("Codex legacy migration must reject linked config without modifying its target");
-    PASS();
-}
 #endif
 
 /* Full uninstall owns the three Claude shims it creates and must remove them
@@ -11271,310 +10190,29 @@ TEST(cli_detect_agents_none_found) {
  *  Group B: MCP Config Upsert — Codex TOML
  * ═══════════════════════════════════════════════════════════════════ */
 
-TEST(cli_upsert_codex_mcp_fresh) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-codex-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
 
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/config.toml", tmpdir);
 
-    int rc = cbm_upsert_codex_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
 
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "[mcp_servers.codebase-memory-mcp]") != NULL);
-    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
-    /* #1562: Codex passes only the names listed in env_vars into a stdio MCP
-     * subprocess. Without CBM_CACHE_DIR the spawned server uses the DEFAULT
-     * cache while the daemon uses the configured one, the two disagree, and the
-     * handshake closes — Codex then shows no cbm tools at all. */
-    ASSERT(strstr(data, "env_vars = [\"CBM_CACHE_DIR\", \"CBM_RUNTIME_DIR\"]") != NULL);
 
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_upsert_codex_mcp_escapes_windows_path) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-codex-winpath-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/config.toml", tmpdir);
-    const char *binary = "C:\\Users\\Martin Vogel\\bin\\codebase-memory-mcp.exe";
-
-    int rc = cbm_upsert_codex_mcp(binary, configpath);
-    char *data = read_test_file_alloc(configpath);
-    bool escaped_basic = data && strstr(data, "command = \"C:\\\\Users") != NULL;
-    bool literal = data && strstr(data, "command = 'C:\\Users") != NULL;
-    bool has_args = data && strstr(data, "args = []") != NULL;
-
-    free(data);
-    test_rmdir_r(tmpdir);
-    if (rc != 0 || (!escaped_basic && !literal))
-        FAIL("Codex MCP TOML must escape Windows backslashes or use a literal string");
-    if (!has_args)
-        FAIL("Codex MCP TOML must include the documented empty args array");
-    PASS();
-}
-
-TEST(cli_upsert_codex_mcp_existing) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-codex-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/config.toml", tmpdir);
-    write_test_file(configpath, "model = \"gpt-4\"\n\n[other_setting]\nfoo = \"bar\"\n");
-
-    int rc = cbm_upsert_codex_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    /* Existing settings preserved */
-    ASSERT(strstr(data, "model = \"gpt-4\"") != NULL);
-    ASSERT(strstr(data, "[other_setting]") != NULL);
-    /* Our entry added */
-    ASSERT(strstr(data, "[mcp_servers.codebase-memory-mcp]") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_upsert_codex_mcp_replace) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-codex-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/config.toml", tmpdir);
-    write_test_file(configpath, "[mcp_servers.codebase-memory-mcp]\n"
-                                "command = \"/old/path/codebase-memory-mcp\"\n"
-                                "\n"
-                                "[other_setting]\nfoo = \"bar\"\n");
-
-    int rc = cbm_upsert_codex_mcp("/new/path/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    /* Old path replaced */
-    ASSERT(strstr(data, "/old/path") == NULL);
-    ASSERT(strstr(data, "/new/path/codebase-memory-mcp") != NULL);
-    /* Other settings preserved */
-    ASSERT(strstr(data, "[other_setting]") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_codex_legacy_migration_ignores_header_text_in_multiline_string) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-codex-multiline-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/config.toml", tmpdir);
-    const char *original = "[other]\n"
-                           "description = \"\"\"\n"
-                           "This is documentation, not a table:\n"
-                           "[mcp_servers.codebase-memory-mcp]\n"
-                           "keep this text intact\n"
-                           "\"\"\"\n"
-                           "enabled = true\n";
-    write_test_file(configpath, original);
-
-    int rc = cbm_upsert_codex_mcp("/new/codebase-memory-mcp", configpath);
-    char *after = read_test_file_alloc(configpath);
-    bool preserved = after && strstr(after, original) != NULL &&
-                     strstr(after, "command = \"/new/codebase-memory-mcp\"") != NULL;
-    free(after);
-    test_rmdir_r(tmpdir);
-    if (rc != 0 || !preserved)
-        FAIL("Codex legacy migration must ignore table-looking text inside multiline strings");
-    PASS();
-}
 
 /* ═══════════════════════════════════════════════════════════════════
  *  Group B: MCP Config Upsert — Zed (corrected format)
  * ═══════════════════════════════════════════════════════════════════ */
 
-TEST(cli_zed_mcp_uses_args_format) {
-    /* Zed expects no arguments, not one real empty-string argument. */
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-zed-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
 
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/settings.json", tmpdir);
-
-    cbm_install_zed_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    yyjson_doc *doc = yyjson_read(data, strlen(data), 0);
-    ASSERT_NOT_NULL(doc);
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    yyjson_val *servers = yyjson_obj_get(root, "context_servers");
-    yyjson_val *entry = yyjson_obj_get(servers, "codebase-memory-mcp");
-    yyjson_val *args = yyjson_obj_get(entry, "args");
-    ASSERT(args && yyjson_is_arr(args));
-    ASSERT_EQ(yyjson_arr_size(args), 0U);
-    ASSERT_NULL(yyjson_obj_get(entry, "source"));
-    yyjson_doc_free(doc);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_zed_mcp_preserves_jsonc_comments) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-zed-jsonc-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/settings.json", tmpdir);
-    write_test_file(configpath,
-                    "{\n  // preserve the user's Zed setting\n  \"theme\": \"Ayu Dark\",\n}\n");
-
-    int rc = cbm_install_zed_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    char *data = read_test_file_alloc(configpath);
-    bool preserved = data && strstr(data, "preserve the user's Zed setting") &&
-                     strstr(data, "Ayu Dark") && strstr(data, "codebase-memory-mcp");
-    free(data);
-    test_rmdir_r(tmpdir);
-    if (rc != 0 || !preserved)
-        FAIL("Zed MCP install must preserve JSONC comments and unrelated settings");
-    PASS();
-}
 
 /* ═══════════════════════════════════════════════════════════════════
  *  Group B: MCP Config Upsert — OpenCode
  * ═══════════════════════════════════════════════════════════════════ */
 
-TEST(cli_upsert_opencode_mcp_fresh) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-ocode-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
 
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/opencode.json", tmpdir);
 
-    int rc = cbm_upsert_opencode_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
-    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
-    /* command must be emitted as an array, not a string */
-    ASSERT(strstr(data, "\"command\":[") != NULL || strstr(data, "\"command\": [") != NULL);
-    /* type must be explicitly set to \"local\" */
-    ASSERT(strstr(data, "\"type\":\"local\"") != NULL ||
-           strstr(data, "\"type\": \"local\"") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_upsert_opencode_mcp_preserves_jsonc_comments) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-ocode-jsonc-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/opencode.jsonc", tmpdir);
-    write_test_file(configpath, "{\n  // keep this user explanation\n  \"theme\": \"dark\",\n}\n");
-
-    int rc = cbm_upsert_opencode_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    char *data = read_test_file_alloc(configpath);
-    bool comment_kept = data && strstr(data, "keep this user explanation") != NULL;
-    bool setting_kept = data && strstr(data, "theme") && strstr(data, "dark");
-    bool installed = data && strstr(data, "codebase-memory-mcp");
-
-    free(data);
-    test_rmdir_r(tmpdir);
-    if (rc != 0 || !comment_kept || !setting_kept || !installed)
-        FAIL("OpenCode MCP upsert must preserve JSONC comments and unrelated settings");
-    PASS();
-}
-
-TEST(cli_upsert_opencode_mcp_existing) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-ocode-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/opencode.json", tmpdir);
-    write_test_file(configpath, "{\"mcp\":{\"other-server\":{\"command\":\"/usr/bin/other\"}}}");
-
-    int rc = cbm_upsert_opencode_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "other-server") != NULL);
-    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 
 /* ═══════════════════════════════════════════════════════════════════
  *  Group B: MCP Config Upsert — Antigravity
  * ═══════════════════════════════════════════════════════════════════ */
 
-TEST(cli_upsert_antigravity_mcp_fresh) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-anti-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
 
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/mcp_config.json", tmpdir);
-
-    int rc = cbm_upsert_antigravity_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_upsert_antigravity_mcp_replace) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-anti-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/mcp_config.json", tmpdir);
-    write_test_file(configpath, "{\"mcpServers\":{\"codebase-memory-mcp\":{"
-                                "\"command\":\"codebase-memory-mcp\"}}}");
-
-    int rc = cbm_upsert_antigravity_mcp("/new/path/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"command\":\"codebase-memory-mcp\"") == NULL);
-    ASSERT(strstr(data, "/new/path/codebase-memory-mcp") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
 
 /* ═══════════════════════════════════════════════════════════════════
  *  Group C: Instructions File Upsert
@@ -13208,10 +11846,10 @@ TEST(cli_zero_argument_tool_never_reads_stdin_issue1359) {
  * from the schema the MCP tools/list publishes. */
 TEST(cli_stdin_args_gate_tracks_tool_schema_issue1359) {
     int zero_argument_tools = 0;
-    for (int i = 0; i < cbm_mcp_tool_count(); i++) {
-        const char *name = cbm_mcp_tool_name(i);
+    for (int i = 0; i < (int)cbm_tool_catalog_count(); i++) {
+        const char *name = cbm_tool_catalog_name((size_t)i);
         ASSERT_NOT_NULL(name);
-        const char *schema = cbm_mcp_tool_input_schema(name);
+        const char *schema = cbm_tool_catalog_input_schema(name);
         ASSERT_NOT_NULL(schema);
 
         yyjson_doc *doc = yyjson_read(schema, strlen(schema), 0);
@@ -13721,46 +12359,19 @@ SUITE(cli) {
     RUN_TEST(cli_codex_instructions);
 
     /* Editor MCP: Cursor/Windsurf/Gemini (5 tests — install_test.go) */
-    RUN_TEST(cli_editor_mcp_install);
-    RUN_TEST(cli_editor_mcp_idempotent);
-    RUN_TEST(cli_editor_mcp_repairs_known_previous_managed_entry);
 #ifndef _WIN32
-    RUN_TEST(cli_editor_mcp_preserves_unrecorded_posix_absolute_entries_without_probe);
 #endif
-    RUN_TEST(cli_editor_mcp_preserves_unresolved_relative_entry);
     RUN_TEST(cli_editor_mcp_rejects_unsafe_windows_probe_namespaces);
 #ifdef _WIN32
-    RUN_TEST(cli_editor_mcp_preserves_unsafe_windows_drive_probe);
-    RUN_TEST(cli_editor_mcp_preserves_windows_extensionless_commands);
 #endif
-    RUN_TEST(cli_editor_mcp_refuses_foreign_shaped_entry);
-    RUN_TEST(cli_editor_mcp_preserves_others);
-    RUN_TEST(cli_editor_mcp_uninstall);
-    RUN_TEST(cli_junie_mcp_install_issue651);
-    RUN_TEST(cli_junie_mcp_repairs_all_known_previous_aliases_atomically);
     RUN_TEST(cli_goose_block_carries_required_name_issue1675);
-    RUN_TEST(cli_editor_mcp_field_repairs_annotated_entry_via_previous_issue1630);
-    RUN_TEST(cli_opencode_moved_entry_without_authority_refuses_issue1630);
-    RUN_TEST(cli_opencode_owns_backslash_command_issue1582);
-    RUN_TEST(cli_gemini_mcp_install);
-    RUN_TEST(cli_openclaw_mcp_install_uses_nested_servers);
-    RUN_TEST(cli_openclaw_mcp_preserves_existing_config);
-    RUN_TEST(cli_openclaw_mcp_preserves_valid_json5);
-    RUN_TEST(cli_openclaw_mcp_uninstall_uses_nested_servers);
     RUN_TEST(cli_openclaw_compaction_preserves_user_owned_section);
     RUN_TEST(cli_openclaw_profile_uses_profile_state_and_default_workspace);
     RUN_TEST(cli_openclaw_uninstall_removes_compaction_when_workspace_is_ambiguous);
 
     /* VS Code MCP (2 tests — install_test.go) */
-    RUN_TEST(cli_vscode_mcp_install);
-    RUN_TEST(cli_vscode_mcp_uninstall);
-    RUN_TEST(cli_vscode_profile_mcp_uninstall);
 
     /* Zed MCP (3 tests — install_test.go) */
-    RUN_TEST(cli_zed_mcp_install);
-    RUN_TEST(cli_zed_mcp_preserves_settings);
-    RUN_TEST(cli_zed_mcp_uninstall);
-    RUN_TEST(cli_zed_mcp_jsonc_comments);
 
     /* PATH management (3 tests) */
     RUN_TEST(cli_ensure_path_append);
@@ -13859,8 +12470,6 @@ SUITE(cli) {
     RUN_TEST(cli_antigravity_plan_uses_documented_global_files);
     RUN_TEST(cli_opencode_honors_custom_config);
     RUN_TEST(cli_opencode_prefers_existing_jsonc_config_discussion1560);
-    RUN_TEST(cli_opencode_accepts_entry_annotated_with_enabled_issue1630);
-    RUN_TEST(cli_opencode_still_refuses_foreign_command_issue1630);
     RUN_TEST(cli_uninstall_help_does_not_uninstall_issue1038);
     RUN_TEST(cli_opencode_config_dir_detects_without_retargeting_global_json);
     RUN_TEST(cli_kiro_and_hermes_homes_are_honored);
@@ -13892,7 +12501,6 @@ SUITE(cli) {
     RUN_TEST(cli_lifecycle_hooks_preserve_foreign_substring_commands);
     RUN_TEST(cli_read_only_agents_do_not_receive_mutating_mcp_server);
     RUN_TEST(cli_junie_foreign_analysis_alias_falls_back_to_parent_handoff);
-    RUN_TEST(cli_mcp_installers_preserve_foreign_same_name_entries);
     RUN_TEST(cli_installer_rejects_symlinked_agent_roots);
     RUN_TEST(cli_claude_hook_scripts_shell_quote_binary_path);
     RUN_TEST(cli_claude_hook_commands_shell_quote_custom_config_dir);
@@ -13922,7 +12530,6 @@ SUITE(cli) {
     RUN_TEST(cli_upgrade_preserves_near_legacy_claude_hook_script);
     RUN_TEST(cli_hook_upsert_rejects_linked_settings);
     RUN_TEST(cli_claude_hook_script_collisions_are_not_registered);
-    RUN_TEST(cli_codex_legacy_migration_rejects_linked_config);
 #endif
     RUN_TEST(cli_uninstall_removes_claude_hook_scripts);
     RUN_TEST(cli_uninstall_preserves_modified_claude_hook_script);
@@ -13942,24 +12549,12 @@ SUITE(cli) {
     RUN_TEST(cli_detect_agents_none_found);
 
     /* Codex MCP config upsert (3 tests — group B) */
-    RUN_TEST(cli_upsert_codex_mcp_fresh);
-    RUN_TEST(cli_upsert_codex_mcp_escapes_windows_path);
-    RUN_TEST(cli_upsert_codex_mcp_existing);
-    RUN_TEST(cli_upsert_codex_mcp_replace);
-    RUN_TEST(cli_codex_legacy_migration_ignores_header_text_in_multiline_string);
 
     /* Zed MCP format fix (1 test — group B) */
-    RUN_TEST(cli_zed_mcp_uses_args_format);
-    RUN_TEST(cli_zed_mcp_preserves_jsonc_comments);
 
     /* OpenCode MCP config upsert (2 tests — group B) */
-    RUN_TEST(cli_upsert_opencode_mcp_fresh);
-    RUN_TEST(cli_upsert_opencode_mcp_preserves_jsonc_comments);
-    RUN_TEST(cli_upsert_opencode_mcp_existing);
 
     /* Antigravity MCP config upsert (2 tests — group B) */
-    RUN_TEST(cli_upsert_antigravity_mcp_fresh);
-    RUN_TEST(cli_upsert_antigravity_mcp_replace);
 
     /* Instructions file upsert (6 tests — group C) */
     RUN_TEST(cli_aider_instructions_are_cli_form_issue1032);

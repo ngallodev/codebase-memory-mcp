@@ -31,7 +31,7 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 #include "cbm.h"
-#include <mcp/mcp.h>
+#include "test_operation_host.h"
 #include <store/store.h>
 #include <pipeline/pipeline.h>
 #include <foundation/log.h>
@@ -50,7 +50,7 @@ typedef struct {
     char tmpdir[256];
     char dbpath[512];
     char *project;
-    cbm_mcp_server_t *srv;
+    cbm_test_operation_host_t *srv;
 } GpfProj;
 
 typedef struct {
@@ -74,11 +74,11 @@ static cbm_store_t *gpf_open_indexed(GpfProj *lp) {
     cbm_mkdir(cache_dir);
     snprintf(lp->dbpath, sizeof(lp->dbpath), "%s/%s.db", cache_dir, lp->project);
     unlink(lp->dbpath);
-    lp->srv = cbm_mcp_server_new(NULL);
+    lp->srv = cbm_test_operation_host_new(NULL);
     if (!lp->srv) return NULL;
     char args[700];
     snprintf(args, sizeof(args), "{\"repo_path\":\"%s\"}", lp->tmpdir);
-    char *resp = cbm_mcp_handle_tool(lp->srv, "index_repository", args);
+    char *resp = cbm_test_operation_execute(lp->srv, "index_repository", args);
     if (resp) free(resp);
     return cbm_store_open_path(lp->dbpath);
 }
@@ -107,7 +107,7 @@ static cbm_store_t *gpf_index_files(GpfProj *lp, const GpfFile *files, int nfile
 
 static void gpf_cleanup(GpfProj *lp, cbm_store_t *store) {
     if (store) cbm_store_close(store);
-    if (lp->srv) { cbm_mcp_server_free(lp->srv); lp->srv = NULL; }
+    if (lp->srv) { cbm_test_operation_host_free(lp->srv); lp->srv = NULL; }
     free(lp->project);
     lp->project = NULL;
     th_rmtree(lp->tmpdir);

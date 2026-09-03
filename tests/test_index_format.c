@@ -72,7 +72,7 @@ static char *index_capture(RProj *lp) {
     cbm_setenv("CBM_CACHE_DIR", lp->cachedir, 1);
     capture_reset();
     cbm_log_set_sink_ex(capture_sink, CBM_LOG_SINK_TEE);
-    char *resp = cbm_mcp_handle_tool(lp->srv, "index_repository", args);
+    char *resp = cbm_test_operation_execute(lp->srv, "index_repository", args);
     cbm_log_set_sink(NULL);
     if (saved) {
         cbm_setenv("CBM_CACHE_DIR", saved, 1);
@@ -122,7 +122,7 @@ TEST(index_format_siblings_distinct_and_searchable) {
              "{\"project\":\"%s\",\"pattern\":\"repro-marker\",\"mode\":\"files\"}", lp.project);
     char *saved_dup = getenv("CBM_CACHE_DIR") ? strdup(getenv("CBM_CACHE_DIR")) : NULL;
     cbm_setenv("CBM_CACHE_DIR", lp.cachedir, 1);
-    char *resp = cbm_mcp_handle_tool(lp.srv, "search_code", args);
+    char *resp = cbm_test_operation_execute(lp.srv, "search_code", args);
     if (saved_dup) {
         cbm_setenv("CBM_CACHE_DIR", saved_dup, 1);
         free(saved_dup);

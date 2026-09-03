@@ -18,7 +18,7 @@ from unittest import mock
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT / "src"))
 
-from codebase_memory_mcp import _cli  # noqa: E402
+from codebase_memory_cli import _cli  # noqa: E402
 
 
 class BinarySelectionTests(unittest.TestCase):
@@ -30,7 +30,7 @@ class BinarySelectionTests(unittest.TestCase):
         self.assertEqual(_cli._execution_path(binary, "win32"), binary)
 
     def test_non_windows_executes_the_cached_binary(self):
-        binary = Path("cache") / "0.8.1" / "codebase-memory-mcp"
+        binary = Path("cache") / "0.8.1" / "codebase-memory-cli"
 
         self.assertEqual(_cli._execution_path(binary, "linux"), binary)
 
@@ -59,7 +59,7 @@ class BinarySelectionTests(unittest.TestCase):
                 "win32",
                 windows_local_app_data
                 / "Programs"
-                / "codebase-memory-mcp",
+                / "codebase-memory-cli",
                 mock.patch.dict(
                     os.environ,
                     {"LOCALAPPDATA": str(windows_local_app_data)},
@@ -104,9 +104,9 @@ class BinarySelectionTests(unittest.TestCase):
 
         output = "".join(call.args[0] for call in stderr.write.call_args_list)
         self.assertIn(
-            "python -m pip install --upgrade codebase-memory-mcp", output
+            "python -m pip install --upgrade codebase-memory-cli", output
         )
-        self.assertIn("codebase-memory-mcp install --yes", output)
+        self.assertIn("codebase-memory-cli install --yes", output)
         self.assertNotIn("install.sh", output)
 
 
@@ -206,8 +206,8 @@ class ProcessLivenessTests(unittest.TestCase):
 class RuntimeSetTests(unittest.TestCase):
     def test_candidate_probe_requires_the_binary_to_execute(self):
         candidates = (
-            Path("/tmp/codebase-memory-mcp"),
-            PureWindowsPath("/tmp/codebase-memory-mcp"),
+            Path("/tmp/codebase-memory-cli"),
+            PureWindowsPath("/tmp/codebase-memory-cli"),
         )
 
         for candidate in candidates:
@@ -224,7 +224,7 @@ class RuntimeSetTests(unittest.TestCase):
     def test_concurrent_publishers_preserve_the_first_complete_winner(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
-            binary_name = "codebase-memory-mcp"
+            binary_name = "codebase-memory-cli"
 
             def stages(tag):
                 staged = directory / f".stage-{tag}-{binary_name}"
@@ -306,12 +306,12 @@ from pathlib import Path
 
 source_root, directory_raw, staged_raw, marker_raw, crash_name = sys.argv[1:]
 sys.path.insert(0, source_root)
-from codebase_memory_mcp import _cli
+from codebase_memory_cli import _cli
 
 directory = Path(directory_raw)
 staged = Path(staged_raw)
 marker = Path(marker_raw)
-binary_name = "codebase-memory-mcp"
+binary_name = "codebase-memory-cli"
 staged_paths = {
     binary_name: staged / binary_name,
 }
@@ -336,7 +336,7 @@ _cli._publish_runtime_set(
     verifier=verifier,
 )
 """
-        binary_name = "codebase-memory-mcp"
+        binary_name = "codebase-memory-cli"
         for crash_name, expected_ready in (
             (binary_name, True),
         ):
@@ -447,7 +447,7 @@ _cli._publish_runtime_set(
     def test_publication_failure_restores_prior_complete_runtime_set(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
-            binary_name = "codebase-memory-mcp"
+            binary_name = "codebase-memory-cli"
             (directory / binary_name).write_text("binary:old")
             staged_paths = {}
             for name, contents in (
@@ -493,7 +493,7 @@ _cli._publish_runtime_set(
     def test_failure_never_deletes_a_complete_foreign_winner(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
-            binary_name = "codebase-memory-mcp"
+            binary_name = "codebase-memory-cli"
             (directory / binary_name).write_bytes(b"binary:old")
             staged_paths = {}
             for name, contents in (
@@ -537,7 +537,7 @@ _cli._publish_runtime_set(
     def test_orphan_reconciliation_rejects_multiply_linked_backup_members(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
-            binary = directory / "codebase-memory-mcp"
+            binary = directory / "codebase-memory-cli"
             backup = directory / f".cbm-runtime-backup-{'a' * 32}"
             backup.mkdir()
             (backup / ".retirement-complete").write_bytes(b"")
@@ -794,14 +794,14 @@ _cli._publish_runtime_set(
                     tf,
                     str(destination),
                     _cli._UNIX_ARCHIVE_NAMES,
-                    ("codebase-memory-mcp",),
+                    ("codebase-memory-cli",),
                 )
 
     def test_unix_tar_rejects_hardlink_members(self):
         with tempfile.TemporaryDirectory() as root:
             archive = Path(root) / "release.tar.gz"
             with tarfile.open(archive, "w:gz") as tf:
-                info = tarfile.TarInfo("codebase-memory-mcp")
+                info = tarfile.TarInfo("codebase-memory-cli")
                 info.type = tarfile.LNKTYPE
                 info.linkname = "LICENSE"
                 tf.addfile(info)
@@ -811,8 +811,8 @@ _cli._publish_runtime_set(
                 _cli._safe_extract_tar(
                     tf,
                     str(destination),
-                    ("codebase-memory-mcp",),
-                    ("codebase-memory-mcp",),
+                    ("codebase-memory-cli",),
+                    ("codebase-memory-cli",),
                     False,
                 )
 

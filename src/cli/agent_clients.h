@@ -1,5 +1,5 @@
 /*
- * agent_clients.h — Table-driven agent client MCP installation profiles.
+ * agent_clients.h — Table-driven agent client legacy-config compatibility profiles.
  */
 #ifndef CBM_CLI_AGENT_CLIENTS_H
 #define CBM_CLI_AGENT_CLIENTS_H
@@ -50,8 +50,8 @@ enum {
     CBM_AGENT_CAP_PLUGIN = UINT32_C(1) << 5
 };
 
-typedef int (*cbm_agent_mcp_edit_fn)(cbm_agent_client_id_t id, const char *config_path,
-                                     const char *binary_path);
+typedef int (*cbm_agent_legacy_mcp_remove_fn)(cbm_agent_client_id_t id, const char *config_path,
+                                               const char *binary_path);
 
 typedef struct {
     cbm_agent_client_id_t id;
@@ -60,8 +60,7 @@ typedef struct {
     cbm_agent_client_stability_t stability;
     uint32_t capabilities;
     const char *detection_command;
-    cbm_agent_mcp_edit_fn install_mcp;
-    cbm_agent_mcp_edit_fn remove_mcp;
+    cbm_agent_legacy_mcp_remove_fn remove_legacy_mcp;
 } cbm_agent_client_profile_t;
 
 typedef bool (*cbm_agent_probe_fn)(const char *value, const void *context);
@@ -106,14 +105,11 @@ bool cbm_agent_client_detect(cbm_agent_client_id_t id,
 bool cbm_agent_client_cleanup_candidate(cbm_agent_client_id_t id,
                                         const cbm_agent_client_resolve_options_t *options);
 
-/* config_path must already have been resolved. The adapter never guesses a
- * target here. Existing same-name foreign entries fail closed with
- * CBM_AGENT_EDIT_FOREIGN. Removal requires the original installed binary path
- * and only removes the still-canonical entry. */
-int cbm_agent_client_install_mcp(cbm_agent_client_id_t id, const char *config_path,
-                                 const char *binary_path);
-int cbm_agent_client_remove_mcp(cbm_agent_client_id_t id, const char *config_path,
-                                const char *binary_path);
+/* Legacy cleanup only. config_path must already have been resolved. Removal
+ * requires the original installed binary path and only removes an entry that
+ * is still canonical; modified/foreign entries fail closed. */
+int cbm_agent_client_remove_legacy_mcp(cbm_agent_client_id_t id, const char *config_path,
+                                       const char *binary_path);
 
 #ifdef __cplusplus
 }

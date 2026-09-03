@@ -66,8 +66,8 @@ if [[ "$BINARY" == *.exe ]] && command -v cygpath >/dev/null 2>&1 &&
         echo "FAIL: could not stamp $WIN_ROOT_W" >&2
         exit 1
     fi
-    cp "$BINARY" "$WIN_ROOT/codebase-memory-mcp.exe"
-    BINARY="$WIN_ROOT/codebase-memory-mcp.exe"
+    cp "$BINARY" "$WIN_ROOT/codebase-memory-cli.exe"
+    BINARY="$WIN_ROOT/codebase-memory-cli.exe"
     WORK="$WIN_ROOT"
     MSYS2_ARG_CONV_EXCL='*' icacls "${WIN_ROOT_W}\\*" /reset /T /C /Q >/dev/null 2>&1 || true
 fi

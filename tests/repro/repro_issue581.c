@@ -82,12 +82,12 @@
 //
 // FIX LOCATION (not implemented here -- this test must stay RED until fixed):
 //   Two complementary fixes are needed:
-//   1. src/mcp/mcp.c, cbm_mcp_server_run event loop (or after each tool call
-//      in cbm_mcp_handle_tool): periodically call
+//   1. the former MCP event loop (or after each tool call
+//      in cbm_test_operation_execute): periodically call
 //        sqlite3_wal_checkpoint_v2(..., SQLITE_CHECKPOINT_TRUNCATE, ...)
 //      and cbm_mem_collect() after query bursts (e.g. every N=50 calls or
 //      after exceeding a RSS threshold via cbm_mem_over_budget()).
-//   2. src/mcp/mcp.c, cbm_mcp_server_evict_idle: on idle eviction, call
+//   2. src/mcp/mcp.c, cbm_test_operation_host_evict_idle: on idle eviction, call
 //      cbm_mem_collect() so mimalloc returns pages to the OS, matching the
 //      same pattern used after index_repository.
 //
@@ -228,7 +228,7 @@ TEST(repro_issue581_query_rss_stable) {
     size_t rss_end = 0;
 
     for (int i = 0; i < ITER_TOTAL; i++) {
-        char *resp = cbm_mcp_handle_tool(lp.srv, "search_graph", args);
+        char *resp = cbm_test_operation_execute(lp.srv, "search_graph", args);
         // The response must be freed on every call -- verifying the MCP layer
         // does not itself accumulate the result (it doesn't; the leak is lower).
         if (resp) {

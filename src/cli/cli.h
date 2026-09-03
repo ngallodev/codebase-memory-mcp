@@ -124,41 +124,20 @@ bool cbm_remove_old_monolithic_skill(const char *skills_dir, bool dry_run);
 
 /* ── Editor MCP config management ─────────────────────────────── */
 
-/* Install MCP server entry in Cursor/Windsurf/Gemini JSON config.
- * Format: { "mcpServers": { "codebase-memory-mcp": { "command": binary_path } } }
- * Preserves existing entries. Returns 0 on success. */
-int cbm_install_editor_mcp(const char *binary_path, const char *config_path);
-
 /* Remove MCP server entry from Cursor/Windsurf/Gemini JSON config.
  * Returns 0 on success. */
 int cbm_remove_editor_mcp(const char *config_path);
 int cbm_remove_editor_mcp_owned(const char *binary_path, const char *config_path);
-
-/* Install MCP server entry in OpenClaw JSON config.
- * Format: { "mcp": { "servers": { "codebase-memory-mcp":
- * { "enabled": true, "command": binary_path, "args": [] } } } }
- * Preserves existing entries. Returns 0 on success. */
-int cbm_install_openclaw_mcp(const char *binary_path, const char *config_path);
 
 /* Remove MCP server entry from OpenClaw JSON config.
  * Returns 0 on success. */
 int cbm_remove_openclaw_mcp(const char *config_path);
 int cbm_remove_openclaw_mcp_owned(const char *binary_path, const char *config_path);
 
-/* Install MCP server entry in VS Code JSON config.
- * Format: { "servers": { "codebase-memory-mcp": { "type": "stdio", "command": binary_path } } }
- * Returns 0 on success. */
-int cbm_install_vscode_mcp(const char *binary_path, const char *config_path);
-
 /* Remove MCP server entry from VS Code JSON config.
  * Returns 0 on success. */
 int cbm_remove_vscode_mcp(const char *config_path);
 int cbm_remove_vscode_mcp_owned(const char *binary_path, const char *config_path);
-
-/* Install MCP server entry in Zed settings.json.
- * Format: { "context_servers": { "codebase-memory-mcp": { "command": path, "args": [] } } }
- * Returns 0 on success. */
-int cbm_install_zed_mcp(const char *binary_path, const char *config_path);
 
 /* Remove MCP server entry from Zed settings.json.
  * Returns 0 on success. */
@@ -250,42 +229,22 @@ bool cbm_hook_path_contains_for_testing(const char *root, const char *candidate,
                                         bool case_insensitive);
 const char *cbm_hook_no_project_index_guidance_for_testing(const char *event);
 bool cbm_hook_augment_parse_bash_pattern_for_testing(const char *cmd, char *out, size_t out_sz);
-bool cbm_mcp_command_path_probe_safe_for_testing(const char *command, bool windows);
+bool cbm_legacy_command_path_probe_safe_for_testing(const char *command, bool windows);
 void cbm_set_mcp_command_path_probe_counter_for_testing(int *counter);
-int cbm_install_editor_mcp_with_previous_for_testing(const char *binary_path,
-                                                     const char *previous_binary_path,
-                                                     const char *config_path);
-int cbm_upsert_junie_mcp_with_previous_for_testing(const char *binary_path,
-                                                   const char *previous_binary_path,
-                                                   const char *config_path);
 #endif
 
 /* ── Agent MCP config upsert (per agent) ──────────────────────── */
 
-/* Codex CLI: upsert MCP entry in $CODEX_HOME/config.toml. Returns 0 on success. */
-int cbm_upsert_codex_mcp(const char *binary_path, const char *config_path);
-
 /* Remove CMM MCP entry from Codex config.toml. Returns 0 on success. */
 int cbm_remove_codex_mcp(const char *config_path);
-
-/* OpenCode: upsert MCP entry in opencode.json. Returns 0 on success. */
-int cbm_upsert_opencode_mcp(const char *binary_path, const char *config_path);
 
 /* Remove CMM MCP entry from opencode.json. Returns 0 on success. */
 int cbm_remove_opencode_mcp(const char *config_path);
 int cbm_remove_opencode_mcp_owned(const char *binary_path, const char *config_path);
 
-/* Antigravity: upsert MCP entry in ~/.gemini/config/mcp_config.json.
- * Returns 0 on success. */
-int cbm_upsert_antigravity_mcp(const char *binary_path, const char *config_path);
-
 /* Remove CMM MCP entry from antigravity mcp_config.json. Returns 0 on success. */
 int cbm_remove_antigravity_mcp(const char *config_path);
 int cbm_remove_antigravity_mcp_owned(const char *binary_path, const char *config_path);
-
-/* Junie (JetBrains): upsert MCP entry in ~/.junie/mcp/mcp.json (mcpServers format).
- * Returns 0 on success. */
-int cbm_upsert_junie_mcp(const char *binary_path, const char *config_path);
 
 /* Remove CMM MCP entry from Junie mcp.json. Returns 0 on success. */
 int cbm_remove_junie_mcp(const char *config_path);

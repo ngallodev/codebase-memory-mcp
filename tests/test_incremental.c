@@ -13,7 +13,7 @@
 #include "../src/foundation/compat.h"
 #include "test_framework.h"
 #include "test_helpers.h"
-#include <mcp/mcp.h>
+#include "test_operation_host.h"
 #include <store/store.h>
 #include <pipeline/pipeline.h>
 #include <foundation/log.h>
@@ -33,7 +33,7 @@
 static char g_tmpdir[256];
 static char g_repodir[512];
 static char g_dbpath[512];
-static cbm_mcp_server_t *g_srv = NULL;
+static cbm_test_operation_host_t *g_srv = NULL;
 static char *g_project = NULL;
 
 /* Baseline counts after full index */
@@ -107,7 +107,7 @@ static int reformat_files(const char *subdir, int max_files) {
 static char *index_repo(void) {
     char args[512];
     snprintf(args, sizeof(args), "{\"repo_path\":\"%s\"}", g_repodir);
-    return cbm_mcp_handle_tool(g_srv, "index_repository", args);
+    return cbm_test_operation_execute(g_srv, "index_repository", args);
 }
 
 /* Timed index: returns response, sets *elapsed_ms and *peak_rss_mb */
@@ -125,7 +125,7 @@ static char *call_tool(const char *tool, const char *args_fmt, ...) {
     va_start(ap, args_fmt);
     vsnprintf(args, sizeof(args), args_fmt, ap);
     va_end(ap);
-    return cbm_mcp_handle_tool(g_srv, tool, args);
+    return cbm_test_operation_execute(g_srv, tool, args);
 }
 
 /* Parse integer from a tool response (handles the nested MCP envelope).
@@ -275,7 +275,7 @@ static int incremental_setup(void) {
 
     unlink(g_dbpath);
 
-    g_srv = cbm_mcp_server_new(NULL);
+    g_srv = cbm_test_operation_host_new(NULL);
     if (!g_srv)
         return -1;
 
@@ -286,7 +286,7 @@ static int incremental_setup(void) {
 
 static void incremental_teardown(void) {
     if (g_srv) {
-        cbm_mcp_server_free(g_srv);
+        cbm_test_operation_host_free(g_srv);
         g_srv = NULL;
     }
     if (g_project) {
@@ -933,7 +933,7 @@ static char *call_tool_timed(const char *tool, double *ms, const char *args_fmt,
     vsnprintf(args, sizeof(args), args_fmt, ap);
     va_end(ap);
     double t0 = now_ms();
-    char *resp = cbm_mcp_handle_tool(g_srv, tool, args);
+    char *resp = cbm_test_operation_execute(g_srv, tool, args);
     *ms = now_ms() - t0;
     return resp;
 }

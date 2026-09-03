@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# soak-test.sh — Endurance test for codebase-memory-mcp.
+# soak-test.sh — Endurance test for codebase-memory-cli.
 #
 # Runs compressed workload cycles: queries, file mutations, reindexes, idle periods.
 # Reads the randomized diagnostics path emitted by the daemon (requires
@@ -133,8 +133,8 @@ if [[ "$BINARY" == *.exe ]] && command -v cygpath >/dev/null 2>&1 &&
         rm -rf -- "$SOAK_WIN_ROOT"
         exit 1
     fi
-    cp "$BINARY" "$SOAK_WIN_ROOT/codebase-memory-mcp.exe"
-    BINARY="$SOAK_WIN_ROOT/codebase-memory-mcp.exe"
+    cp "$BINARY" "$SOAK_WIN_ROOT/codebase-memory-cli.exe"
+    BINARY="$SOAK_WIN_ROOT/codebase-memory-cli.exe"
     SOAK_CACHE_DIR_HOST="$SOAK_WIN_ROOT/cache"
     mkdir -p "$SOAK_CACHE_DIR_HOST"
     SOAK_WIN_ROOT_W="$(cygpath -w "$SOAK_WIN_ROOT")"
@@ -633,7 +633,7 @@ print(value)
 ' "$key" 2>/dev/null
 }
 
-# ── Phase 1: Start MCP server with diagnostics ──────────────────
+# ── Phase 1: Start CLI coordination runtime with diagnostics ──────────────────
 
 echo "--- Phase 1: start server ---"
 # Bidirectional pipes: fd3 = server stdin (write), fd4 = server stdout (read)

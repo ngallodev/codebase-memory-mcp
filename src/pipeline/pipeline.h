@@ -341,7 +341,7 @@ const char *cbm_confidence_band(double score);
 
 /* ── Git diff hunks (pass_gitdiff.c) ──────────────────────────────
  * Public (unlike the rest of pipeline_internal.h) because detect_changes
- * (src/mcp/mcp.c) scopes seed detection to changed line ranges, not just
+ * (change-detection operation) scopes seed detection to changed line ranges, not just
  * changed files. */
 
 typedef struct {

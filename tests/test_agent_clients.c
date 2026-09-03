@@ -1,11 +1,9 @@
-/* test_agent_clients.c — Agent-client registry, resolution, and owned MCP edits. */
+/* test_agent_clients.c — Agent-client registry, resolution, and legacy MCP cleanup. */
 #include "test_framework.h"
 #include "test_helpers.h"
 
 #include <cli/agent_clients.h>
-#include <cli/client_adapter.h>
 #include <foundation/constants.h>
-#include <mcp/mcp.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -107,15 +105,6 @@ static char *agent_read(const char *path) {
     return text;
 }
 
-static size_t agent_occurrences(const char *text, const char *needle) {
-    size_t count = 0U;
-    size_t length = strlen(needle);
-    while (length > 0U && (text = strstr(text, needle)) != NULL) {
-        count++;
-        text += length;
-    }
-    return count;
-}
 
 static int agent_write_rovo_override(const char *config_path, const char *mcp_path) {
     size_t length = strlen("mcp:\n  mcpConfigPath: \"\"\n") + strlen(mcp_path) + 1U;
@@ -129,35 +118,7 @@ static int agent_write_rovo_override(const char *config_path, const char *mcp_pa
     return result;
 }
 
-static char *agent_deep_same_name_json(size_t depth) {
-    static const char prefix[] = "{\"mcpServers\":";
-    static const char leaf[] = "{\"codebase-memory-mcp\":{\"command\":\"foreign\",\"args\":[]}}";
-    size_t prefix_length = strlen(prefix);
-    size_t leaf_length = strlen(leaf);
-    if (depth > (SIZE_MAX - leaf_length - 2U) / (prefix_length + 1U)) {
-        return NULL;
-    }
-    size_t capacity = depth * (prefix_length + 1U) + leaf_length + 2U;
-    char *json = (char *)malloc(capacity);
-    if (!json) {
-        return NULL;
-    }
-    char *cursor = json;
-    for (size_t i = 0U; i < depth; i++) {
-        memcpy(cursor, prefix, prefix_length);
-        cursor += prefix_length;
-    }
-    memcpy(cursor, leaf, leaf_length);
-    cursor += leaf_length;
-    for (size_t i = 0U; i < depth; i++) {
-        *cursor++ = '}';
-    }
-    *cursor++ = '\n';
-    *cursor = '\0';
-    return json;
-}
-
-TEST(agent_clients_registry_is_stable_and_callback_driven) {
+TEST(agent_clients_registry_is_stable_and_cleanup_driven) {
     static const char *expected[] = {
         "qoder",     "kimi",        "gitlab-duo",    "rovo-dev", "amp",      "devin",
         "tabnine",   "continue",    "visual-studio", "trae",     "roo-code", "amazon-q",
@@ -198,12 +159,10 @@ TEST(agent_clients_registry_is_stable_and_callback_driven) {
         ASSERT_NOT_NULL(profile->display_name);
         if (profile->id == CBM_AGENT_CLIENT_PI) {
             ASSERT(!(profile->capabilities & CBM_AGENT_CAP_MCP));
-            ASSERT_NULL(profile->install_mcp);
-            ASSERT_NULL(profile->remove_mcp);
+            ASSERT_NULL(profile->remove_legacy_mcp);
         } else {
             ASSERT(profile->capabilities & CBM_AGENT_CAP_MCP);
-            ASSERT_NOT_NULL(profile->install_mcp);
-            ASSERT_NOT_NULL(profile->remove_mcp);
+            ASSERT_NOT_NULL(profile->remove_legacy_mcp);
         }
         ASSERT(cbm_agent_client_by_id(profile->id) == profile);
         ASSERT(cbm_agent_client_by_stable_id(profile->stable_id) == profile);
@@ -226,7 +185,7 @@ TEST(agent_clients_visual_studio_cleanup_survives_missing_command) {
     char *dir = NULL;
     char *path = agent_fixture(foreign, &dir);
     ASSERT_NOT_NULL(path);
-    ASSERT_EQ(cbm_agent_client_remove_mcp(CBM_AGENT_CLIENT_VISUAL_STUDIO, path,
+    ASSERT_EQ(cbm_agent_client_remove_legacy_mcp(CBM_AGENT_CLIENT_VISUAL_STUDIO, path,
                                           "C:/Tools/codebase-memory-mcp.exe"),
               CBM_AGENT_EDIT_FOREIGN);
     char *after = agent_read(path);
@@ -298,12 +257,10 @@ TEST(agent_clients_next_wave_metadata_matches_supported_surfaces) {
     ASSERT(!(pi->capabilities & CBM_AGENT_CAP_MCP));
     ASSERT(pi->capabilities & CBM_AGENT_CAP_INSTRUCTIONS);
     ASSERT(pi->capabilities & CBM_AGENT_CAP_SKILL);
-    ASSERT_NULL(pi->install_mcp);
-    ASSERT_NULL(pi->remove_mcp);
+    ASSERT_NULL(pi->remove_legacy_mcp);
     ASSERT_EQ(cody->stability, CBM_AGENT_OPT_IN);
     ASSERT_EQ(cody->capabilities, CBM_AGENT_CAP_MCP);
-    ASSERT_NOT_NULL(cody->install_mcp);
-    ASSERT_NOT_NULL(cody->remove_mcp);
+    ASSERT_NOT_NULL(cody->remove_legacy_mcp);
     PASS();
 }
 
@@ -616,18 +573,6 @@ TEST(agent_clients_roo_code_requires_an_explicit_existing_config) {
     ASSERT_STR_EQ(resolved, options.roo_config_path);
     ASSERT(cbm_agent_client_detect(CBM_AGENT_CLIENT_ROO_CODE, &options));
 
-    char *dir = NULL;
-    char *path = agent_fixture("{}\n", &dir);
-    ASSERT_NOT_NULL(path);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_ROO_CODE, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_OK);
-    char *installed = agent_read(path);
-    ASSERT_NOT_NULL(installed);
-    ASSERT_NOT_NULL(strstr(installed, "\"mcpServers\""));
-    ASSERT_NULL(strstr(installed, "alwaysAllow"));
-    free(installed);
-    free(path);
-    th_cleanup(dir);
     PASS();
 }
 
@@ -656,21 +601,6 @@ TEST(agent_clients_amazon_q_prefers_current_then_existing_legacy_config) {
               0);
     ASSERT_STR_EQ(resolved, "/home/tester/.aws/amazonq/default.json");
 
-    char *dir = NULL;
-    char *path = agent_fixture("{\"permissions\":{\"keep\":true}}\n", &dir);
-    ASSERT_NOT_NULL(path);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_AMAZON_Q, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_OK);
-    char *installed = agent_read(path);
-    ASSERT_NOT_NULL(installed);
-    ASSERT_NOT_NULL(strstr(installed, "\"mcpServers\""));
-    ASSERT_NOT_NULL(strstr(installed, "\"permissions\":{\"keep\":true}"));
-    ASSERT_EQ(agent_occurrences(installed, "\"permissions\""), 1U);
-    ASSERT_NULL(strstr(installed, "alwaysAllow"));
-    ASSERT_NULL(strstr(installed, "autoApprove"));
-    free(installed);
-    free(path);
-    th_cleanup(dir);
     PASS();
 }
 
@@ -742,17 +672,7 @@ TEST(agent_clients_pi_has_no_mcp_path_or_mutation) {
         1);
     ASSERT(cbm_agent_client_detect(CBM_AGENT_CLIENT_PI, &options));
 
-    const char *original = "{\"keep\":true}\n";
-    char *dir = NULL;
-    char *path = agent_fixture(original, &dir);
-    ASSERT_NOT_NULL(path);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_PI, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_NOT_APPLICABLE);
-    char *after = agent_read(path);
-    ASSERT_STR_EQ(after, original);
-    free(after);
-    free(path);
-    th_cleanup(dir);
+    ASSERT_NULL(cbm_agent_client_by_id(CBM_AGENT_CLIENT_PI)->remove_legacy_mcp);
     PASS();
 }
 
@@ -775,163 +695,6 @@ TEST(agent_clients_cody_is_opt_in_and_requires_explicit_existing_settings) {
               0);
     ASSERT_STR_EQ(resolved, options.cody_config_path);
     ASSERT(cbm_agent_client_detect(CBM_AGENT_CLIENT_SOURCEGRAPH_CODY, &options));
-    PASS();
-}
-
-TEST(agent_clients_cody_uses_literal_dotted_key_without_feature_or_permission_edits) {
-    const char *initial = "{\n  // user policy\n  \"cody.enabled\": false,\n"
-                          "  \"cody.permissions\": {\"trusted\": false},\n"
-                          "  \"cody.experimental.agent\": false\n}\n";
-    char *dir = NULL;
-    char *path = agent_fixture(initial, &dir);
-    ASSERT_NOT_NULL(path);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_SOURCEGRAPH_CODY, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_OK);
-    char *installed = agent_read(path);
-    ASSERT_NOT_NULL(installed);
-    ASSERT_NOT_NULL(strstr(installed, "\"cody.mcpServers\""));
-    ASSERT_EQ(agent_occurrences(installed, "\"mcpServers\""), 0U);
-    ASSERT_NOT_NULL(strstr(installed, "\"cody.enabled\": false"));
-    ASSERT_NOT_NULL(strstr(installed, "\"cody.permissions\": {\"trusted\": false}"));
-    ASSERT_NOT_NULL(strstr(installed, "\"cody.experimental.agent\": false"));
-    ASSERT_EQ(agent_occurrences(installed, "\"cody.enabled\""), 1U);
-    ASSERT_EQ(agent_occurrences(installed, "\"cody.permissions\""), 1U);
-    ASSERT_EQ(agent_occurrences(installed, "\"cody.experimental.agent\""), 1U);
-    ASSERT_NULL(strstr(installed, "alwaysAllow"));
-    ASSERT_NULL(strstr(installed, "autoApprove"));
-    free(installed);
-
-    const char *foreign = "{\"cody.mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"foreign\","
-                          "\"args\":[]}},\"cody.enabled\":false}\n";
-    ASSERT_EQ(th_write_file(path, foreign), 0);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_SOURCEGRAPH_CODY, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_FOREIGN);
-    char *after = agent_read(path);
-    ASSERT_STR_EQ(after, foreign);
-    free(after);
-    free(path);
-    th_cleanup(dir);
-    PASS();
-}
-
-TEST(agent_clients_json_schemas_are_exact_and_policy_neutral) {
-    static const struct {
-        cbm_agent_client_id_t id;
-        const char *required;
-    } cases[] = {
-        {CBM_AGENT_CLIENT_QODER, "\"mcpServers\""},
-        {CBM_AGENT_CLIENT_KIMI, "\"mcpServers\""},
-        {CBM_AGENT_CLIENT_GITLAB_DUO, "\"type\": \"stdio\""},
-        {CBM_AGENT_CLIENT_ROVO_DEV, "\"transport\": \"stdio\""},
-        {CBM_AGENT_CLIENT_AMP, "\"codebase-memory-mcp\""},
-        {CBM_AGENT_CLIENT_DEVIN, "\"mcpServers\""},
-        {CBM_AGENT_CLIENT_TABNINE, "\"mcpServers\""},
-        {CBM_AGENT_CLIENT_VISUAL_STUDIO, "\"servers\""},
-        {CBM_AGENT_CLIENT_TRAE, "\"mcpServers\""},
-        {CBM_AGENT_CLIENT_CODEBUDDY, "\"mcpServers\""},
-        {CBM_AGENT_CLIENT_IBM_BOB_IDE, "\"mcpServers\""},
-        {CBM_AGENT_CLIENT_IBM_BOB_SHELL, "\"mcpServers\""},
-        {CBM_AGENT_CLIENT_POCHI, "\"mcp\""},
-        {CBM_AGENT_CLIENT_OMP, "\"type\": \"stdio\""},
-    };
-    const char *binary = "/opt/Codebase Memory/bin/cbm\\\"special";
-    for (size_t i = 0U; i < sizeof(cases) / sizeof(cases[0]); i++) {
-        char *dir = NULL;
-        char *path = agent_fixture("{\n  // user-owned\n  \"keep\": true,\n}\n", &dir);
-        ASSERT_NOT_NULL(path);
-        ASSERT_EQ(cbm_agent_client_install_mcp(cases[i].id, path, binary), CBM_AGENT_EDIT_OK);
-        char *first = agent_read(path);
-        ASSERT_NOT_NULL(first);
-        ASSERT_NOT_NULL(strstr(first, cases[i].required));
-        ASSERT_NOT_NULL(strstr(first, "\"command\""));
-        ASSERT_NOT_NULL(strstr(first, "\"args\": []"));
-        ASSERT_NULL(strstr(first, "approvedTools"));
-        ASSERT_NULL(strstr(first, "allowedTools"));
-        ASSERT_NULL(strstr(first, "enable_instructions"));
-        ASSERT_NULL(strstr(first, "autoApprove"));
-        ASSERT_NULL(strstr(first, "alwaysAllow"));
-        ASSERT_NULL(strstr(first, "allowlist"));
-        ASSERT_NULL(strstr(first, "permissions"));
-        ASSERT_EQ(cbm_agent_client_install_mcp(cases[i].id, path, binary), CBM_AGENT_EDIT_OK);
-        char *second = agent_read(path);
-        ASSERT_NOT_NULL(second);
-        ASSERT_STR_EQ(first, second);
-        free(first);
-        free(second);
-        free(path);
-        th_cleanup(dir);
-    }
-    PASS();
-}
-
-TEST(agent_clients_new_standard_json_profiles_preserve_foreign_entries) {
-    static const cbm_agent_client_id_t clients[] = {
-        CBM_AGENT_CLIENT_CODEBUDDY,
-        CBM_AGENT_CLIENT_IBM_BOB_IDE,
-        CBM_AGENT_CLIENT_IBM_BOB_SHELL,
-        CBM_AGENT_CLIENT_POCHI,
-        CBM_AGENT_CLIENT_OMP,
-    };
-    for (size_t i = 0U; i < sizeof(clients) / sizeof(clients[0]); i++) {
-        const char *foreign =
-            clients[i] == CBM_AGENT_CLIENT_POCHI
-                ? "{\"mcp\":{\"codebase-memory-mcp\":{\"command\":\"foreign\","
-                  "\"args\":[]}}}\n"
-                : "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"foreign\","
-                  "\"args\":[]}}}\n";
-        char *dir = NULL;
-        char *path = agent_fixture(foreign, &dir);
-        ASSERT_NOT_NULL(path);
-        ASSERT_EQ(cbm_agent_client_install_mcp(clients[i], path, "/usr/bin/cbm"),
-                  CBM_AGENT_EDIT_FOREIGN);
-        char *after = agent_read(path);
-        ASSERT_NOT_NULL(after);
-        ASSERT_STR_EQ(after, foreign);
-        free(after);
-        free(path);
-        th_cleanup(dir);
-    }
-    PASS();
-}
-
-TEST(agent_clients_refuse_foreign_and_preserve_modified_entries) {
-    const char *foreign =
-        "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"foreign\",\"args\":[]}}}\n";
-    char *dir = NULL;
-    char *path = agent_fixture(foreign, &dir);
-    ASSERT_NOT_NULL(path);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_QODER, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_FOREIGN);
-    char *after = agent_read(path);
-    ASSERT_STR_EQ(after, foreign);
-    free(after);
-
-    const char *escaped_foreign =
-        "{mcpServers:{\"codebase\\u002dmemory-mcp\":{command:'foreign',args:[]}}}\n";
-    ASSERT_EQ(th_write_file(path, escaped_foreign), 0);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_QODER, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_FOREIGN);
-    after = agent_read(path);
-    ASSERT_STR_EQ(after, escaped_foreign);
-    free(after);
-
-    ASSERT_EQ(th_write_file(path, "{}\n"), 0);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_QODER, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_OK);
-    char *canonical = agent_read(path);
-    ASSERT_NOT_NULL(canonical);
-    char *command = strstr(canonical, "/usr/bin/cbm");
-    ASSERT_NOT_NULL(command);
-    command[0] = 'X';
-    ASSERT_EQ(th_write_file(path, canonical), 0);
-    ASSERT_EQ(cbm_agent_client_remove_mcp(CBM_AGENT_CLIENT_QODER, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_FOREIGN);
-    after = agent_read(path);
-    ASSERT_STR_EQ(after, canonical);
-    free(after);
-    free(canonical);
-    free(path);
-    th_cleanup(dir);
     PASS();
 }
 
@@ -975,139 +738,27 @@ TEST(agent_clients_omp_profile_does_not_register_global_instructions_capability)
 
 
 TEST(agent_clients_remove_only_canonical_and_missing_is_noop) {
+    const char *canonical =
+        "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"/usr/bin/cbm\",\"args\":[]}},\"keep\":true}\n";
     char *dir = NULL;
-    char *path = agent_fixture("{\"keep\":true}\n", &dir);
+    char *path = agent_fixture(canonical, &dir);
     ASSERT_NOT_NULL(path);
-    ASSERT_EQ(cbm_agent_client_remove_mcp(CBM_AGENT_CLIENT_GITLAB_DUO, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_OK);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_GITLAB_DUO, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_OK);
-    ASSERT_EQ(cbm_agent_client_remove_mcp(CBM_AGENT_CLIENT_GITLAB_DUO, path, "/usr/bin/cbm"),
+    ASSERT_EQ(cbm_agent_client_remove_legacy_mcp(CBM_AGENT_CLIENT_GITLAB_DUO, path,
+                                                 "/usr/bin/cbm"),
               CBM_AGENT_EDIT_OK);
     char *after = agent_read(path);
     ASSERT_NOT_NULL(after);
     ASSERT_NULL(strstr(after, "codebase-memory-mcp"));
     ASSERT_NOT_NULL(strstr(after, "\"keep\":true"));
     free(after);
-    free(path);
-    th_cleanup(dir);
-    PASS();
-}
-
-TEST(agent_clients_registry_callbacks_apply_the_selected_schema) {
-    char *dir = NULL;
-    char *path = agent_fixture("{}\n", &dir);
-    ASSERT_NOT_NULL(path);
-    const cbm_agent_client_profile_t *profile =
-        cbm_agent_client_by_id(CBM_AGENT_CLIENT_VISUAL_STUDIO);
-    ASSERT_NOT_NULL(profile);
-    ASSERT_EQ(profile->install_mcp(profile->id, path, "C:/Tools/cbm.exe"), CBM_AGENT_EDIT_OK);
-    char *installed = agent_read(path);
-    ASSERT_NOT_NULL(installed);
-    ASSERT_NOT_NULL(strstr(installed, "\"servers\""));
-    ASSERT_NOT_NULL(strstr(installed, "\"type\": \"stdio\""));
-    free(installed);
-    ASSERT_EQ(profile->remove_mcp(profile->id, path, "C:/Tools/cbm.exe"), CBM_AGENT_EDIT_OK);
-    free(path);
-    th_cleanup(dir);
-    PASS();
-}
-
-TEST(agent_clients_malformed_json_fails_byte_identically) {
-    const char *malformed = "{\"mcpServers\": [}\n";
-    char *dir = NULL;
-    char *path = agent_fixture(malformed, &dir);
-    ASSERT_NOT_NULL(path);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_TABNINE, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_ERROR);
-    char *after = agent_read(path);
-    ASSERT_STR_EQ(after, malformed);
-    free(after);
-    free(path);
-    th_cleanup(dir);
-    PASS();
-}
-
-TEST(agent_clients_deep_same_name_json_fails_closed_byte_identically) {
-    char *deep = agent_deep_same_name_json(256U);
-    ASSERT_NOT_NULL(deep);
-    char *dir = NULL;
-    char *path = agent_fixture(deep, &dir);
-    ASSERT_NOT_NULL(path);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_QODER, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_ERROR);
-    char *after_install = agent_read(path);
-    ASSERT_NOT_NULL(after_install);
-    ASSERT_STR_EQ(after_install, deep);
-    free(after_install);
-
-    ASSERT_EQ(cbm_agent_client_remove_mcp(CBM_AGENT_CLIENT_QODER, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_ERROR);
-    char *after_remove = agent_read(path);
-    ASSERT_NOT_NULL(after_remove);
-    ASSERT_STR_EQ(after_remove, deep);
-    free(after_remove);
-    free(path);
-    th_cleanup(dir);
-    free(deep);
-    PASS();
-}
-
-TEST(agent_clients_continue_uses_owned_yaml_sequence_item) {
-    const char *initial = "name: Local\nmcpServers:\n  - name: other\n    command: other\n";
-    char *dir = NULL;
-    char *path = agent_fixture(initial, &dir);
-    ASSERT_NOT_NULL(path);
-    ASSERT_EQ(
-        cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_CONTINUE, path, "/opt/cbm path/#quoted"),
-        CBM_AGENT_EDIT_OK);
-    char *first = agent_read(path);
-    ASSERT_NOT_NULL(first);
-    ASSERT_NOT_NULL(strstr(first, "  - name: codebase-memory-mcp\n"));
-    ASSERT_NOT_NULL(strstr(first, "    command: \"/opt/cbm path/#quoted\"\n"));
-    ASSERT_NOT_NULL(strstr(first, "  - name: other\n"));
-    ASSERT_EQ(agent_occurrences(first, "name: codebase-memory-mcp"), 1U);
-    ASSERT_EQ(
-        cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_CONTINUE, path, "/opt/cbm path/#quoted"),
-        CBM_AGENT_EDIT_OK);
-    char *second = agent_read(path);
-    ASSERT_STR_EQ(first, second);
-    ASSERT_EQ(cbm_agent_client_remove_mcp(CBM_AGENT_CLIENT_CONTINUE, path, "/opt/cbm path/#quoted"),
+    ASSERT_EQ(cbm_agent_client_remove_legacy_mcp(CBM_AGENT_CLIENT_GITLAB_DUO, path,
+                                                 "/usr/bin/cbm"),
               CBM_AGENT_EDIT_OK);
-    char *removed = agent_read(path);
-    ASSERT_NULL(strstr(removed, "name: codebase-memory-mcp"));
-    ASSERT_NOT_NULL(strstr(removed, "name: other"));
-    free(first);
-    free(second);
-    free(removed);
     free(path);
     th_cleanup(dir);
     PASS();
 }
 
-TEST(agent_clients_continue_refuses_foreign_same_name_and_nonsequence_section) {
-    const char *foreign = "mcpServers:\n  - name: \"codebase-memory-mcp\"\n"
-                          "    command: foreign\n    args: []\n";
-    char *dir = NULL;
-    char *path = agent_fixture(foreign, &dir);
-    ASSERT_NOT_NULL(path);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_CONTINUE, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_FOREIGN);
-    char *after = agent_read(path);
-    ASSERT_STR_EQ(after, foreign);
-    free(after);
-
-    const char *wrong_shape = "mcpServers: []\nkeep: true\n";
-    ASSERT_EQ(th_write_file(path, wrong_shape), 0);
-    ASSERT_EQ(cbm_agent_client_install_mcp(CBM_AGENT_CLIENT_CONTINUE, path, "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_ERROR);
-    after = agent_read(path);
-    ASSERT_STR_EQ(after, wrong_shape);
-    free(after);
-    free(path);
-    th_cleanup(dir);
-    PASS();
-}
 
 /* ── Generated client adapters ──────────────────────────────────── */
 
@@ -1115,215 +766,8 @@ TEST(agent_clients_continue_refuses_foreign_same_name_and_nonsequence_section) {
  * of the tool surface. #534 shipped one mirroring 7 of 15 tools; every tool
  * added afterwards would have been silently missing for that client. This pins
  * the property that makes generation worth doing: EVERY registry tool appears. */
-TEST(client_adapter_pi_registers_every_registry_tool) {
-    char *js = cbm_client_adapter_pi("/usr/local/bin/codebase-memory-mcp");
-    ASSERT_NOT_NULL(js);
-
-    int count = cbm_mcp_tool_count();
-    ASSERT_GT(count, 0);
-    for (int i = 0; i < count; i++) {
-        const char *name = cbm_mcp_tool_name(i);
-        ASSERT_NOT_NULL(name);
-        char needle[128];
-        snprintf(needle, sizeof(needle), "name: '%s'", name);
-        /* A missing tool here means the adapter drifted from the registry —
-         * exactly the failure this design removes. */
-        ASSERT_NOT_NULL(strstr(js, needle));
-    }
-    /* The body must NOT carry the ownership markers: cbm_text_upsert_managed_block
-     * adds them and rejects content that already has them, so emitting them here
-     * would make every install fail. */
-    ASSERT_NULL(strstr(js, CBM_ADAPTER_MARKER_START));
-    ASSERT_NULL(strstr(js, CBM_ADAPTER_MARKER_END));
-    ASSERT_NOT_NULL(strstr(js, "Generated by codebase-memory-mcp"));
-    free(js);
-    PASS();
-}
-
-/* #1550: Pi loads an extension by calling its DEFAULT export as a factory. The
- * generator emitted a named `register` export instead, so the file failed to
- * load — and a Pi extension that fails to load takes every pi command with it
- * (`pi doctor` included), not just cbm's tools. The blast radius is why this is
- * pinned rather than left to the registry-drift test above, which passed the
- * whole time this was broken: it checked WHICH tools were listed, never whether
- * the file Pi loads is loadable. */
-TEST(client_adapter_pi_default_exports_its_factory_issue1550) {
-    char *js = cbm_client_adapter_pi("/usr/local/bin/codebase-memory-mcp");
-    ASSERT_NOT_NULL(js);
-    ASSERT_NOT_NULL(strstr(js, "export default function (pi)"));
-    /* The old shape must be gone: a bare `export function register(pi)` is the
-     * exact form Pi rejects. */
-    ASSERT_NULL(strstr(js, "export function register(pi)"));
-    free(js);
-    PASS();
-}
-
-/* Pi's ToolDefinition requires `parameters` and `execute`. The adapter used to
- * emit `{ name, run }`, which Pi accepted but treated as a tool with no
- * parameter schema — strict providers (xAI/Grok) then reject the request with
- * a 422 "missing field parameters", and the tool is uncallable because Pi
- * invokes `execute`, never `run`. Pin the corrected shape. */
-TEST(client_adapter_pi_emits_parameters_and_execute) {
-    char *js = cbm_client_adapter_pi("/usr/local/bin/codebase-memory-mcp");
-    ASSERT_NOT_NULL(js);
-    ASSERT_NOT_NULL(strstr(js, "execute: async (toolCallId, params, signal, _onUpdate, ctx) => {"));
-    ASSERT_NOT_NULL(strstr(js, ", params, signal ?? ctx?.signal)"));
-    ASSERT_NULL(strstr(js, "execute: async (args, ctx) => {"));
-    ASSERT_NULL(strstr(js, ", args, ctx?.signal)"));
-    ASSERT_NOT_NULL(strstr(js, "@earendil-works/pi-coding-agent"));
-    ASSERT_NOT_NULL(strstr(js, "result.content"));
-    ASSERT_NULL(strstr(js, "run: (args, ctx)"));
-    ASSERT_NOT_NULL(strstr(js, "parameters:"));
-    /* The registry input_schema is embedded as a JSON object literal. */
-    ASSERT_NOT_NULL(strstr(js, "\"type\":\"object\""));
-    /* Raw JSON output is required so the bridge can parse the MCP result; the
-     * human-readable path would leave `call` with nothing to JSON.parse. */
-    ASSERT_NOT_NULL(strstr(js, "'cli', '--json'"));
-    free(js);
-    PASS();
-}
-
-/* #1834: raw JSON in argv selects the deprecated compatibility path. The Pi
- * bridge must keep arguments out of process listings and feed the existing
- * stdin transport only after all child handlers are attached. */
-TEST(client_adapter_pi_sends_arguments_over_stdin_issue1834) {
-    char *js = cbm_client_adapter_pi("/usr/local/bin/codebase-memory-mcp");
-    ASSERT_NOT_NULL(js);
-
-    const char *spawn = strstr(js, "spawn(BIN, ['cli', '--json', tool], {");
-    const char *stdio = strstr(js, "stdio: ['pipe', 'pipe', 'pipe']");
-    const char *stdout_handler = strstr(js, "child.stdout.on('data'");
-    const char *stdin_error_handler = strstr(js, "child.stdin.on('error'");
-    const char *error_handler = strstr(js, "child.on('error'");
-    const char *close_handler = strstr(js, "child.on('close'");
-    const char *stdin_end = strstr(js, "child.stdin.end(JSON.stringify(args ?? {}));");
-
-    ASSERT_NOT_NULL(spawn);
-    ASSERT_NOT_NULL(stdio);
-    ASSERT_NOT_NULL(stdout_handler);
-    ASSERT_NOT_NULL(stdin_error_handler);
-    ASSERT_NOT_NULL(error_handler);
-    ASSERT_NOT_NULL(close_handler);
-    ASSERT_NOT_NULL(stdin_end);
-    ASSERT(stdout_handler < stdin_end);
-    ASSERT(stdin_error_handler < stdin_end);
-    ASSERT(error_handler < stdin_end);
-    ASSERT(close_handler < stdin_end);
-    ASSERT_NOT_NULL(strstr(js, "let stdinError;"));
-    ASSERT_NOT_NULL(strstr(js, "stdinError = e;"));
-    ASSERT_NOT_NULL(strstr(js, "if (stdinError)"));
-
-    /* These are the exact deprecated transport shapes being retired. */
-    ASSERT_NULL(strstr(js, "tool, JSON.stringify(args ?? {})]"));
-    ASSERT_NULL(strstr(js, "stdio: ['ignore', 'pipe', 'pipe']"));
-
-    free(js);
-    PASS();
-}
-
-/* Result wrap + abort: Pi's TUI reads result.content; a spawn/parse failure
- * must throw rather than return a result without content; AbortSignal must
- * kill the cli child. String-shape only; a live Pi process is not gated. */
-TEST(client_adapter_pi_wraps_result_and_honors_abort) {
-    char *js = cbm_client_adapter_pi("/usr/local/bin/codebase-memory-mcp");
-    ASSERT_NOT_NULL(js);
-    ASSERT_NOT_NULL(strstr(js, "return { content, details: result ?? {} };"));
-    ASSERT_NOT_NULL(strstr(js, "if (result && typeof result === 'object' && result.error)"));
-    ASSERT_NOT_NULL(strstr(js, "throw new Error(String(result.error));"));
-    ASSERT_NOT_NULL(strstr(js, "Array.isArray(result.content)"));
-    ASSERT_NOT_NULL(
-        strstr(js, "[{ type: 'text', text: JSON.stringify(result ?? null, null, 2) }]"));
-    ASSERT_NOT_NULL(strstr(js, "signal?.addEventListener('abort', onAbort, { once: true })"));
-    ASSERT_NOT_NULL(strstr(js, "if (!child.killed) child.kill();"));
-    free(js);
-    PASS();
-}
-
-/* #616 rejected `"` in its path template but not `\`, so a Windows home like
- * C:\Users\urs\bin produced `\u` — an invalid unicode escape — and the whole
- * auto-loaded plugin failed to parse. A broken plugin in an auto-load directory
- * is worse than an absent one, so the escaping gets direct coverage. */
-TEST(client_adapter_escapes_windows_paths_and_quotes) {
-    char out[256];
-
-    ASSERT_TRUE(cbm_client_adapter_escape_js("C:\\Users\\urs\\bin\\cbm.exe", out, sizeof(out)));
-    ASSERT_STR_EQ(out, "C:\\\\Users\\\\urs\\\\bin\\\\cbm.exe");
-    /* The backslash before "urs" is DOUBLED, which is what stops JS reading
-     * `\u` as a unicode escape — the exact break in #616. Asserting the
-     * doubled form is the property; a bare `\u` substring still appears (as
-     * escaped-backslash + 'u') and would be a misleading thing to test. */
-    ASSERT_NOT_NULL(strstr(out, "\\\\urs"));
-
-    ASSERT_TRUE(cbm_client_adapter_escape_js("/home/o'brien/bin/cbm", out, sizeof(out)));
-    ASSERT_STR_EQ(out, "/home/o\\'brien/bin/cbm");
-
-    /* A newline would terminate the literal outright. */
-    ASSERT_TRUE(cbm_client_adapter_escape_js("/tmp/a\nb", out, sizeof(out)));
-    ASSERT_STR_EQ(out, "/tmp/a\\nb");
-
-    /* Truncation must fail closed rather than emit half a literal. */
-    char tiny[4];
-    ASSERT_FALSE(cbm_client_adapter_escape_js("C:\\Users", tiny, sizeof(tiny)));
-    ASSERT_STR_EQ(tiny, "");
-
-    /* And a path that cannot be escaped must abort generation, not produce a
-     * module with a corrupt BIN. */
-    char huge[CBM_SZ_2K];
-    memset(huge, 'x', sizeof(huge) - 1);
-    huge[sizeof(huge) - 1] = '\0';
-    ASSERT_NULL(cbm_client_adapter_pi(huge));
-    PASS();
-}
-
-/* hook-augment requires hook_event_name and accepts Grep/Glob only under
- * PreToolUse. #616's payload omitted it, so the plugin produced zero bytes and
- * was a silent no-op for six weeks. Pin the field into the generated payload. */
-TEST(client_adapter_opencode_sends_the_required_hook_event) {
-    char *js = cbm_client_adapter_opencode("/usr/local/bin/codebase-memory-mcp");
-    ASSERT_NOT_NULL(js);
-    ASSERT_NOT_NULL(strstr(js, "hook_event_name: 'PreToolUse'"));
-    ASSERT_NOT_NULL(strstr(js, "tool.execute.after"));
-    /* OpenCode reaches the tools over MCP already; this adapter must not
-     * register any, or we reintroduce the second tool surface. */
-    ASSERT_NULL(strstr(js, "registerTool"));
-    ASSERT_NULL(strstr(js, CBM_ADAPTER_MARKER_START));
-    free(js);
-    PASS();
-}
-
-/* The richer OpenCode adapter carries every context surface the plugin API
- * documents: session-start tier routing on the first tool result of each
- * session, post-read coverage notes, and post-compaction reinjection through
- * the documented experimental surface. It must unwrap hook-augment's Claude
- * JSON envelope so plain text — not raw JSON — reaches the model. */
-TEST(client_adapter_opencode_covers_lifecycle_read_and_compaction) {
-    char *js = cbm_client_adapter_opencode("/usr/local/bin/codebase-memory-mcp");
-    ASSERT_NOT_NULL(js);
-    ASSERT_NOT_NULL(strstr(js, "hook_event_name: 'SessionStart'"));
-    ASSERT_NOT_NULL(strstr(js, "hook_event_name: 'PostToolUse'"));
-    ASSERT_NOT_NULL(strstr(js, "tool_name: 'Read'"));
-    ASSERT_NOT_NULL(strstr(js, "'experimental.session.compacting'"));
-    ASSERT_NOT_NULL(strstr(js, "additionalContext"));
-    /* file_path is the key hook-augment's default dialect reads; OpenCode's
-     * read tool argues filePath, so the adapter must map it. */
-    ASSERT_NOT_NULL(strstr(js, "file_path: filePath"));
-    /* Session context may only be injected once per session id. */
-    ASSERT_NOT_NULL(strstr(js, "seen.has(sid)"));
-    free(js);
-    PASS();
-}
-
-/* Empty/NULL inputs must not produce a module at all. */
-TEST(client_adapter_rejects_missing_binary_path) {
-    ASSERT_NULL(cbm_client_adapter_pi(NULL));
-    ASSERT_NULL(cbm_client_adapter_pi(""));
-    ASSERT_NULL(cbm_client_adapter_opencode(NULL));
-    ASSERT_NULL(cbm_client_adapter_opencode(""));
-    PASS();
-}
-
 SUITE(agent_clients) {
-    RUN_TEST(agent_clients_registry_is_stable_and_callback_driven);
+    RUN_TEST(agent_clients_registry_is_stable_and_cleanup_driven);
     RUN_TEST(agent_clients_next_wave_metadata_matches_supported_surfaces);
     RUN_TEST(agent_clients_resolve_documented_paths_and_precedence);
     RUN_TEST(agent_clients_resolve_rovo_override_and_conditional_paths);
@@ -1339,25 +783,7 @@ SUITE(agent_clients) {
     RUN_TEST(agent_clients_codebuddy_bob_and_pochi_use_documented_global_paths);
     RUN_TEST(agent_clients_pi_has_no_mcp_path_or_mutation);
     RUN_TEST(agent_clients_cody_is_opt_in_and_requires_explicit_existing_settings);
-    RUN_TEST(agent_clients_cody_uses_literal_dotted_key_without_feature_or_permission_edits);
-    RUN_TEST(agent_clients_json_schemas_are_exact_and_policy_neutral);
-    RUN_TEST(agent_clients_new_standard_json_profiles_preserve_foreign_entries);
-    RUN_TEST(agent_clients_refuse_foreign_and_preserve_modified_entries);
     RUN_TEST(agent_clients_omp_resolves_to_injected_agent_dir_when_provided);
     RUN_TEST(agent_clients_omp_profile_does_not_register_global_instructions_capability);
     RUN_TEST(agent_clients_remove_only_canonical_and_missing_is_noop);
-    RUN_TEST(agent_clients_registry_callbacks_apply_the_selected_schema);
-    RUN_TEST(agent_clients_malformed_json_fails_byte_identically);
-    RUN_TEST(agent_clients_deep_same_name_json_fails_closed_byte_identically);
-    RUN_TEST(agent_clients_continue_uses_owned_yaml_sequence_item);
-    RUN_TEST(agent_clients_continue_refuses_foreign_same_name_and_nonsequence_section);
-    RUN_TEST(client_adapter_pi_registers_every_registry_tool);
-    RUN_TEST(client_adapter_pi_default_exports_its_factory_issue1550);
-    RUN_TEST(client_adapter_pi_emits_parameters_and_execute);
-    RUN_TEST(client_adapter_pi_sends_arguments_over_stdin_issue1834);
-    RUN_TEST(client_adapter_pi_wraps_result_and_honors_abort);
-    RUN_TEST(client_adapter_escapes_windows_paths_and_quotes);
-    RUN_TEST(client_adapter_opencode_sends_the_required_hook_event);
-    RUN_TEST(client_adapter_opencode_covers_lifecycle_read_and_compaction);
-    RUN_TEST(client_adapter_rejects_missing_binary_path);
 }

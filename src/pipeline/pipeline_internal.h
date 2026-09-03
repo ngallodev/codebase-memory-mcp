@@ -315,7 +315,7 @@ typedef struct {
 } cbm_changed_file_t;
 
 /* cbm_changed_hunk_t + cbm_parse_hunks moved to pipeline.h (public — consumed
- * by src/mcp/mcp.c's detect_changes for line-scoped seed detection). Visible
+ * by the change-detection operation for line-scoped seed detection). Visible
  * here via the `#include "pipeline/pipeline.h"` above. */
 
 /* Parse git diff --name-status output. Returns count written to out. */

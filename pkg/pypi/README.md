@@ -1,36 +1,44 @@
-# codebase-memory-mcp
+# codebase-memory-cli
 
-mcp-name: io.github.DeusData/codebase-memory-mcp
+`codebase-memory-cli` is the Python distribution wrapper for Codebase Memory, a local CLI-first code-intelligence application designed for coding agents and humans.
 
-**Fast code intelligence engine for AI coding agents.** Indexes an average repository in milliseconds, the Linux kernel (28M LOC) in 3 minutes. Answers structural queries in under 1ms.
-
-This Python wrapper downloads the selected `codebase-memory-mcp` runtime set from [GitHub Releases](https://github.com/DeusData/codebase-memory-mcp/releases) on first run and verifies it before publishing it in your OS cache directory. The set contains the native executable and authenticated integration asset, with the graph UI always embedded.
+The wrapper downloads and verifies the native runtime set for the current platform and exposes the `codebase-memory-cli` executable.
 
 ## Installation
 
 ```bash
-pip install codebase-memory-mcp
+pip install codebase-memory-cli
 # or
-pipx install codebase-memory-mcp
+pipx install codebase-memory-cli
 ```
 
-There is one composition per platform: the graph UI ships in every build, so no variant selection is needed.
-
-## Usage
+## Quick start
 
 ```bash
-codebase-memory-mcp install   # configure your coding agents
-codebase-memory-mcp --help
+codebase-memory-cli index .
+codebase-memory-cli status
+codebase-memory-cli search "ClaimValidator"
+codebase-memory-cli --help
 ```
+
+Use `--json` on supported commands for stable machine-readable output. Operational failures return a non-zero exit status.
+
+Agent integrations can be installed separately with:
+
+```bash
+codebase-memory-cli install --skip-binary
+```
+
+New installs do not create MCP server registrations.
 
 ## Supported platforms
 
-| OS      | Architecture |
-|---------|-------------|
-| macOS   | arm64, amd64 |
-| Linux   | arm64, amd64 |
+| OS | Architecture |
+|---|---|
+| macOS | arm64, amd64 |
+| Linux | arm64, amd64 |
 | Windows | arm64, amd64 |
 
-## Full documentation
+## Documentation
 
-See [github.com/DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)
+The source repository and full documentation remain at https://github.com/DeusData/codebase-memory-mcp.

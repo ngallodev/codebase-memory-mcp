@@ -1,0 +1,30 @@
+PackageIdentifier: DeusData.CodebaseMemoryCli
+PackageVersion: 0.8.1
+PackageLocale: en-US
+Publisher: DeusData
+PublisherUrl: https://github.com/DeusData
+PublisherSupportUrl: https://github.com/DeusData/codebase-memory-mcp/issues
+PackageName: codebase-memory-cli
+PackageUrl: https://github.com/DeusData/codebase-memory-mcp
+License: MIT
+LicenseUrl: https://github.com/DeusData/codebase-memory-mcp/blob/main/LICENSE
+ShortDescription: Fast code intelligence engine for AI coding agents
+Description: |-
+  codebase-memory-cli is a CLI-first native code-intelligence application
+  distributed as a verified runtime set. It builds and queries a persistent local
+  structural index for repository search, source retrieval, call tracing, coverage,
+  architecture, and related code-intelligence workflows. It is designed for direct
+  shell use and coding-agent runners and does not expose a supported MCP stdio server.
+Moniker: codebase-memory-cli
+Tags:
+  - cli
+  - agent
+  - ai
+  - claude
+  - code-intelligence
+  - codebase
+  - developer-tools
+  - tree-sitter
+ReleaseNotesUrl: https://github.com/DeusData/codebase-memory-mcp/releases/tag/v0.8.1
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

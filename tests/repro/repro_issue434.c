@@ -73,7 +73,7 @@ TEST(repro_issue434_persistence_honored_on_first_create) {
     /* Set up a minimal fixture repo with one C file so the pipeline has
      * something to index.  We go through the MCP index_repository tool
      * (the production path) so the persistence flag travels through
-     * cbm_mcp_get_bool_arg -> cbm_pipeline_set_persistence -> the pipeline. */
+     * JSON argument parsing -> cbm_pipeline_set_persistence -> the pipeline. */
     RProj lp;
     memset(&lp, 0, sizeof(lp));
 
@@ -103,13 +103,13 @@ TEST(repro_issue434_persistence_honored_on_first_create) {
 
     /* Create an MCP server and run index_repository with persistence=true.
      * This is the exact production code path that Cursor/VSCode calls. */
-    lp.srv = cbm_mcp_server_new(NULL);
+    lp.srv = cbm_test_operation_host_new(NULL);
     if (!lp.srv) {
         th_rmtree(lp.tmpdir);
-        FAIL("cbm_mcp_server_new failed");
+        FAIL("cbm_test_operation_host_new failed");
     }
 
-    char *resp = cbm_mcp_handle_tool(lp.srv, "index_repository", args);
+    char *resp = cbm_test_operation_execute(lp.srv, "index_repository", args);
     if (resp)
         free(resp);
 
@@ -133,7 +133,7 @@ TEST(repro_issue434_persistence_honored_on_first_create) {
 
     /* Cleanup before asserting so temp files are always removed */
     if (lp.srv) {
-        cbm_mcp_server_free(lp.srv);
+        cbm_test_operation_host_free(lp.srv);
         lp.srv = NULL;
     }
 

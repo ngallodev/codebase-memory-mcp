@@ -55,7 +55,7 @@
  *      "> 5 rows" check (only 1 row) but trips the bad_root_path check in
  *      cbm_store_check_integrity() because '8' is not '/', 'A'-'Z', or 'a'-'z'.
  *   4. Close the store, verify the DB file exists (precondition).
- *   5. Call cbm_mcp_handle_tool(srv, "search_graph", ...) with the project
+ *   5. Call cbm_test_operation_execute(srv, "search_graph", ...) with the project
  *      name.  search_graph resolves the project store via resolve_store(),
  *      which opens the DB, runs the integrity check, detects bad_root_path,
  *      and executes the destroying cbm_unlink() at mcp.c:803.
@@ -78,7 +78,7 @@
 #include "test_framework.h"
 
 #include <store/store.h>
-#include <mcp/mcp.h>
+#include "test_operation_host.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -280,7 +280,7 @@ TEST(repro_issue557_corrupt_db_not_silently_deleted) {
      */
     ASSERT_TRUE(file_exists(db_path)); /* precondition: DB must exist now */
 
-    /* ── Step 6: drive resolve_store() via cbm_mcp_handle_tool ────────
+    /* ── Step 6: drive resolve_store() via cbm_test_operation_execute ────────
      *
      * search_graph is the lightest query tool that reaches resolve_store().
      * The tool handler calls resolve_store(srv, project) which:
@@ -295,7 +295,7 @@ TEST(repro_issue557_corrupt_db_not_silently_deleted) {
      * response is irrelevant (it will be an error about the project not
      * being found).  What matters is the side-effect on db_path.
      */
-    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    cbm_test_operation_host_t *srv = cbm_test_operation_host_new(NULL);
     ASSERT_NOT_NULL(srv); /* precondition: server must initialise */
 
     char args[512];
@@ -305,13 +305,13 @@ TEST(repro_issue557_corrupt_db_not_silently_deleted) {
              "\"limit\":1}",
              REPRO557_PROJECT);
 
-    char *resp = cbm_mcp_handle_tool(srv, "search_graph", args);
+    char *resp = cbm_test_operation_execute(srv, "search_graph", args);
     /* Response may be NULL or an error string -- we do not assert on it.
      * The side-effect (unlink) is what we are testing. */
     if (resp) {
         free(resp);
     }
-    cbm_mcp_server_free(srv);
+    cbm_test_operation_host_free(srv);
 
     /* ── Step 7: PRIMARY ASSERTION -- the DB must survive ─────────────
      *

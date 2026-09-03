@@ -2,9 +2,9 @@
 
 Codebase Memory builds a persistent structural knowledge graph of a source repository and exposes it through a local command-line interface designed for coding agents and humans.
 
-The current binary is still named `codebase-memory-mcp` for release compatibility. The product surface is CLI-first: running the binary with no command shows CLI help and does **not** start an MCP stdio server.
+The product executable is `codebase-memory-cli`. Running it with no command shows CLI help; there is no supported MCP stdio server entry point.
 
-> Migration status: the first CLI-first vertical slice intentionally retains some MCP-named internal dispatcher/schema code as private compatibility debt. New usage, documentation, skills, hooks, and installation should use the CLI. See [`docs/CLI_FIRST_VERTICAL_SLICE_IMPLEMENTATION_PLAN.md`](docs/CLI_FIRST_VERTICAL_SLICE_IMPLEMENTATION_PLAN.md).
+> Migration status: application operations, daemon execution, supervised workers, UI dispatch, and store hosting are protocol-neutral. The physical MCP subsystem has been removed. Remaining MCP-era names are limited to compatibility-sensitive persisted paths/package history that are being retired deliberately. See [`docs/CLI_MIGRATION_STATUS.md`](docs/CLI_MIGRATION_STATUS.md).
 
 ## What it does
 
@@ -202,9 +202,7 @@ agent skill ─┼──> CLI / hooks ──> protocol-neutral operations ──
 agent hooks ─┘
 ```
 
-Vertical Slice 1 establishes the left-hand product surface first. Internally, some canonical commands and hooks still reach the existing dispatcher and schema registry in `src/mcp`; that dependency is explicit temporary debt, not the target architecture.
-
-The next slice extracts the operation contract/result model so CLI, hooks, and optional runtime coordination call the engine without MCP types or result envelopes. Index supervision, project mutation locks, version-cohort checks, process containment, memory limits, cancellation, and secure local coordination are correctness mechanisms and are retained until they can be moved without weakening those guarantees.
+The CLI, hooks, daemon, supervised workers, and UI now dispatch through the neutral operation/runtime layers. Index supervision, project mutation locks, version-cohort checks, process containment, memory limits, cancellation, store recovery, and secure local coordination remain part of the correctness kernel rather than protocol adapters.
 
 ## Build
 

@@ -379,11 +379,11 @@ for row in selections:
     archive_for[target] = candidate_data[target, row["selected_variant"]]
 for name in ARCHIVES:
     target = next(target for target in TARGETS if name.startswith(f"codebase-memory-cli-{target}."))
-    destination = archives / target / ("mcpb" if name.endswith(".mcpb") else "archive") / name
+    destination = archives / target / "archive" / name
     destination.parent.mkdir(parents=True, exist_ok=True)
     binary_name = "codebase-memory-cli.exe" if target.startswith("windows-") else "codebase-memory-cli"
-    member = f"server/{binary_name}" if name.endswith(".mcpb") else binary_name
-    if name.endswith((".zip", ".mcpb")):
+    member = f"server/{binary_name}"
+    if name.endswith(".zip"):
         with zipfile.ZipFile(destination, "w") as handle:
             info = zipfile.ZipInfo(member)
             info.create_system = 3

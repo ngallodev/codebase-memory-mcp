@@ -2,7 +2,7 @@
 # Every packaging surface that states a product version must state a version we
 # actually released, and the registry-facing ones must state the newest one.
 #
-# Why this exists: server.json, pkg/npm/package.json and the Chocolatey nuspec
+# Why this exists: pkg/npm/package.json and the Chocolatey nuspec
 # sat at 0.8.1 while v0.10.8 was the shipped release — nine releases of drift in
 # metadata that is published to package registries. It was the third
 # version-metadata drift in one month. pkg/go additionally hardcodes its version
@@ -16,7 +16,6 @@
 # check them against. The release workflow then institutionalised the drift for
 # three of them: publish-registries rewrites pkg/npm/package.json and
 # pkg/pypi/pyproject.toml from the dispatch input, and publish-mcp-registry
-# rewrites server.json, each with a comment noting the repo copy "can lag". The
 # published artifact was therefore correct while the repo told everyone reading
 # it a false version, and no surface outside that sync path was corrected at
 # all.
@@ -100,7 +99,6 @@ fi
 # version that really shipped. Every pin needs a reason below (PIN_REASONS), so
 # a frozen surface can never become an unexplained exemption.
 SURFACES=(
-    "server.json|release"
     "pkg/npm/package.json|release"
     "pkg/pypi/pyproject.toml|release"
     "pkg/pypi/src/codebase_memory_mcp/_cli.py|release"
@@ -257,7 +255,7 @@ for entry in "${SURFACES[@]}"; do
     [[ "${entry#*|}" == "release" ]] || continue
     [[ -f "$path" ]] || continue
     # `|| true` is load-bearing: versions_in ends in a pipeline and runs under
-    # pipefail, so a claim form absent from THIS file (server.json has no bare
+    # pipefail, so a claim form absent from THIS file
     # return form) makes it exit non-zero and set -e would kill the contract
     # mid-run — exiting 1 with no message, which reads exactly like a failure
     # that forgot to explain itself.
@@ -296,7 +294,7 @@ while IFS= read -r path; do
         "note saying what its number actually is."
 done < <(
     git grep -IlE '(version|pkgver|releases/(download|tag)/v)[^0-9]{0,16}[0-9]+\.[0-9]+\.[0-9]+|return "[0-9]+\.[0-9]+\.[0-9]+"' \
-        -- server.json pkg tests/test_version_metadata_contract.sh 2>/dev/null || true
+        -- pkg tests/test_version_metadata_contract.sh 2>/dev/null || true
 )
 
 if ((failures > 0)); then

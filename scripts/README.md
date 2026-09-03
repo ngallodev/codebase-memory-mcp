@@ -22,13 +22,13 @@ codes) and rejects unknown flags with exit 2 + `Please consult --help.`
 | **build** | `build.sh` | CLEAN production runtime set (native executable + authenticated integration asset; `--with-ui` adds one content-addressed UI pack). ccache via `env.sh` makes repeats fast; `CCACHE_COMPILERCHECK=content` guarantees a hit is byte-identical to a cold compile — never stale. `--version`, `STATIC=1`, `BUILD_DIR=`. |
 | **build-dev** | `build-dev.sh` | Incremental local production build. Make dependency files plus ccache rebuild only changed or stale translation units; use `build.sh` for CI/release clean builds. |
 | **lint** | `lint.sh` | clang-tidy + cppcheck + clang-format (+ no-skips policy). `--ci` = the CI gate set (no clang-tidy). Drives the same make targets as `make lint`/`lint-ci`. |
-| **smoke (unix)** | `smoke-local.sh` | Stages a full release fixture, serves it on a kernel-assigned port, runs `smoke-test.sh` (ALL phases incl. download/install/update E2E) inside a disposable HOME/XDG/TMP sandbox. `ui` variant makes a missing verified UI pack a FAILURE. `CBM_SMOKE_ARTIFACT_DIR` = smoke an extracted release artifact verbatim (release mode). |
+| **smoke (unix)** | `smoke-local.sh` | Stages a full release fixture, serves it on a kernel-assigned port, runs `smoke-test.sh` (CLI invariants plus release install round-trip) inside a disposable HOME/XDG/TMP sandbox. `ui` variant makes a missing verified UI pack a FAILURE. `CBM_SMOKE_ARTIFACT_DIR` = smoke an extracted release artifact verbatim (release mode). |
 | **smoke (windows)** | `../test-infrastructure/vm/vm-smoke.sh` | Same verified runtime-set contract on the real Windows VM, plus the user-PATH registry guard (prepare/verify/cleanup). |
-| **smoke-invariants** | `smoke-invariants.sh` | Production-path resilience battery (MCP handshake, all tools invocable, malformed-input handling, supervised crash/hang recovery) — no fixture server or install E2E. `smoke.yml` runs an explicitly seam-enabled build on the WIDEST source matrix; release artifacts remain seam-free and use the release-shaped smoke legs above. |
+| **smoke-invariants** | `smoke-invariants.sh` | Production-path CLI resilience battery (public command discovery, removed-MCP rejection, index/search/snippet/coverage flow, malformed-input handling) — no fixture server or install E2E. `smoke.yml` runs an explicitly seam-enabled build on the WIDEST source matrix; release artifacts remain seam-free and use the release-shaped smoke legs above. |
 | **soak** | `soak-legs.sh` | The release-gating soak SEQUENCE: `quick` then `query-leak` (the #581 detector — never reindexes, so RSS growth = query-path leak), each guarded by a completion-summary check. `--legs quick` for the ASan single-leg variant. Duration is per leg. |
 
 Internal harnesses — never called directly by a venue (the contract forbids
-it): `smoke-test.sh` (phases; wrappers provide fixture server + sandbox),
+it): `smoke-test.sh` (CLI invariants; wrappers optionally provide a release fixture server + sandbox),
 `soak-test.sh` (one soak run; `soak-legs.sh` provides the sequence + guards),
 `run-tests-parallel.sh` (reached through `test.sh`).
 

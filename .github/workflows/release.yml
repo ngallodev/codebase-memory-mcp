@@ -419,8 +419,7 @@ jobs:
       # the 0.8.0 release failed here because pkg/npm still carried the
       # previous release's hand-pinned version and npm refuses to publish
       # over an existing version. Inject the dispatch input so a forgotten
-      # manual bump can never fail the pipeline again. (server.json needs
-      # no injection: publish-mcp-registry syncs it from pkg/npm.)
+      # manual bump can never fail the pipeline again.
       - name: Sync packaging versions to the release version
         env:
           RELEASE_VERSION: ${{ inputs.version }}
@@ -447,7 +446,7 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         # A prerelease must never become npm `latest` — plain `npm install`
         # would serve the RC to everyone. Publish prereleases under the
-        # `next` dist-tag; testers opt in via `npm i codebase-memory-mcp@next`.
+        # `next` dist-tag; testers opt in via `npm i codebase-memory-cli@next`.
         #
         # Idempotency: npm versions are immutable, so a re-run of this job
         # after a partial success (v0.10.1: npm published, then the twine
@@ -456,8 +455,8 @@ jobs:
         # version already exists on the registry, publishing is DONE; skip.
         run: |
           V="${RELEASE_VERSION#v}"
-          if npm view "codebase-memory-mcp@$V" version >/dev/null 2>&1; then
-            echo "npm already has codebase-memory-mcp@$V — skipping publish (idempotent re-run)"
+          if npm view "codebase-memory-cli@$V" version >/dev/null 2>&1; then
+            echo "npm already has codebase-memory-cli@$V — skipping publish (idempotent re-run)"
           elif [[ "$RELEASE_VERSION" == *-* ]]; then
             npm publish --access public --provenance --tag next
           else

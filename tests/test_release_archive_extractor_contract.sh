@@ -97,7 +97,7 @@ def write_archive(directory, archive, extra=None, drop=None):
     if extra:
         entries[extra] = b"unexpected\n"
     path = directory / archive
-    if archive.endswith((".zip", ".mcpb")):
+    if archive.endswith(".zip"):
         with zipfile.ZipFile(path, "w") as zf:
             for name, data in entries.items():
                 zf.writestr(name, data)

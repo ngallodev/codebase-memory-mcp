@@ -4,7 +4,7 @@
 #
 # Why this exists: the count was hand-maintained on seven separate surfaces, so
 # it drifted apart from reality AND from itself — README/docs/npm said 158 while
-# server.json/nuspec/package-release.sh said 159.
+# package metadata/package-release.sh once drifted from the registry count.
 #
 # Why grammars and not CBM_LANG_COUNT: the registry contains entries with no
 # parser at all. CBM_LANG_NIM (grammar removed 2026-06-12) and
@@ -53,7 +53,6 @@ SURFACES=(
     pkg/npm/README.md
     pkg/chocolatey/codebase-memory-mcp.nuspec
     scripts/package-release.sh
-    server.json
 )
 
 # Files that legitimately say "<N> languages" about something OTHER than the

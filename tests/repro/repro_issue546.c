@@ -212,7 +212,7 @@ TEST(repro_issue546_dts_split_caller_set) {
              "\"depth\":2}",
              lp.project);
 
-    char *resp = cbm_mcp_handle_tool(lp.srv, "trace_path", args);
+    char *resp = cbm_test_operation_execute(lp.srv, "trace_path", args);
     ASSERT_NOT_NULL(resp);
 
     /* Symbol must be found — if "function not found" fires, the name lookup

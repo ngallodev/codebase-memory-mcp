@@ -1,4 +1,4 @@
-"""Downloads codebase-memory-mcp on first run, then runs its native entry point."""
+"""Downloads codebase-memory-cli on first run, then runs its native entry point."""
 
 import errno
 import hashlib
@@ -20,9 +20,9 @@ import urllib.request
 from pathlib import Path
 
 REPO = "DeusData/codebase-memory-mcp"
-_WINDOWS_BINARY_NAME = "codebase-memory-mcp.exe"
+_WINDOWS_BINARY_NAME = "codebase-memory-cli.exe"
 _UNIX_ARCHIVE_NAMES = (
-    "codebase-memory-mcp",
+    "codebase-memory-cli",
     "LICENSE",
     "install.sh",
     "THIRD_PARTY_NOTICES.md",
@@ -43,7 +43,7 @@ _NETWORK_TIMEOUT_SECONDS = 120
 _CANDIDATE_TIMEOUT_SECONDS = 15
 _MAX_CHECKSUM_MANIFEST_BYTES = 1024 * 1024
 _REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
-_RUNTIME_LOCK_NAME = ".codebase-memory-mcp-runtime.lock"
+_RUNTIME_LOCK_NAME = ".codebase-memory-cli-runtime.lock"
 _RUNTIME_LOCK_WAIT_SECONDS = 45
 _RUNTIME_OWNERLESS_STALE_SECONDS = 30
 _RUNTIME_LOCK_POLL_SECONDS = 0.025
@@ -81,7 +81,7 @@ def _validate_url_scheme(url: str) -> None:
         or parsed.password is not None
     ):
         sys.exit(
-            f"codebase-memory-mcp: refusing to fetch invalid, credentialed, or "
+            f"codebase-memory-cli: refusing to fetch invalid, credentialed, or "
             f"non-https URL: {url}"
         )
 
@@ -92,7 +92,7 @@ def _download_https(url: str, dest: str, max_bytes: int = 0) -> None:
     for redirect_count in range(_MAX_REDIRECTS + 1):
         _validate_url_scheme(current_url)
         request = urllib.request.Request(
-            current_url, headers={"User-Agent": "codebase-memory-mcp-installer"}
+            current_url, headers={"User-Agent": "codebase-memory-cli-installer"}
         )
         try:
             response = _HTTPS_OPENER.open(
@@ -179,19 +179,19 @@ def _validate_archive_names(names, archive_names, casefold: bool = False):
         key = name.casefold() if casefold else name
         if key in seen:
             sys.exit(
-                f"codebase-memory-mcp: refusing unsafe archive entry "
+                f"codebase-memory-cli: refusing unsafe archive entry "
                 f"(duplicate or case conflict: {name!r})"
             )
         seen.add(key)
         if name not in required_set:
             sys.exit(
-                f"codebase-memory-mcp: archive must contain only the exact "
+                f"codebase-memory-cli: archive must contain only the exact "
                 f"root files: {', '.join(required)}"
             )
         found.add(name)
     if found != required_set or len(seen) != len(required):
         sys.exit(
-            f"codebase-memory-mcp: archive must contain exactly one of each "
+            f"codebase-memory-cli: archive must contain exactly one of each "
             f"required root file: {', '.join(required)}"
         )
 
@@ -204,7 +204,7 @@ def _safe_extract_tar(
     for member in members:
         if not member.isfile():
             sys.exit(
-                f"codebase-memory-mcp: refusing unsafe tar entry "
+                f"codebase-memory-cli: refusing unsafe tar entry "
                 f"(not a regular root file: {member.name!r})"
             )
     _validate_archive_names([member.name for member in members], archive_names)
@@ -214,7 +214,7 @@ def _safe_extract_tar(
     for name in runtime_names:
         source = tf.extractfile(by_name[name])
         if source is None:
-            sys.exit(f"codebase-memory-mcp: could not read archive member: {name}")
+            sys.exit(f"codebase-memory-cli: could not read archive member: {name}")
         target = os.path.join(dest_abs, name)
         with source, open(target, "xb") as output:
             shutil.copyfileobj(source, output)
@@ -245,20 +245,20 @@ def _safe_extract_zip(
             or any(segment.endswith((".", " ")) for segment in segments)
         ):
             sys.exit(
-                f"codebase-memory-mcp: refusing unsafe zip entry "
+                f"codebase-memory-cli: refusing unsafe zip entry "
                 f"(invalid path: {raw_name!r})"
             )
         unix_type = stat.S_IFMT((info.external_attr >> 16) & 0xFFFF)
         if info.is_dir() or unix_type not in (0, stat.S_IFREG):
             sys.exit(
-                f"codebase-memory-mcp: refusing unsafe zip entry "
+                f"codebase-memory-cli: refusing unsafe zip entry "
                 f"(not a regular root file: {raw_name!r})"
             )
         names.append(name)
         member_abs = os.path.abspath(os.path.join(dest_abs, *segments))
         if not (member_abs == dest_abs or member_abs.startswith(dest_abs + os.sep)):
             sys.exit(
-                f"codebase-memory-mcp: refusing unsafe zip entry "
+                f"codebase-memory-cli: refusing unsafe zip entry "
                 f"(escapes dest: {raw_name!r})"
             )
     _validate_archive_names(names, archive_names, casefold=True)
@@ -296,18 +296,18 @@ def _verify_checksum(archive_path: str, archive_name: str, version: str) -> None
                     ch not in "0123456789abcdef" for ch in digest
                 ):
                     sys.exit(
-                        f"codebase-memory-mcp: invalid SHA256 checksum for "
+                        f"codebase-memory-cli: invalid SHA256 checksum for "
                         f"{archive_name}"
                     )
                 if expected is not None and expected != digest:
                     sys.exit(
-                        f"codebase-memory-mcp: conflicting SHA256 checksums for "
+                        f"codebase-memory-cli: conflicting SHA256 checksums for "
                         f"{archive_name}"
                     )
                 expected = digest
         if expected is None:
             sys.exit(
-                f"codebase-memory-mcp: no checksum for {archive_name} in checksums.txt"
+                f"codebase-memory-cli: no checksum for {archive_name} in checksums.txt"
             )
         h = hashlib.sha256()
         with open(archive_path, "rb") as af:
@@ -316,15 +316,15 @@ def _verify_checksum(archive_path: str, archive_name: str, version: str) -> None
         actual = h.hexdigest()
         if expected != actual:
             sys.exit(
-                f"codebase-memory-mcp: CHECKSUM MISMATCH for {archive_name}\n"
+                f"codebase-memory-cli: CHECKSUM MISMATCH for {archive_name}\n"
                 f"  expected: {expected}\n"
                 f"  actual:   {actual}"
             )
-        print("codebase-memory-mcp: checksum verified.", file=sys.stderr)
+        print("codebase-memory-cli: checksum verified.", file=sys.stderr)
     except SystemExit:
         raise
     except Exception as exc:
-        sys.exit(f"codebase-memory-mcp: checksum verification failed: {exc}")
+        sys.exit(f"codebase-memory-cli: checksum verification failed: {exc}")
     finally:
         if tmp_path is not None:
             try:
@@ -336,7 +336,7 @@ def _verify_checksum(archive_path: str, archive_name: str, version: str) -> None
 def _version() -> str:
     try:
         from importlib.metadata import version
-        return version("codebase-memory-mcp")
+        return version("codebase-memory-cli")
     except Exception:
         return "0.10.8"
 
@@ -349,7 +349,7 @@ def _os_name() -> str:
         return "darwin"
     if p == "win32":
         return "windows"
-    sys.exit(f"codebase-memory-mcp: unsupported platform: {p}")
+    sys.exit(f"codebase-memory-cli: unsupported platform: {p}")
 
 
 def _arch() -> str:
@@ -358,7 +358,7 @@ def _arch() -> str:
         return "arm64"
     if m in ("x86_64", "amd64"):
         return "amd64"
-    sys.exit(f"codebase-memory-mcp: unsupported architecture: {m}")
+    sys.exit(f"codebase-memory-cli: unsupported architecture: {m}")
 
 
 def _cache_dir() -> Path:
@@ -368,7 +368,7 @@ def _cache_dir() -> Path:
         base = Path.home() / "Library" / "Caches"
     else:
         base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    return base / "codebase-memory-mcp"
+    return base / "codebase-memory-cli"
 
 
 def _runtime_dir(version: str) -> Path:
@@ -380,7 +380,7 @@ def _bin_path(version: str) -> Path:
     name = (
         _WINDOWS_BINARY_NAME
         if sys.platform == "win32"
-        else "codebase-memory-mcp"
+        else "codebase-memory-cli"
     )
     return _runtime_dir(version) / name
 
@@ -1164,7 +1164,7 @@ def _download(version: str) -> Path:
     # dynamically links glibc 2.38+ and fails on older distros. macOS/Windows
     # have no such variant. Keep in sync with install.sh / install.js / cli.c.
     portable = "-portable" if os_name == "linux" else ""
-    archive = f"codebase-memory-mcp-{os_name}-{arch}{portable}.{ext}"
+    archive = f"codebase-memory-cli-{os_name}-{arch}{portable}.{ext}"
     url = f"https://github.com/{REPO}/releases/download/v{version}/{archive}"
     _validate_url_scheme(url)
 
@@ -1172,7 +1172,7 @@ def _download(version: str) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     print(
-        f"codebase-memory-mcp: downloading v{version} for {os_name}/{arch}...",
+        f"codebase-memory-cli: downloading v{version} for {os_name}/{arch}...",
         file=sys.stderr,
     )
 
@@ -1182,7 +1182,7 @@ def _download(version: str) -> Path:
             _download_https(url, tmp_archive)
         except (OSError, RuntimeError, urllib.error.URLError) as e:
             sys.exit(
-                f"codebase-memory-mcp: download failed ({e})\n"
+                f"codebase-memory-cli: download failed ({e})\n"
                 f"URL: {url}\n"
                 f"See https://github.com/{REPO}/releases for available versions."
             )
@@ -1190,7 +1190,7 @@ def _download(version: str) -> Path:
         _verify_checksum(tmp_archive, archive, version)
 
         bin_name = (
-            _WINDOWS_BINARY_NAME if os_name == "windows" else "codebase-memory-mcp"
+            _WINDOWS_BINARY_NAME if os_name == "windows" else "codebase-memory-cli"
         )
         extraction_names = (bin_name,)
         archive_names = (
@@ -1222,7 +1222,7 @@ def _download(version: str) -> Path:
             extracted_path = Path(tmp) / name
             if not _regular_file(extracted_path):
                 sys.exit(
-                    f"codebase-memory-mcp: required runtime member not found after "
+                    f"codebase-memory-cli: required runtime member not found after "
                     f"extraction: {name}"
                 )
             if name == bin_name:
@@ -1233,13 +1233,13 @@ def _download(version: str) -> Path:
             extracted_paths[name] = extracted_path
         if _runtime_set_names(Path(tmp), bin_name) is None:
             sys.exit(
-                "codebase-memory-mcp: extracted runtime set failed content "
+                "codebase-memory-cli: extracted runtime set failed content "
                 "verification"
             )
         try:
             _verify_candidate(extracted_paths[bin_name])
         except (OSError, RuntimeError) as exc:
-            sys.exit(f"codebase-memory-mcp: {exc}")
+            sys.exit(f"codebase-memory-cli: {exc}")
 
         staged_paths = {}
         try:
@@ -1274,7 +1274,7 @@ def _download(version: str) -> Path:
             )
             _verify_candidate(dest)
         except (OSError, RuntimeError) as exc:
-            sys.exit(f"codebase-memory-mcp: {exc}")
+            sys.exit(f"codebase-memory-cli: {exc}")
         finally:
             for staged_path in staged_paths.values():
                 try:
@@ -1292,9 +1292,9 @@ def main() -> None:
     if mutation == "update":
         print(
             "This PyPI copy is maintained by pip. Update it with "
-            '"python -m pip install --upgrade codebase-memory-mcp". '
+            '"python -m pip install --upgrade codebase-memory-cli". '
             "For a managed standalone installation, run "
-            '"codebase-memory-mcp install --yes".',
+            '"codebase-memory-cli install --yes".',
             file=sys.stderr,
         )
         raise SystemExit(2)
@@ -1317,9 +1317,9 @@ def main() -> None:
         if sys.platform == "win32" and result != 0 and mutation == "uninstall":
             print(
                 'This PyPI Windows copy is portable. Use '
-                '"python -m pip uninstall codebase-memory-mcp" for package maintenance. '
+                '"python -m pip uninstall codebase-memory-cli" for package maintenance. '
                 "To create or repair a managed standalone installation, run "
-                '"codebase-memory-mcp install --yes".',
+                '"codebase-memory-cli install --yes".',
                 file=sys.stderr,
             )
         raise SystemExit(result)
@@ -1351,7 +1351,7 @@ def _default_managed_install_dir() -> Path:
     local_app_data = Path(
         os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")
     )
-    return local_app_data / "Programs" / "codebase-memory-mcp"
+    return local_app_data / "Programs" / "codebase-memory-cli"
 
 
 def _native_args(args):

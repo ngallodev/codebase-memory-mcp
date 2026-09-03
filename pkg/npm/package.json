@@ -1,8 +1,7 @@
 {
-  "name": "codebase-memory-mcp",
+  "name": "codebase-memory-cli",
   "version": "0.10.8",
   "description": "Fast code intelligence for AI coding agents — installs a verified native runtime set",
-  "mcpName": "io.github.DeusData/codebase-memory-mcp",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,7 +12,6 @@
     "url": "https://github.com/DeusData/codebase-memory-mcp/issues"
   },
   "keywords": [
-    "mcp",
     "claude",
     "code-intelligence",
     "codebase",
@@ -23,7 +21,7 @@
     "tree-sitter"
   ],
   "bin": {
-    "codebase-memory-mcp": "./bin.js"
+    "codebase-memory-cli": "./bin.js"
   },
   "scripts": {
     "test": "node --test test/*.test.js",

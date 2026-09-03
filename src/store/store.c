@@ -8554,7 +8554,7 @@ static int arch_clusters(cbm_store_t *s, const char *project, const char *path,
 /* "overview" = compact architecture summary: every aspect EXCEPT the large
  * per-file listing (file_tree), which alone dominates the payload on real
  * repos and can push the MCP response past the output cap. Declared in
- * store.h and shared with aspect_wanted in src/mcp/mcp.c so the store-side
+ * store.h and shared with the change-detection operation so the store-side
  * DB gate and the MCP-side serialization gate cannot drift. */
 bool cbm_store_arch_aspect_in_overview(const char *name) {
     return strcmp(name, "file_tree") != 0;

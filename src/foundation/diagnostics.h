@@ -13,7 +13,7 @@
 #include <stdint.h>
 #include <stdatomic.h>
 
-/* Global query stats — updated by the MCP server on each tool call. */
+/* Global query stats — updated by operation dispatch on each query. */
 typedef struct {
     atomic_int count;     /* total tool calls */
     atomic_int errors;    /* tool calls that returned isError=true */

@@ -1,7 +1,7 @@
 /*
  * cli.c — CLI subcommand handlers for install, uninstall, update, version.
  *
- * Port of Go cmd/codebase-memory-mcp/ install/update logic.
+ * Native CLI install/update/uninstall implementation.
  * All functions accept explicit paths for testability.
  */
 #include "cli/agent_clients.h"
@@ -22,8 +22,7 @@
 #include "foundation/constants.h"
 #include "foundation/log.h"
 #include "foundation/sha256.h"
-#include "cli/client_adapter.h"
-#include "operations/tool_catalog.h" // cbm_mcp_tool_input_schema — CLI flag parser + per-tool --help
+#include "operations/tool_catalog.h" // cbm_tool_catalog_input_schema — CLI flag parser + per-tool --help
 #include "operations/index_supervisor.h"
 
 /* CLI buffer size constants. */
@@ -165,14 +164,14 @@ int cbm_cli_exit_status_after_maintenance(int exit_status, bool maintenance_canc
  * not exist.
  *
  * The remedy line must also survive the situation it prints in: an install or
- * a retry after `uninstall` has no cbm on PATH, so "run codebase-memory-mcp
- * daemon status" was advice the reader could not follow at exactly the moment
+ * a retry after `uninstall` has no cbm on PATH, so advice that assumes a
+ * discoverable installation can fail at exactly the moment it is needed.
  * they needed it. Each message now names its own condition and stays runnable. */
 static const char CLI_ACTIVATION_BUSY_MESSAGE[] =
     "error: active CBM sessions and operations could not be stopped safely; "
     "no activation was committed.\n"
-    "error: something is still using CBM. If an editor or agent is running an "
-    "MCP server, close it and retry; 'codebase-memory-cli daemon status' lists "
+    "error: something is still using CBM. Close active editors/agents using the "
+    "repository and retry; 'codebase-memory-cli daemon status' lists "
     "the holders when a cbm binary is still installed.";
 static const char CLI_ACTIVATION_REFUSED_MESSAGE[] =
     "error: activation could not reserve exclusive access; no activation was "
@@ -1714,7 +1713,7 @@ static bool cbm_json_mcp_command_path_probe_safe(const char *command) {
 #ifdef CBM_CLI_ENABLE_TEST_API
 static CBM_TLS int *g_mcp_command_path_probe_counter = NULL;
 
-bool cbm_mcp_command_path_probe_safe_for_testing(const char *command, bool windows) {
+bool cbm_legacy_command_path_probe_safe_for_testing(const char *command, bool windows) {
     return cbm_json_mcp_command_path_probe_safe_for_platform(command, windows);
 }
 
@@ -2006,116 +2005,7 @@ static char *cbm_json_mcp_render_command_value(const char *binary_path,
     return json;
 }
 
-static int cbm_upsert_json_named_mcp(const char *binary_path, const char *config_path,
-                                     const char *const *object_path, size_t path_len,
-                                     cbm_json_mcp_schema_t schema, const char *entry_name,
-                                     const char *argument) {
-    if (!binary_path || !config_path || !object_path || !entry_name || !entry_name[0]) {
-        return CLI_ERR;
-    }
-    char *document = NULL;
-    size_t document_length = 0U;
-    int read_result = cbm_json_like_read_document(config_path, &document, &document_length);
-    if (read_result < 0) {
-        return CLI_ERR;
-    }
-    if (read_result == 0) {
-        char *command = NULL;
-        int ownership = cbm_json_mcp_snapshot_ownership(
-            document, document_length, object_path, path_len, schema, entry_name, argument,
-            binary_path, g_previous_managed_mcp_command, &command);
-        /* An entry that already says what we would say, but carries extra keys
-         * the client added, is ALREADY SATISFIED. Return success without
-         * touching the file.
-         *
-         * We must not rewrite it: the editor replaces an entry wholesale, so
-         * writing our canonical shape over it would delete those keys. Doing
-         * nothing is both correct and lossless — the entry already points at
-         * this binary with the right type, which is the whole content of the
-         * install.
-         *
-         * This is #1630: OpenCode writes `"enabled": true` next to our
-         * `command` and `type`, so every user who had toggled a server in the
-         * UI hit `op=mcp_install` failure. Confirmed on Linux and Windows with
-         * two independent configs. Merging our fields into an annotated entry
-         * while preserving the rest is the fuller fix and is tracked there;
-         * this makes the common case work without risking anyone's config. */
-        if (ownership == CBM_JSON_LIKE_OBJECT_MATCH_WITH_EXTRAS) {
-            /* Owned via the PREVIOUS managed binary during a relocating
-             * update: the annotated entry still names the old location, and a
-             * wholesale rewrite would drop the client's keys — repair only the
-             * command member (#1630's deferred field-merge). An entry already
-             * naming the current binary needs nothing. */
-            bool via_previous = command && g_previous_managed_mcp_command &&
-                                strcmp(command, g_previous_managed_mcp_command) == 0 &&
-                                strcmp(command, binary_path) != 0;
-            if (!via_previous) {
-                free(command);
-                free(document);
-                return CLI_OK;
-            }
-            char *value = cbm_json_mcp_render_command_value(binary_path, schema);
-            if (!value) {
-                free(command);
-                free(document);
-                return CLI_ERR;
-            }
-            int repair = cbm_json_like_replace_field_raw_if_unchanged(
-                config_path, object_path, path_len, entry_name, "command", value, document,
-                document_length);
-            free(value);
-            free(command);
-            free(document);
-            return repair == 0 ? CLI_OK : CLI_ERR;
-        }
-        /* Windows only: our shape, annotated, and the named binary
-         * conclusively missing from the local fixed drives — repair ONLY the
-         * command member so the client's keys survive (#1630 field-merge). */
-        if (ownership == CBM_JSON_MCP_OWNERSHIP_EXTRAS_STALE) {
-            char *value = cbm_json_mcp_render_command_value(binary_path, schema);
-            if (!value) {
-                free(command);
-                free(document);
-                return CLI_ERR;
-            }
-            int repair = cbm_json_like_replace_field_raw_if_unchanged(
-                config_path, object_path, path_len, entry_name, "command", value, document,
-                document_length);
-            free(value);
-            free(command);
-            free(document);
-            return repair == 0 ? CLI_OK : CLI_ERR;
-        }
-        /* STALE (our exact shape, dead binary path on Windows) is repairable
-         * — that is the update contract. Only a genuinely foreign shape
-         * refuses. */
-        free(command);
-        if (ownership != CBM_JSON_LIKE_OBJECT_MATCH && ownership != CBM_JSON_LIKE_OBJECT_MISSING &&
-            ownership != CBM_JSON_MCP_OWNERSHIP_STALE) {
-            free(document);
-            return CLI_ERR;
-        }
-    }
 
-    char *entry = cbm_build_json_mcp_entry(binary_path, schema, argument);
-    if (!entry) {
-        free(document);
-        return CLI_ERR;
-    }
-    int edit_result = cbm_json_like_upsert_entry_if_unchanged(
-        config_path, object_path, path_len, entry_name, entry, read_result == 1 ? NULL : document,
-        document_length);
-    free(entry);
-    free(document);
-    return edit_result == 0 ? CLI_OK : CLI_ERR;
-}
-
-static int cbm_upsert_json_mcp(const char *binary_path, const char *config_path,
-                               const char *const *object_path, size_t path_len,
-                               cbm_json_mcp_schema_t schema) {
-    return cbm_upsert_json_named_mcp(binary_path, config_path, object_path, path_len, schema,
-                                     CBM_DEFAULT_MCP_SERVER_NAME, NULL);
-}
 
 static int cbm_remove_json_named_mcp(const char *config_path, const char *const *object_path,
                                      size_t path_len, cbm_json_mcp_schema_t schema,
@@ -2162,21 +2052,8 @@ static int cbm_remove_json_mcp(const char *config_path, const char *const *objec
 
 /* ── Editor MCP: Cursor/Gemini/OpenHands/Qwen (mcpServers) ───── */
 
-int cbm_install_editor_mcp(const char *binary_path, const char *config_path) {
-    static const char *const path[] = {"mcpServers"};
-    return cbm_upsert_json_mcp(binary_path, config_path, path, 1U, CBM_JSON_MCP_STANDARD);
-}
 
 #ifdef CBM_CLI_ENABLE_TEST_API
-int cbm_install_editor_mcp_with_previous_for_testing(const char *binary_path,
-                                                     const char *previous_binary_path,
-                                                     const char *config_path) {
-    const char *saved = g_previous_managed_mcp_command;
-    g_previous_managed_mcp_command = previous_binary_path;
-    int result = cbm_install_editor_mcp(binary_path, config_path);
-    g_previous_managed_mcp_command = saved;
-    return result;
-}
 #endif
 
 int cbm_remove_editor_mcp(const char *config_path) {
@@ -2191,10 +2068,6 @@ int cbm_remove_editor_mcp_owned(const char *binary_path, const char *config_path
 
 /* ── OpenClaw MCP (nested mcp.servers with command + args) ────── */
 
-int cbm_install_openclaw_mcp(const char *binary_path, const char *config_path) {
-    static const char *const path[] = {"mcp", "servers"};
-    return cbm_upsert_json_mcp(binary_path, config_path, path, 2U, CBM_JSON_MCP_OPENCLAW);
-}
 
 int cbm_remove_openclaw_mcp(const char *config_path) {
     static const char *const path[] = {"mcp", "servers"};
@@ -2227,10 +2100,6 @@ static int cbm_remove_openclaw_compaction(const char *config_path) {
 
 /* ── VS Code MCP (servers key with type:stdio) ────────────────── */
 
-int cbm_install_vscode_mcp(const char *binary_path, const char *config_path) {
-    static const char *const path[] = {"servers"};
-    return cbm_upsert_json_mcp(binary_path, config_path, path, 1U, CBM_JSON_MCP_VSCODE);
-}
 
 int cbm_remove_vscode_mcp(const char *config_path) {
     static const char *const path[] = {"servers"};
@@ -2244,10 +2113,6 @@ int cbm_remove_vscode_mcp_owned(const char *binary_path, const char *config_path
 
 /* ── Zed MCP (context_servers with command + args) ────────────── */
 
-int cbm_install_zed_mcp(const char *binary_path, const char *config_path) {
-    static const char *const path[] = {"context_servers"};
-    return cbm_upsert_json_mcp(binary_path, config_path, path, 1U, CBM_JSON_MCP_STANDARD);
-}
 
 int cbm_remove_zed_mcp(const char *config_path) {
     static const char *const path[] = {"context_servers"};
@@ -3218,18 +3083,16 @@ static const char crush_context_content[] =
     "# Codebase Memory for Crush\n"
     "\n"
     "Route work as Scout (fast provisional lookup), Verify (default task-directed verification), "
-    "or Auditor (bounded full graph verification). Use `search_graph`, `trace_path`, and "
-    "`get_code_snippet` in the parent agent. After candidate paths are known, the parent must call "
-    "`check_index_coverage` once for all evidence paths and add relevant scopes for negative or "
-    "exhaustive claims. Read/grep every reported partial, skipped, excluded, stale, pending, or "
-    "unknown range or scope.\n"
-    "Before starting a task subagent, include the tier, graph project, generation/freshness, "
-    "bounded scope, queries and pagination state, qualified symbols, paths, caller/callee "
-    "findings, "
-    "coverage ranges/reasons, source fallback already performed, and unresolved questions.\n"
-    "The task agent does not inherit MCP access and must not call or claim MCP access. It should "
-    "treat the handoff as its structural starting point and use read/grep for exact source "
-    "verification, especially every missed-coverage range.\n";
+    "or Auditor (bounded full verification). The parent should use `codebase-memory-cli search`, "
+    "`codebase-memory-cli trace`, and `codebase-memory-cli snippet` for structural evidence, then "
+    "run `codebase-memory-cli coverage` for every material evidence path. Use direct reads/grep for "
+    "literals, configuration, non-code files, and every reported coverage gap.\n"
+    "Before starting a task subagent, include the tier, exact project, generation/freshness, "
+    "bounded scope, searches and pagination state, qualified symbols, paths, caller/callee "
+    "findings, coverage ranges/reasons, source fallback already performed, and unresolved "
+    "questions.\n"
+    "The task agent should treat that handoff as its structural starting point. Do not assume the "
+    "child inherits CLI access; use read/grep for exact source verification when necessary.\n";
 
 /* #1032: Aider has NO MCP support — it reads CONVENTIONS.md but can only run
  * shell commands. Installing the MCP-tool-centric instructions above told the
@@ -3369,46 +3232,6 @@ static int cbm_remove_codex_legacy_mcp(const char *config_path) {
                                         CODEX_MCP_END);
 }
 
-int cbm_upsert_codex_mcp(const char *binary_path, const char *config_path) {
-    if (!binary_path || !config_path) {
-        return CLI_ERR;
-    }
-    char escaped[CLI_BUF_8K];
-    if (cbm_toml_escape_basic_string(binary_path, escaped, sizeof(escaped)) != 0) {
-        return CLI_ERR;
-    }
-    char block[CLI_BUF_8K];
-    /* #1562: Codex sanitizes the environment of stdio MCP subprocesses, passing
-     * through only the names listed in env_vars. Without CBM_CACHE_DIR the
-     * Codex-spawned server silently falls back to the DEFAULT cache while the
-     * account daemon uses the configured one; the two disagree and the
-     * handshake closes during initialization, so Codex exposes no cbm tools at
-     * all.
-     *
-     * The names are listed unconditionally rather than only when a variable is
-     * set at install time: env_vars names variables to FORWARD IF PRESENT, so
-     * listing them costs nothing when unset and keeps working for someone who
-     * sets one after installing — which install-time detection would silently
-     * fail to cover.
-     *
-     * CBM_RUNTIME_DIR joined the list with #1664: since #1645 it relocates
-     * the daemon rendezvous, so a Codex subprocess that does not receive it
-     * looks for the daemon in the DEFAULT location and never finds it — the
-     * same silent client/daemon split CBM_CACHE_DIR caused. Both names decide
-     * WHICH daemon a process talks to; behavioural knobs stay unforwarded. */
-    int written = snprintf(block, sizeof(block),
-                           CODEX_CMM_SECTION "\ncommand = \"%s\"\nargs = []\n"
-                                             "env_vars = [\"CBM_CACHE_DIR\", "
-                                             "\"CBM_RUNTIME_DIR\"]\n",
-                           escaped);
-    if (written < 0 || (size_t)written >= sizeof(block) ||
-        cbm_remove_codex_legacy_mcp(config_path) != 0) {
-        return CLI_ERR;
-    }
-    return cbm_toml_upsert_managed_block(config_path, CODEX_MCP_BEGIN, CODEX_MCP_END, block) == 0
-               ? CLI_OK
-               : CLI_ERR;
-}
 
 int cbm_remove_codex_mcp(const char *config_path) {
     if (!config_path ||
@@ -3580,10 +3403,6 @@ int cbm_remove_codex_hooks(const char *config_path) {
 
 /* ── OpenCode MCP config (JSON with "mcp" key) ───────────────── */
 
-int cbm_upsert_opencode_mcp(const char *binary_path, const char *config_path) {
-    static const char *const path[] = {"mcp"};
-    return cbm_upsert_json_mcp(binary_path, config_path, path, 1U, CBM_JSON_MCP_LOCAL_ARRAY);
-}
 
 int cbm_remove_opencode_mcp(const char *config_path) {
     static const char *const path[] = {"mcp"};
@@ -3595,30 +3414,18 @@ int cbm_remove_opencode_mcp_owned(const char *binary_path, const char *config_pa
     return cbm_remove_json_mcp(config_path, path, 1U, CBM_JSON_MCP_LOCAL_ARRAY, binary_path);
 }
 
-static int cbm_upsert_kilo_mcp(const char *binary_path, const char *config_path) {
-    static const char *const path[] = {"mcp"};
-    return cbm_upsert_json_mcp(binary_path, config_path, path, 1U, CBM_JSON_MCP_LOCAL_ARRAY);
-}
 
 static int cbm_remove_kilo_mcp_owned(const char *binary_path, const char *config_path) {
     static const char *const path[] = {"mcp"};
     return cbm_remove_json_mcp(config_path, path, 1U, CBM_JSON_MCP_LOCAL_ARRAY, binary_path);
 }
 
-static int cbm_upsert_cline_mcp(const char *binary_path, const char *config_path) {
-    static const char *const path[] = {"mcpServers"};
-    return cbm_upsert_json_mcp(binary_path, config_path, path, 1U, CBM_JSON_MCP_CLINE);
-}
 
 static int cbm_remove_cline_mcp_owned(const char *binary_path, const char *config_path) {
     static const char *const path[] = {"mcpServers"};
     return cbm_remove_json_mcp(config_path, path, 1U, CBM_JSON_MCP_CLINE, binary_path);
 }
 
-static int cbm_upsert_copilot_mcp(const char *binary_path, const char *config_path) {
-    static const char *const path[] = {"mcpServers"};
-    return cbm_upsert_json_mcp(binary_path, config_path, path, 1U, CBM_JSON_MCP_COPILOT);
-}
 
 static int cbm_remove_copilot_mcp_owned(const char *binary_path, const char *config_path) {
     static const char *const path[] = {"mcpServers"};
@@ -3724,20 +3531,12 @@ static int cbm_remove_copilot_hooks(const char *manifest_path, const char *binar
     return rc >= 0 ? CLI_OK : CLI_ERR;
 }
 
-static int cbm_upsert_factory_mcp(const char *binary_path, const char *config_path) {
-    static const char *const path[] = {"mcpServers"};
-    return cbm_upsert_json_mcp(binary_path, config_path, path, 1U, CBM_JSON_MCP_FACTORY);
-}
 
 static int cbm_remove_factory_mcp_owned(const char *binary_path, const char *config_path) {
     static const char *const path[] = {"mcpServers"};
     return cbm_remove_json_mcp(config_path, path, 1U, CBM_JSON_MCP_FACTORY, binary_path);
 }
 
-static int cbm_upsert_crush_mcp(const char *binary_path, const char *config_path) {
-    static const char *const path[] = {"mcp"};
-    return cbm_upsert_json_mcp(binary_path, config_path, path, 1U, CBM_JSON_MCP_CRUSH);
-}
 
 static int cbm_upsert_crush_context_path(const char *config_path, const char *context_path) {
     static const char *const path[] = {"options"};
@@ -3798,18 +3597,6 @@ int cbm_cli_build_yaml_stdio_mcp_block_for_test(const char *binary_path, bool go
 }
 #endif
 
-static int cbm_upsert_yaml_stdio_mcp(const char *binary_path, const char *config_path,
-                                     const char *section_key, bool goose_schema) {
-    char block[CLI_BUF_8K];
-    if (!config_path || !section_key ||
-        cbm_build_yaml_stdio_mcp_block(binary_path, goose_schema, block, sizeof(block)) != CLI_OK) {
-        return CLI_ERR;
-    }
-    return cbm_yaml_upsert_owned_mapping_entry(config_path, section_key, "codebase-memory-mcp",
-                                               block) == CBM_YAML_IDENTITY_EDIT_OK
-               ? CLI_OK
-               : CLI_ERR;
-}
 
 static int cbm_remove_yaml_stdio_mcp(const char *binary_path, const char *config_path,
                                      const char *section_key, bool goose_schema) {
@@ -3822,17 +3609,11 @@ static int cbm_remove_yaml_stdio_mcp(const char *binary_path, const char *config
                                                block);
 }
 
-static int cbm_upsert_hermes_mcp(const char *binary_path, const char *config_path) {
-    return cbm_upsert_yaml_stdio_mcp(binary_path, config_path, "mcp_servers", false);
-}
 
 static int cbm_remove_hermes_mcp_owned(const char *binary_path, const char *config_path) {
     return cbm_remove_yaml_stdio_mcp(binary_path, config_path, "mcp_servers", false);
 }
 
-static int cbm_upsert_goose_mcp(const char *binary_path, const char *config_path) {
-    return cbm_upsert_yaml_stdio_mcp(binary_path, config_path, "extensions", true);
-}
 
 static int cbm_remove_goose_mcp_owned(const char *binary_path, const char *config_path) {
     return cbm_remove_yaml_stdio_mcp(binary_path, config_path, "extensions", true);
@@ -3840,10 +3621,6 @@ static int cbm_remove_goose_mcp_owned(const char *binary_path, const char *confi
 
 /* ── Antigravity MCP config (JSON, same mcpServers format) ────── */
 
-int cbm_upsert_antigravity_mcp(const char *binary_path, const char *config_path) {
-    /* Antigravity uses same mcpServers format as Cursor/Gemini */
-    return cbm_install_editor_mcp(binary_path, config_path);
-}
 
 int cbm_remove_antigravity_mcp(const char *config_path) {
     return cbm_remove_editor_mcp(config_path);
@@ -3891,32 +3668,8 @@ static int cbm_junie_mcp_preflight(const char *binary_path, const char *config_p
     return result;
 }
 
-int cbm_upsert_junie_mcp(const char *binary_path, const char *config_path) {
-    static const char *const path[] = {"mcpServers"};
-    if (cbm_junie_mcp_preflight(binary_path, config_path) != CLI_OK ||
-        cbm_upsert_json_named_mcp(binary_path, config_path, path, 1U, CBM_JSON_MCP_STANDARD,
-                                  CBM_DEFAULT_MCP_SERVER_NAME, NULL) != CLI_OK ||
-        cbm_upsert_json_named_mcp(binary_path, config_path, path, 1U, CBM_JSON_MCP_STANDARD,
-                                  CBM_SCOUT_MCP_SERVER_NAME,
-                                  CBM_SCOUT_PROFILE_ARGUMENT) != CLI_OK ||
-        cbm_upsert_json_named_mcp(binary_path, config_path, path, 1U, CBM_JSON_MCP_STANDARD,
-                                  CBM_ANALYSIS_MCP_SERVER_NAME,
-                                  CBM_ANALYSIS_PROFILE_ARGUMENT) != CLI_OK) {
-        return CLI_ERR;
-    }
-    return CLI_OK;
-}
 
 #ifdef CBM_CLI_ENABLE_TEST_API
-int cbm_upsert_junie_mcp_with_previous_for_testing(const char *binary_path,
-                                                   const char *previous_binary_path,
-                                                   const char *config_path) {
-    const char *saved = g_previous_managed_mcp_command;
-    g_previous_managed_mcp_command = previous_binary_path;
-    int result = cbm_upsert_junie_mcp(binary_path, config_path);
-    g_previous_managed_mcp_command = saved;
-    return result;
-}
 #endif
 
 int cbm_remove_junie_mcp(const char *config_path) {
@@ -3978,17 +3731,6 @@ static int cbm_build_vibe_mcp_body(const char *binary_path, char *body, size_t b
     return written > 0 && (size_t)written < body_size ? CLI_OK : CLI_ERR;
 }
 
-static int cbm_upsert_vibe_mcp(const char *binary_path, const char *config_path) {
-    char body[CLI_BUF_8K];
-    if (!config_path || cbm_build_vibe_mcp_body(binary_path, body, sizeof(body)) != CLI_OK) {
-        return CLI_ERR;
-    }
-    return cbm_toml_upsert_owned_named_array_table(config_path, "mcp_servers", "name",
-                                                   "codebase-memory-mcp",
-                                                   body) == CBM_TOML_OWNED_EDIT_OK
-               ? CLI_OK
-               : CLI_ERR;
-}
 
 static int cbm_remove_vibe_mcp_owned(const char *binary_path, const char *config_path) {
     char body[CLI_BUF_8K];
@@ -4014,28 +3756,6 @@ static int cbm_remove_grok_legacy_mcp(const char *config_path) {
     return cbm_toml_remove_legacy_table(config_path, GROK_CMM_TABLE, GROK_MCP_BEGIN, GROK_MCP_END);
 }
 
-static int cbm_upsert_grok_mcp(const char *binary_path, const char *config_path) {
-    if (!binary_path || !config_path) {
-        return CLI_ERR;
-    }
-    char escaped[CLI_BUF_8K];
-    if (cbm_toml_escape_basic_string(binary_path, escaped, sizeof(escaped)) != 0) {
-        return CLI_ERR;
-    }
-    /* Grok spawns stdio servers with the full parent environment (verified
-     * against grok 1.0.5), so unlike Codex (#1562) nothing has to be
-     * forwarded: CBM_CACHE_DIR and CBM_RUNTIME_DIR reach the server as-is. */
-    char block[CLI_BUF_8K];
-    int written =
-        snprintf(block, sizeof(block), GROK_CMM_SECTION "\ncommand = \"%s\"\nargs = []\n", escaped);
-    if (written < 0 || (size_t)written >= sizeof(block) ||
-        cbm_remove_grok_legacy_mcp(config_path) != 0) {
-        return CLI_ERR;
-    }
-    return cbm_toml_upsert_managed_block(config_path, GROK_MCP_BEGIN, GROK_MCP_END, block) == 0
-               ? CLI_OK
-               : CLI_ERR;
-}
 
 static int cbm_remove_grok_mcp_owned(const char *binary_path, const char *config_path) {
     (void)binary_path;
@@ -7423,7 +7143,7 @@ static void print_detected_agents(const cbm_detected_agents_t *a, const char *ho
     printf("\n\n");
 }
 
-/* Install Claude Code-specific configs (skills, MCP, hooks). */
+/* Install Claude Code-specific CLI integrations (skills and hooks). */
 /* ── Install plan recorder (issue #388) ────────────────────────────
  * When g_install_plan != NULL, the install path runs as a dry-run and each
  * write site records its planned target HERE — at the same point it would
@@ -7444,13 +7164,6 @@ typedef struct {
 static cbm_install_plan_t *g_install_plan = NULL;
 static int g_agent_install_errors = 0;
 static int g_agent_uninstall_errors = 0;
-
-/* CLI-first migration: new installs must not create MCP registrations or
- * MCP-bound agent profiles/extensions. The legacy editors/upserters remain
- * compiled because update/uninstall still need ownership-aware cleanup while
- * existing installations migrate. Remove this seam only after that migration
- * window closes; do not use it to re-enable MCP as a product surface. */
-static bool cbm_cli_first_integrations(void) { return true; }
 
 static void plan_record(const char *agent, const char *kind, const char *path) {
     if (!g_install_plan || !path || !path[0]) {
@@ -7730,36 +7443,18 @@ static void install_claude_code_config(const char *home, const char *binary_path
 
 /* Install CLI-first durable instructions for a generic agent.
  *
- * The MCP writer is intentionally retained as a parameter because this same
- * helper still compiles the legacy migration path. During the CLI-first
- * migration it is never invoked for a new install. */
-static bool install_generic_agent_config(const char *label, const char *binary_path,
-                                         const char *config_path, const char *instr_path,
-                                         bool dry_run,
-                                         int (*install_mcp)(const char *, const char *)) {
+ * Legacy MCP editors are intentionally not part of the install path. They remain
+ * available only to ownership-aware update/uninstall cleanup routines. */
+static bool install_generic_agent_config(const char *label, const char *instr_path,
+                                         bool dry_run) {
     if (g_install_plan) {
-        if (!cbm_cli_first_integrations()) {
-            plan_record(label, "mcp_config", config_path);
-        }
         if (instr_path) {
             plan_record(label, "instructions", instr_path);
         }
         return true;
     }
     printf("%s:\n", label);
-    bool mcp_installed = true;
-    if (!cbm_cli_first_integrations()) {
-        if (!dry_run) {
-            if (!prepare_config_parent(config_path) ||
-                install_mcp(binary_path, config_path) != CLI_OK) {
-                mcp_installed = false;
-                record_agent_config_error(false, label, "mcp_install", config_path);
-            }
-        }
-        printf("  mcp: %s\n", config_path);
-    } else {
-        printf("  integration: CLI instructions/hooks only (MCP registration not installed)\n");
-    }
+    printf("  integration: CLI instructions/hooks only\n");
     if (instr_path) {
         if (!dry_run) {
             if (!prepare_config_parent(instr_path) ||
@@ -7769,35 +7464,21 @@ static bool install_generic_agent_config(const char *label, const char *binary_p
         }
         printf("  instructions: %s\n", instr_path);
     }
-    return mcp_installed;
+    return true;
 }
 
-static void install_windsurf_config(const char *binary_path, const char *config_path,
-                                    const char *rules_path, bool dry_run) {
+static void install_windsurf_config(const char *rules_path, bool dry_run) {
     if (g_install_plan) {
-        if (!cbm_cli_first_integrations()) {
-            plan_record("Windsurf", "mcp_config", config_path);
-        }
         plan_record("Windsurf", "instructions", rules_path);
         return;
     }
     printf("Windsurf:\n");
-    if (!dry_run) {
-        if (!cbm_cli_first_integrations() &&
-            (!prepare_config_parent(config_path) ||
-             cbm_install_editor_mcp(binary_path, config_path) != CLI_OK)) {
-            record_agent_config_error(false, "Windsurf", "mcp_install", config_path);
-        }
-        if (!prepare_config_parent(rules_path) ||
-            cbm_upsert_windsurf_rules(rules_path, agent_instructions_content) != CLI_OK) {
-            record_agent_config_error(false, "Windsurf", "instructions_install", rules_path);
-        }
+    if (!dry_run &&
+        (!prepare_config_parent(rules_path) ||
+         cbm_upsert_windsurf_rules(rules_path, agent_instructions_content) != CLI_OK)) {
+        record_agent_config_error(false, "Windsurf", "instructions_install", rules_path);
     }
-    if (cbm_cli_first_integrations()) {
-        printf("  integration: CLI instructions only (MCP registration not installed)\n");
-    } else {
-        printf("  mcp: %s\n", config_path);
-    }
+    printf("  integration: CLI instructions only\n");
     printf("  instructions: %s\n", rules_path);
 }
 
@@ -7879,67 +7560,9 @@ static cbm_graph_access_t cbm_tiered_profile_set_access(cbm_tiered_profile_set_t
 }
 
 static void install_tiered_agent_profiles(cbm_tiered_profile_set_t profiles, bool dry_run) {
-    if (cbm_cli_first_integrations()) {
-        (void)profiles;
-        (void)dry_run;
-        return;
-    }
-    cbm_graph_access_t access = cbm_tiered_profile_set_access(profiles);
-    for (int value = 0; value < (int)CBM_GRAPH_TIER_COUNT; value++) {
-        cbm_graph_tier_t tier = (cbm_graph_tier_t)value;
-        char path[CLI_BUF_1K];
-        if (cbm_tiered_profile_path(profiles.verify_path, tier, path, sizeof(path)) != CLI_OK) {
-            record_agent_config_error(false, profiles.label, "agent_path", profiles.verify_path);
-            continue;
-        }
-        if (g_install_plan) {
-            plan_record(profiles.label, "agent", path);
-            continue;
-        }
-        if (dry_run) {
-            printf("  agent: %s\n", path);
-            continue;
-        }
-        char *current =
-            cbm_render_graph_profile(profiles.dialect, tier, access, profiles.binary_path);
-        if (!current) {
-            record_agent_config_error(false, profiles.label, "agent_render", path);
-            continue;
-        }
-        cbm_graph_access_t alternate_access =
-            access == CBM_GRAPH_ACCESS_DIRECT ? CBM_GRAPH_ACCESS_HANDOFF : CBM_GRAPH_ACCESS_DIRECT;
-        char *alternate = cbm_render_graph_profile(profiles.dialect, tier, alternate_access,
-                                                   profiles.binary_path);
-        char *codex_rc1 =
-            profiles.dialect == CBM_GRAPH_DIALECT_CODEX && access == CBM_GRAPH_ACCESS_DIRECT
-                ? cbm_render_graph_profile_codex_rc1(tier)
-                : NULL;
-        const char *released[3];
-        size_t released_count = 0U;
-        if (alternate) {
-            released[released_count++] = alternate;
-        }
-        if (codex_rc1) {
-            released[released_count++] = codex_rc1;
-        }
-        if (tier == CBM_GRAPH_TIER_VERIFY && profiles.legacy_verify_content) {
-            released[released_count++] = profiles.legacy_verify_content;
-        }
-        int result = prepare_config_parent(path)
-                         ? cbm_text_migrate_owned_document(path, current, released, released_count)
-                         : CLI_ERR;
-        free(codex_rc1);
-        free(alternate);
-        free(current);
-        if (result != CLI_OK) {
-            if (result > CLI_OK) {
-                printf("  agent: preserved modified profile %s\n", path);
-            }
-            record_agent_config_error(false, profiles.label, "agent_install", path);
-            continue;
-        }
-        printf("  agent: %s\n", path);
-    }
+    /* Legacy MCP-bound tier profiles are removal-only compatibility state. */
+    (void)profiles;
+    (void)dry_run;
 }
 
 static void uninstall_tiered_agent_profiles(cbm_tiered_profile_set_t profiles, bool dry_run) {
@@ -7997,50 +7620,12 @@ static void uninstall_tiered_agent_profiles(cbm_tiered_profile_set_t profiles, b
 static void install_tiered_profile_prompts(const char *label, const char *verify_path,
                                            cbm_graph_profile_dialect_t dialect,
                                            const char *legacy_verify_content, bool dry_run) {
-    if (cbm_cli_first_integrations()) {
-        (void)label;
-        (void)verify_path;
-        (void)dialect;
-        (void)legacy_verify_content;
-        (void)dry_run;
-        return;
-    }
-    cbm_graph_access_t access = cbm_tiered_profile_access(dialect);
-    for (int value = 0; value < (int)CBM_GRAPH_TIER_COUNT; value++) {
-        cbm_graph_tier_t tier = (cbm_graph_tier_t)value;
-        char path[CLI_BUF_1K];
-        if (cbm_tiered_profile_path(verify_path, tier, path, sizeof(path)) != CLI_OK) {
-            record_agent_config_error(false, label, "prompt_path", verify_path);
-            continue;
-        }
-        if (g_install_plan) {
-            plan_record(label, "prompt", path);
-            continue;
-        }
-        if (dry_run) {
-            printf("  prompt: %s\n", path);
-            continue;
-        }
-        char *current = cbm_render_graph_prompt(tier, access);
-        if (!current) {
-            record_agent_config_error(false, label, "prompt_render", path);
-            continue;
-        }
-        const char *released[] = {legacy_verify_content};
-        size_t released_count = tier == CBM_GRAPH_TIER_VERIFY && legacy_verify_content ? 1U : 0U;
-        int result = prepare_config_parent(path)
-                         ? cbm_text_migrate_owned_document(path, current, released, released_count)
-                         : CLI_ERR;
-        free(current);
-        if (result != CLI_OK) {
-            if (result > CLI_OK) {
-                printf("  prompt: preserved modified profile %s\n", path);
-            }
-            record_agent_config_error(false, label, "prompt_install", path);
-            continue;
-        }
-        printf("  prompt: %s\n", path);
-    }
+    /* Legacy MCP-bound prompt profiles are removal-only compatibility state. */
+    (void)label;
+    (void)verify_path;
+    (void)dialect;
+    (void)legacy_verify_content;
+    (void)dry_run;
 }
 
 static void uninstall_tiered_profile_prompts(const char *label, const char *verify_path,
@@ -8394,57 +7979,13 @@ static void install_devin_durable_context(const cbm_agent_registry_context_t *re
     }
 }
 
-/* Write a generated client extension module into `path` as a managed block.
- *
- * The module is generated from the tool registry rather than shipped (see
- * src/cli/client_adapter.h), and it goes in as a MARKED BLOCK rather than a
- * whole-file write: the directory is auto-loaded by the client, so a user may
- * legitimately keep their own module there, and clobbering it would be the
- * install routine destroying user content.
- *
- * `generate` returns heap-allocated text or NULL; NULL is a hard error rather
- * than a skip, because a silently absent extension is exactly the failure mode
- * that left #616 a no-op for six weeks. */
-static void install_generated_client_extension(const char *label, const char *path,
-                                               const char *binary_path,
-                                               char *(*generate)(const char *), bool dry_run) {
-    if (cbm_cli_first_integrations()) {
-        (void)label;
-        (void)path;
-        (void)binary_path;
-        (void)generate;
-        (void)dry_run;
-        return;
-    }
-    if (g_install_plan) {
-        plan_record(label, "extension", path);
-        return;
-    }
-    char *content = generate(binary_path);
-    if (!content) {
-        record_agent_config_error(false, label, "extension_generate", path);
-        return;
-    }
-    bool installed = true;
-    if (!dry_run && (!prepare_config_parent(path) ||
-                     cbm_text_upsert_managed_block(path, CBM_ADAPTER_MARKER_START,
-                                                   CBM_ADAPTER_MARKER_END, content) != 0)) {
-        installed = false;
-        record_agent_config_error(false, label, "extension_install", path);
-    }
-    free(content);
-    if (installed) {
-        printf("  extension: %s\n", path);
-    }
-}
+static const char LEGACY_ADAPTER_MARKER_START[] = "// codebase-memory-mcp:start";
+static const char LEGACY_ADAPTER_MARKER_END[] = "// codebase-memory-mcp:end";
 
-/* Remove only OUR marked block, never the file: a user's own module may share
- * it, and owned removal is the convention every other uninstall path here
- * follows. */
 static void uninstall_generated_client_extension(const char *label, const char *path,
                                                  bool dry_run) {
     if (!dry_run && cbm_file_exists(path) &&
-        cbm_text_remove_managed_block(path, CBM_ADAPTER_MARKER_START, CBM_ADAPTER_MARKER_END) !=
+        cbm_text_remove_managed_block(path, LEGACY_ADAPTER_MARKER_START, LEGACY_ADAPTER_MARKER_END) !=
             0) {
         record_agent_config_error(true, label, "extension_uninstall", path);
         return;
@@ -8456,15 +7997,10 @@ static void install_pi_durable_context(const char *home, const char *binary_path
                                        bool dry_run) {
     char instructions_path[CLI_BUF_1K];
     char skills_dir[CLI_BUF_1K];
-    char extension_path[CLI_BUF_1K];
     snprintf(instructions_path, sizeof(instructions_path), "%s/.pi/agent/AGENTS.md", home);
     snprintf(skills_dir, sizeof(skills_dir), "%s/.pi/agent/skills", home);
-    snprintf(extension_path, sizeof(extension_path), "%s/.pi/agent/extensions/cbmem.ts", home);
     install_managed_agent_instructions("Pi", instructions_path, dry_run);
     install_agent_skill("Pi", skills_dir, force, dry_run);
-    /* pi has no MCP client, so this bridge is its ONLY route to the graph. */
-    install_generated_client_extension("Pi", extension_path, binary_path, cbm_client_adapter_pi,
-                                       dry_run);
 }
 
 static void install_kimi_durable_context(const cbm_agent_registry_context_t *registry,
@@ -8620,35 +8156,6 @@ static void install_agent_client_registry(const char *home, const char *binary_p
 
         char config_path[CLI_BUF_1K] = {0};
         bool config_resolved = false;
-        if (!cbm_cli_first_integrations() &&
-            (profile->capabilities & CBM_AGENT_CAP_MCP) != 0U) {
-            int resolved = cbm_agent_client_resolve_path(profile->id, &registry.options,
-                                                         config_path, sizeof(config_path));
-            if (resolved != 0 || !profile->install_mcp) {
-                record_agent_config_error(false, profile->display_name, "mcp_resolve",
-                                          profile->stable_id);
-            } else if (g_install_plan) {
-                config_resolved = true;
-                plan_record(profile->display_name, "mcp_config", config_path);
-            } else {
-                config_resolved = true;
-                int edit_result = CBM_AGENT_EDIT_OK;
-                if (!dry_run) {
-                    edit_result = prepare_config_parent(config_path)
-                                      ? profile->install_mcp(profile->id, config_path, binary_path)
-                                      : CBM_AGENT_EDIT_ERROR;
-                }
-                if (edit_result == CBM_AGENT_EDIT_FOREIGN) {
-                    record_agent_config_error(false, profile->display_name, "mcp_foreign",
-                                              config_path);
-                } else if (edit_result != CBM_AGENT_EDIT_OK) {
-                    record_agent_config_error(false, profile->display_name, "mcp_install",
-                                              config_path);
-                } else {
-                    printf("  mcp: %s\n", config_path);
-                }
-            }
-        }
 
         if (profile->id == CBM_AGENT_CLIENT_QODER) {
             install_qoder_durable_context(home, binary_path, config_path, config_resolved, force,
@@ -8680,7 +8187,7 @@ static void install_agent_client_registry(const char *home, const char *binary_p
     }
 }
 
-/* Install MCP configs for CLI-based agents (Codex, Gemini, OpenCode, Antigravity, Aider). */
+/* Install CLI-first integrations for command-line agents. */
 /* Install Gemini CLI config with hooks. */
 static void install_gemini_config(const char *home, const char *binary_path, bool dry_run) {
     char cp[CLI_BUF_1K];
@@ -8689,8 +8196,7 @@ static void install_gemini_config(const char *home, const char *binary_path, boo
     snprintf(cp, sizeof(cp), "%s/.gemini/settings.json", home);
     snprintf(ip, sizeof(ip), "%s/.gemini/GEMINI.md", home);
     snprintf(ap, sizeof(ap), "%s/.gemini/agents/codebase-memory.md", home);
-    install_generic_agent_config("Gemini CLI", binary_path, cp, ip, dry_run,
-                                 cbm_install_editor_mcp);
+    install_generic_agent_config("Gemini CLI", ip, dry_run);
     install_tiered_agent_profiles(
         (cbm_tiered_profile_set_t){
             .label = "Gemini CLI",
@@ -8767,8 +8273,7 @@ static void install_cli_agent_configs(const cbm_detected_agents_t *agents, const
                 reason);
             goto codex_install_done;
         }
-        install_generic_agent_config("Codex CLI", binary_path, cp, ip, dry_run,
-                                     cbm_upsert_codex_mcp);
+        install_generic_agent_config("Codex CLI", ip, dry_run);
         install_agent_skill("Codex CLI", skills_dir, force, dry_run);
         install_tiered_agent_profiles(
             (cbm_tiered_profile_set_t){
@@ -8820,8 +8325,7 @@ static void install_cli_agent_configs(const cbm_detected_agents_t *agents, const
         snprintf(ip, sizeof(ip), "%s/.config/opencode/AGENTS.md", home);
         snprintf(skills_dir, sizeof(skills_dir), "%s/.config/opencode/skills", home);
         snprintf(ap, sizeof(ap), "%s/.config/opencode/agents/codebase-memory.md", home);
-        install_generic_agent_config("OpenCode", binary_path, cp, ip, dry_run,
-                                     cbm_upsert_opencode_mcp);
+        install_generic_agent_config("OpenCode", ip, dry_run);
         install_agent_skill("OpenCode", skills_dir, force, dry_run);
         install_tiered_agent_profiles(
             (cbm_tiered_profile_set_t){
@@ -8832,16 +8336,6 @@ static void install_cli_agent_configs(const cbm_detected_agents_t *agents, const
                 .dialect = CBM_GRAPH_DIALECT_OPENCODE,
             },
             dry_run);
-        /* OpenCode already reaches every tool over MCP (installed just above),
-         * so this adds no tools -- only the automatic graph lookup before a
-         * grep/glob that other clients get from their own hook configuration.
-         * OpenCode has no such configuration; a plugin module is its only
-         * extension point (verified against their plugin documentation). */
-        char plugin_path[CLI_BUF_1K];
-        snprintf(plugin_path, sizeof(plugin_path), "%s/.config/opencode/plugins/cbm-augment.ts",
-                 home);
-        install_generated_client_extension("OpenCode", plugin_path, binary_path,
-                                           cbm_client_adapter_opencode, dry_run);
     }
     if (agents->antigravity) {
         char cp[CLI_BUF_1K];
@@ -8855,8 +8349,7 @@ static void install_cli_agent_configs(const cbm_detected_agents_t *agents, const
             snprintf(cfg_dir, sizeof(cfg_dir), "%s/.gemini/config", home);
             cbm_mkdir_p(cfg_dir, CLI_OCTAL_PERM);
         }
-        install_generic_agent_config("Antigravity", binary_path, cp, ip, dry_run,
-                                     cbm_upsert_antigravity_mcp);
+        install_generic_agent_config("Antigravity", ip, dry_run);
         /* SessionStart is not part of Antigravity's documented hook surface.
          * Clean up the legacy entry that older installers put in a CLI-only
          * settings file, without creating that file for new installations. */
@@ -8896,36 +8389,6 @@ static void install_cli_agent_configs(const cbm_detected_agents_t *agents, const
     }
 }
 
-/* Scan Code/User/profiles/ and install (or plan) a per-profile mcp.json for
- * each existing profile subdirectory, so VS Code profile users inherit the MCP
- * server without manual steps (#431). No-op when profiles/ is absent. */
-static void install_vscode_profile_configs(const char *code_user, const char *binary_path,
-                                           bool dry_run) {
-    char profiles_dir[CLI_BUF_1K];
-    snprintf(profiles_dir, sizeof(profiles_dir), "%s/profiles", code_user);
-    cbm_dir_t *d = cbm_opendir(profiles_dir);
-    if (!d) {
-        return;
-    }
-    cbm_dirent_t *ent;
-    while ((ent = cbm_readdir(d)) != NULL) {
-        if (strcmp(ent->name, ".") == 0 || strcmp(ent->name, "..") == 0) {
-            continue;
-        }
-        char profile_path[CLI_BUF_1K];
-        snprintf(profile_path, sizeof(profile_path), "%s/%s", profiles_dir, ent->name);
-        struct stat st;
-        if (stat(profile_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
-            continue;
-        }
-        char cp[CLI_BUF_1K];
-        snprintf(cp, sizeof(cp), "%s/mcp.json", profile_path);
-        install_generic_agent_config("VS Code", binary_path, cp, NULL, dry_run,
-                                     cbm_install_vscode_mcp);
-    }
-    cbm_closedir(d);
-}
-
 static void uninstall_vscode_profile_configs(const char *code_user, const char *binary_path,
                                              bool dry_run) {
     char profiles_dir[CLI_BUF_1K];
@@ -8954,7 +8417,7 @@ static void uninstall_vscode_profile_configs(const char *code_user, const char *
     cbm_closedir(directory);
 }
 
-/* Install MCP configs for editor-based agents (Zed, KiloCode, VS Code, OpenClaw). */
+/* Install CLI-first integrations for editor-based agents. */
 static void install_editor_agent_configs(const cbm_detected_agents_t *agents, const char *home,
                                          const char *binary_path, bool force, bool dry_run) {
     if (agents->zed) {
@@ -8966,7 +8429,7 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         cbm_zed_instructions_path(home, ip, sizeof(ip));
         snprintf(cp, sizeof(cp), "%s/settings.json", config_dir);
         snprintf(skills_dir, sizeof(skills_dir), "%s/.agents/skills", home);
-        install_generic_agent_config("Zed", binary_path, cp, ip, dry_run, cbm_install_zed_mcp);
+        install_generic_agent_config("Zed", ip, dry_run);
         install_agent_skill("Zed", skills_dir, force, dry_run);
     }
     if (agents->kilocode) {
@@ -8976,7 +8439,7 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         snprintf(cp, sizeof(cp), "%s/.config/kilo/kilo.jsonc", home);
         snprintf(ip, sizeof(ip), "%s/.config/kilo/rules/codebase-memory-mcp.md", home);
         snprintf(ap, sizeof(ap), "%s/.config/kilo/agents/codebase-memory.md", home);
-        install_generic_agent_config("KiloCode", binary_path, cp, ip, dry_run, cbm_upsert_kilo_mcp);
+        install_generic_agent_config("KiloCode", ip, dry_run);
         install_tiered_agent_profiles(
             (cbm_tiered_profile_set_t){
                 .label = "KiloCode",
@@ -9026,21 +8489,7 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         }
     }
     if (agents->vscode) {
-        char code_user[CLI_BUF_1K];
-#ifdef __APPLE__
-        snprintf(code_user, sizeof(code_user), "%s/Library/Application Support/Code/User", home);
-#else
-        snprintf(code_user, sizeof(code_user), "%s/Code/User", cbm_app_config_dir());
-#endif
-        char cp[CLI_BUF_1K];
-        snprintf(cp, sizeof(cp), "%s/mcp.json", code_user);
-        install_generic_agent_config("VS Code", binary_path, cp, NULL, dry_run,
-                                     cbm_install_vscode_mcp);
-        /* VS Code profiles each keep their own settings under
-         * Code/User/profiles/<id>/. The default mcp.json above does NOT apply
-         * to a named profile, so write/plan a per-profile mcp.json for every
-         * existing profile directory (#431). */
-        install_vscode_profile_configs(code_user, binary_path, dry_run);
+        install_generic_agent_config("VS Code", NULL, dry_run);
     }
     if (agents->cursor) {
         char cp[CLI_BUF_1K];
@@ -9049,8 +8498,7 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         snprintf(cp, sizeof(cp), "%s/.cursor/mcp.json", home);
         snprintf(skills_dir, sizeof(skills_dir), "%s/.cursor/skills", home);
         snprintf(ap, sizeof(ap), "%s/.cursor/agents/codebase-memory.md", home);
-        install_generic_agent_config("Cursor", binary_path, cp, NULL, dry_run,
-                                     cbm_install_editor_mcp);
+        install_generic_agent_config("Cursor", NULL, dry_run);
         install_agent_skill("Cursor", skills_dir, force, dry_run);
         install_tiered_agent_profiles(
             (cbm_tiered_profile_set_t){
@@ -9071,7 +8519,7 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         char ip[CLI_BUF_1K];
         snprintf(cp, sizeof(cp), "%s/.codeium/windsurf/mcp_config.json", home);
         snprintf(ip, sizeof(ip), "%s/.codeium/windsurf/memories/global_rules.md", home);
-        install_windsurf_config(binary_path, cp, ip, dry_run);
+        install_windsurf_config(ip, dry_run);
     }
     if (agents->openclaw) {
         char cp[CLI_BUF_1K];
@@ -9080,8 +8528,7 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         } else {
             char workspace[CLI_BUF_1K];
             bool workspace_ok = cbm_openclaw_workspace_path(home, cp, workspace, sizeof(workspace));
-            (void)install_generic_agent_config("OpenClaw", binary_path, cp, NULL, dry_run,
-                                               cbm_install_openclaw_mcp);
+            (void)install_generic_agent_config("OpenClaw", NULL, dry_run);
             if (workspace_ok) {
                 char agents_path[CLI_BUF_1K];
                 char tools_path[CLI_BUF_1K];
@@ -9135,7 +8582,7 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         snprintf(ip, sizeof(ip), "%s/steering/codebase-memory.md", kiro_home);
         snprintf(skills_dir, sizeof(skills_dir), "%s/skills", kiro_home);
         snprintf(ap, sizeof(ap), "%s/agents/codebase-memory.json", kiro_home);
-        install_generic_agent_config("Kiro", binary_path, cp, ip, dry_run, cbm_install_editor_mcp);
+        install_generic_agent_config("Kiro", ip, dry_run);
         install_agent_skill("Kiro", skills_dir, force, dry_run);
         char *legacy_agent_content = cbm_build_legacy_kiro_verify_agent_content(binary_path);
         if (!legacy_agent_content) {
@@ -9164,8 +8611,7 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         if (!dry_run && !g_install_plan) {
             cbm_mkdir_p(sd, CLI_OCTAL_PERM);
         }
-        bool direct_profiles_ready = install_generic_agent_config("Junie", binary_path, cp, NULL,
-                                                                  dry_run, cbm_upsert_junie_mcp);
+        bool direct_profiles_ready = install_generic_agent_config("Junie", NULL, dry_run);
         install_agent_skill("Junie", skills_dir, force, dry_run);
         if (!direct_profiles_ready && !g_install_plan) {
             printf("  subagents: direct MCP withheld; installed parent-handoff profiles\n");
@@ -9192,8 +8638,7 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         cbm_hermes_home_dir(home, hermes_home, sizeof(hermes_home));
         snprintf(cp, sizeof(cp), "%s/config.yaml", hermes_home);
         snprintf(skills_dir, sizeof(skills_dir), "%s/skills", hermes_home);
-        install_generic_agent_config("Hermes", binary_path, cp, NULL, dry_run,
-                                     cbm_upsert_hermes_mcp);
+        install_generic_agent_config("Hermes", NULL, dry_run);
         install_agent_skill("Hermes", skills_dir, force, dry_run);
         if (g_install_plan) {
             plan_record("Hermes", "hook", cp);
@@ -9218,8 +8663,7 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         char skills_dir[CLI_BUF_1K];
         snprintf(cp, sizeof(cp), "%s/.openhands/mcp.json", home);
         snprintf(skills_dir, sizeof(skills_dir), "%s/.agents/skills", home);
-        install_generic_agent_config("OpenHands", binary_path, cp, NULL, dry_run,
-                                     cbm_install_editor_mcp);
+        install_generic_agent_config("OpenHands", NULL, dry_run);
         install_agent_skill("OpenHands", skills_dir, force, dry_run);
     }
     if (agents->augment) {
@@ -9235,8 +8679,7 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
                  AUGMENT_SESSION_SCRIPT);
         snprintf(coverage_hp, sizeof(coverage_hp), "%s/.augment/hooks/%s", home,
                  AUGMENT_COVERAGE_SCRIPT);
-        install_generic_agent_config("Augment/Auggie", binary_path, cp, ip, dry_run,
-                                     cbm_install_editor_mcp);
+        install_generic_agent_config("Augment/Auggie", ip, dry_run);
         install_tiered_agent_profiles(
             (cbm_tiered_profile_set_t){
                 .label = "Augment/Auggie",
@@ -9288,10 +8731,8 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         snprintf(ide_cp, sizeof(ide_cp), "%s/settings/cline_mcp_settings.json", cline_data);
         snprintf(ip, sizeof(ip), "%s/rules/codebase-memory-mcp.md", cline_root);
         snprintf(skills_dir, sizeof(skills_dir), "%s/skills", cline_root);
-        install_generic_agent_config("Cline", binary_path, cli_cp, ip, dry_run,
-                                     cbm_upsert_cline_mcp);
-        install_generic_agent_config("Cline IDE", binary_path, ide_cp, NULL, dry_run,
-                                     cbm_upsert_cline_mcp);
+        install_generic_agent_config("Cline", ip, dry_run);
+        install_generic_agent_config("Cline IDE", NULL, dry_run);
         install_agent_skill("Cline", skills_dir, force, dry_run);
         reconcile_cline_context_hooks(cline_root, binary_path, dry_run);
     }
@@ -9311,8 +8752,7 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         snprintf(ip, sizeof(ip), "%s/QWEN.md", qwen_home);
         snprintf(skills_dir, sizeof(skills_dir), "%s/skills", qwen_home);
         snprintf(ap, sizeof(ap), "%s/agents/codebase-memory.md", qwen_home);
-        install_generic_agent_config("Qwen Code", binary_path, cp, ip, dry_run,
-                                     cbm_install_editor_mcp);
+        install_generic_agent_config("Qwen Code", ip, dry_run);
         install_agent_skill("Qwen Code", skills_dir, force, dry_run);
         install_tiered_agent_profiles(
             (cbm_tiered_profile_set_t){
@@ -9345,8 +8785,7 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         cbm_copilot_config_dir(home, config_dir, sizeof(config_dir));
         snprintf(cp, sizeof(cp), "%s/mcp-config.json", config_dir);
         snprintf(ip, sizeof(ip), "%s/copilot-instructions.md", config_dir);
-        install_generic_agent_config("Copilot CLI", binary_path, cp, ip, dry_run,
-                                     cbm_upsert_copilot_mcp);
+        install_generic_agent_config("Copilot CLI", ip, dry_run);
     }
     if (agents->vscode || agents->copilot_cli) {
         install_copilot_durable_context(home, binary_path, force, dry_run);
@@ -9362,8 +8801,7 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         snprintf(hp, sizeof(hp), "%s/.factory/hooks.json", home);
         snprintf(ap, sizeof(ap), "%s/.factory/droids/codebase-memory.md", home);
         snprintf(skills_dir, sizeof(skills_dir), "%s/.factory/skills", home);
-        install_generic_agent_config("Factory Droid", binary_path, cp, ip, dry_run,
-                                     cbm_upsert_factory_mcp);
+        install_generic_agent_config("Factory Droid", ip, dry_run);
         install_agent_skill("Factory Droid", skills_dir, force, dry_run);
         install_tiered_agent_profiles(
             (cbm_tiered_profile_set_t){
@@ -9400,7 +8838,7 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         char ip[CLI_BUF_1K];
         cbm_crush_config_path(home, cp, sizeof(cp));
         snprintf(ip, sizeof(ip), "%s/.config/crush/codebase-memory.md", home);
-        install_generic_agent_config("Crush", binary_path, cp, NULL, dry_run, cbm_upsert_crush_mcp);
+        install_generic_agent_config("Crush", NULL, dry_run);
         if (g_install_plan) {
             plan_record("Crush", "instructions", ip);
         } else {
@@ -9422,7 +8860,7 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         cbm_goose_config_dir(home, config_dir, sizeof(config_dir));
         snprintf(cp, sizeof(cp), "%s/config.yaml", config_dir);
         snprintf(ip, sizeof(ip), "%s/.config/goose/.goosehints", home);
-        install_generic_agent_config("Goose", binary_path, cp, ip, dry_run, cbm_upsert_goose_mcp);
+        install_generic_agent_config("Goose", ip, dry_run);
     }
     if (agents->mistral_vibe) {
         char config_dir[CLI_BUF_1K];
@@ -9437,8 +8875,7 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         snprintf(skills_dir, sizeof(skills_dir), "%s/skills", config_dir);
         snprintf(ap, sizeof(ap), "%s/agents/codebase-memory.toml", config_dir);
         snprintf(prompt_path, sizeof(prompt_path), "%s/prompts/codebase-memory.md", config_dir);
-        install_generic_agent_config("Mistral Vibe", binary_path, cp, ip, dry_run,
-                                     cbm_upsert_vibe_mcp);
+        install_generic_agent_config("Mistral Vibe", ip, dry_run);
         install_agent_skill("Mistral Vibe", skills_dir, force, dry_run);
         install_tiered_agent_profiles(
             (cbm_tiered_profile_set_t){
@@ -9465,8 +8902,7 @@ static void install_additional_agent_configs(const cbm_detected_agents_t *agents
         snprintf(ip, sizeof(ip), "%s/rules/codebase-memory.md", config_dir);
         snprintf(skills_dir, sizeof(skills_dir), "%s/skills", config_dir);
         snprintf(ap, sizeof(ap), "%s/agents/codebase-memory.md", config_dir);
-        install_generic_agent_config("Grok Build", binary_path, cp, ip, dry_run,
-                                     cbm_upsert_grok_mcp);
+        install_generic_agent_config("Grok Build", ip, dry_run);
         install_agent_skill("Grok Build", skills_dir, force, dry_run);
         install_tiered_agent_profiles(
             (cbm_tiered_profile_set_t){
@@ -10981,14 +10417,14 @@ static void uninstall_agent_client_registry(const char *home, bool dry_run) {
         if ((profile->capabilities & CBM_AGENT_CAP_MCP) != 0U) {
             int resolved = cbm_agent_client_resolve_path(profile->id, &registry.options,
                                                          config_path, sizeof(config_path));
-            if (resolved != 0 || !profile->remove_mcp) {
+            if (resolved != 0 || !profile->remove_legacy_mcp) {
                 record_agent_config_error(true, profile->display_name, "mcp_resolve",
                                           profile->stable_id);
             } else {
                 config_resolved = true;
                 int edit_result = dry_run
                                       ? CBM_AGENT_EDIT_OK
-                                      : profile->remove_mcp(profile->id, config_path, binary_path);
+                                      : profile->remove_legacy_mcp(profile->id, config_path, binary_path);
                 if (edit_result == CBM_AGENT_EDIT_FOREIGN) {
                     printf("  mcp: preserved modified or foreign entry in %s\n", config_path);
                 } else if (edit_result != CBM_AGENT_EDIT_OK) {

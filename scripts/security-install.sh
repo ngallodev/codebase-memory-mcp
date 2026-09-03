@@ -50,14 +50,12 @@ echo "--- Verifying written file paths ---"
 find "$HOME" -type f > "$TMPDIR/created_files.txt" 2>/dev/null || true
 
 # Expected path patterns (relative to HOME):
-#   .config/*/mcp.json (or .mcp.json variants)
-#   .claude/skills/*
-#   .agents/skills/*
-#   .claude/settings.json
-#   .continue/config.yaml
-#   .codeium/config.json
-#   .local/bin/codebase-memory-mcp
-#   Various agent config dirs
+#   CLI-first skills/instructions/hooks under supported agent directories
+#   .local/bin/codebase-memory-cli when the binary is installed into HOME
+#   shell profile edits used to expose the CLI on PATH
+#
+# MCP registration files are intentionally NOT allowlisted: a clean install
+# creating one is a product regression and is rejected explicitly below.
 
 EXPECTED_PATTERNS=(
     ".agents/"
@@ -72,8 +70,6 @@ EXPECTED_PATTERNS=(
     ".local/bin/"
     "AGENTS.md"
     "CONVENTIONS.md"
-    ".mcp.json"
-    "mcp.json"
     ".zshrc"
     ".bashrc"
     ".profile"
@@ -93,6 +89,19 @@ while IFS= read -r filepath; do
     if ! $matched; then
         echo "REVIEW: Unexpected file created: $relpath"
     fi
+done < "$TMPDIR/created_files.txt"
+
+# Clean CLI-first installs must never recreate the retired MCP registration
+# surface or the retired executable name. Match basenames so unrelated prose
+# files containing the token "mcp" do not trigger a false positive.
+while IFS= read -r filepath; do
+    base=$(basename "$filepath")
+    case "$base" in
+        .mcp.json|mcp.json|codebase-memory-mcp|codebase-memory-mcp.exe)
+            echo "BLOCKED: Clean install recreated retired MCP artifact: ${filepath#"$HOME/"}"
+            FAIL=1
+            ;;
+    esac
 done < "$TMPDIR/created_files.txt"
 
 # ── 3. Check for writes to sensitive paths ───────────────────────

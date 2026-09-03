@@ -171,5 +171,5 @@ if ($FromSource) {
     Write-Host ""
     Write-Host "  To uninstall:" -ForegroundColor White
     Write-Host "    Remove-Item -Recurse -Force '$InstallDir'"
-    Write-Host "    Remove-Item -Recurse -Force `"$env:LOCALAPPDATA\codebase-memory-mcp`"  # graph database"
+    Write-Host "    Remove-Item -Recurse -Force `"$env:LOCALAPPDATA\codebase-memory-mcp`"  # legacy-compatible graph database location"
 }

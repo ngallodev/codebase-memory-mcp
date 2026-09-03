@@ -218,7 +218,7 @@ esac
 case "$cmd" in
 status)
     "${SSH[@]}" "echo VM_REACHABLE & ver"
-    vm clangarm64 "cd $VM_REPO 2>/dev/null && git log --oneline -1 && ls -la build/c/codebase-memory-mcp.exe build/c/test-runner.exe 2>/dev/null || echo 'repo/build missing — run provision-windows.sh'"
+    vm clangarm64 "cd $VM_REPO 2>/dev/null && git log --oneline -1 && ls -la build/c/codebase-memory-cli.exe build/c/test-runner.exe 2>/dev/null || echo 'repo/build missing — run provision-windows.sh'"
     ;;
 update)
     vm clangarm64 "cd $VM_REPO && git fetch origin ${BRANCH} && git reset --hard FETCH_HEAD && git clean -fdx && git log --oneline -1"

@@ -178,7 +178,7 @@ while IFS= read -r file; do
         | grep -v '^\s*//' || true)
     [[ -z "$matches" ]] && continue
     case "$relfile" in
-        src/cli/cli.c|src/store/store.c|src/pipeline/*.c|src/foundation/log.c|src/foundation/diagnostics.c|src/ui/http_server.c|src/ui/config.c|src/mcp/mcp.c)
+        src/cli/cli.c|src/store/store.c|src/pipeline/*.c|src/foundation/log.c|src/foundation/diagnostics.c|src/ui/http_server.c|src/ui/config.c)
             ;; # Known safe (diagnostics.c: atomic .tmp+rename metrics dump to configured path)
         *)
             actual_count=$(printf '%s\n' "$matches" | wc -l | tr -d ' ')
@@ -240,43 +240,8 @@ if ! $TIMEBOMB_FOUND; then
     echo "OK: No suspicious time-bomb patterns found."
 fi
 
-# ── 5. MCP tool handler file read audit ──────────────────────────
-# The MCP server (mcp.c) handles tool calls that return data to the
-# client. A malicious PR could add file reads that exfiltrate sensitive
-# data (e.g., ~/.ssh/id_rsa) through the normal tool response channel.
-# Track all file-reading functions in mcp.c against an allow-list.
+# ── 5. GitHub Actions pinned to SHA ───────────────────────────────
 
-echo ""
-echo "--- Scanning MCP tool handlers for file reads ---"
-
-MCP_FILE="$ROOT/src/mcp/mcp.c"
-MCP_READS_OK=true
-if [ -f "$MCP_FILE" ]; then
-    # Known safe file reads in mcp.c (with line-range context)
-    # - search_code: writes pattern to tmpfile, reads grep output
-    # - get_code_snippet: reads source via read_file_lines (path-contained)
-    # - manage_adr: reads/writes ADR files
-    # - detect_changes: reads git diff output
-    # - update check: reads the version-check HTTP response (fixed buffer)
-    # - HTTP transport: reads the incoming request body (content-length bound)
-    # Count fopen/fread calls and compare against expected
-    FOPEN_COUNT=$(grep -c 'fopen\|fread\|read_file' "$MCP_FILE" 2>/dev/null || echo "0")
-    # Update this when legitimate reads are added. 15 reads audited as of the
-    # search/ADR/Windows-support commits — all path-contained or transport
-    # reads, no new exfiltration surface.
-    EXPECTED_MAX=15
-    if [ "$FOPEN_COUNT" -gt "$EXPECTED_MAX" ]; then
-        echo "REVIEW: src/mcp/mcp.c has $FOPEN_COUNT file read operations (expected max $EXPECTED_MAX)"
-        echo "  New file reads in MCP tool handlers must be reviewed for data exfiltration risk."
-        MCP_READS_OK=false
-    fi
-fi
-
-if $MCP_READS_OK; then
-    echo "OK: MCP tool handler file reads within expected count."
-fi
-
-# ── 6. GitHub Actions pinned to SHA ───────────────────────────────
 # Mutable tags (@v4) can be moved by compromised maintainers.
 # All Actions must be pinned to full commit SHAs.
 

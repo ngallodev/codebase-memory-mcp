@@ -10,7 +10,7 @@
 #include "../src/foundation/compat.h"
 #include "test_framework.h"
 #include "test_helpers.h"
-#include <mcp/mcp.h>
+#include "test_operation_host.h"
 #include <store/store.h>
 #include <pipeline/pipeline.h>
 #include <foundation/log.h>
@@ -26,7 +26,7 @@
 
 static char g_tmpdir[256];
 static char g_dbpath[512];
-static cbm_mcp_server_t *g_srv = NULL;
+static cbm_test_operation_host_t *g_srv = NULL;
 static char *g_project = NULL;
 
 /* Create source files in temp directory */
@@ -124,14 +124,14 @@ static int integration_setup(void) {
      *   3. Pipeline runs → dumps to ~/.cache/.../<project>.db
      *   4. Server reopens from that db
      * This exercises the exact same path as real usage. */
-    g_srv = cbm_mcp_server_new(NULL);
+    g_srv = cbm_test_operation_host_new(NULL);
     if (!g_srv)
         return -1;
 
     /* Index our temp project via MCP tool handler */
     char args[512];
     snprintf(args, sizeof(args), "{\"repo_path\":\"%s\"}", g_tmpdir);
-    char *resp = cbm_mcp_handle_tool(g_srv, "index_repository", args);
+    char *resp = cbm_test_operation_execute(g_srv, "index_repository", args);
     if (!resp)
         return -1;
 
@@ -143,7 +143,7 @@ static int integration_setup(void) {
 
 static void integration_teardown(void) {
     if (g_srv) {
-        cbm_mcp_server_free(g_srv);
+        cbm_test_operation_host_free(g_srv);
         g_srv = NULL;
     }
     free(g_project);
@@ -169,7 +169,7 @@ static void integration_teardown(void) {
 static char *call_tool(const char *tool, const char *args) {
     if (!g_srv)
         return NULL;
-    return cbm_mcp_handle_tool(g_srv, tool, args);
+    return cbm_test_operation_execute(g_srv, tool, args);
 }
 
 TEST(integ_index_has_nodes) {
@@ -412,7 +412,7 @@ TEST(integ_mcp_trace_path_cross_service) {
     cbm_store_free_nodes(dst, dst_count);
     cbm_store_close(store);
 
-    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    cbm_test_operation_host_t *srv = cbm_test_operation_host_new(NULL);
     ASSERT_NOT_NULL(srv);
 
     char args[256];
@@ -420,7 +420,7 @@ TEST(integ_mcp_trace_path_cross_service) {
              "{\"function_name\":\"greet\",\"project\":\"%s\","
              "\"direction\":\"outbound\",\"mode\":\"cross_service\"}",
              g_project);
-    char *resp = cbm_mcp_handle_tool(srv, "trace_path", args);
+    char *resp = cbm_test_operation_execute(srv, "trace_path", args);
     ASSERT_NOT_NULL(resp);
     ASSERT_NOT_NULL(strstr(resp, "farewell"));
     free(resp);
@@ -429,12 +429,12 @@ TEST(integ_mcp_trace_path_cross_service) {
              "{\"function_name\":\"greet\",\"project\":\"%s\","
              "\"direction\":\"outbound\",\"mode\":\"calls\"}",
              g_project);
-    resp = cbm_mcp_handle_tool(srv, "trace_path", args);
+    resp = cbm_test_operation_execute(srv, "trace_path", args);
     ASSERT_NOT_NULL(resp);
     ASSERT_TRUE(strstr(resp, "farewell") == NULL);
     free(resp);
 
-    cbm_mcp_server_free(srv);
+    cbm_test_operation_host_free(srv);
     PASS();
 }
 
@@ -780,11 +780,11 @@ TEST(index_reports_excluded_subtrees_issue411) {
     fputs("export function dep() { return 2; }\n", f);
     fclose(f);
 
-    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    cbm_test_operation_host_t *srv = cbm_test_operation_host_new(NULL);
     ASSERT_NOT_NULL(srv);
     char args[600];
     snprintf(args, sizeof(args), "{\"repo_path\":\"%s\"}", tmp);
-    char *resp = cbm_mcp_handle_tool(srv, "index_repository", args);
+    char *resp = cbm_test_operation_execute(srv, "index_repository", args);
     ASSERT_NOT_NULL(resp);
 
     /* The dropped node_modules/dep.js must be reported somewhere compact in the
@@ -792,7 +792,7 @@ TEST(index_reports_excluded_subtrees_issue411) {
      * excluded/skipped summary at all → this fails (reproduces the silent drop). */
     bool reports_excluded = strstr(resp, "excluded") != NULL || strstr(resp, "skipped") != NULL;
     free(resp);
-    cbm_mcp_server_free(srv);
+    cbm_test_operation_host_free(srv);
     th_rmtree(tmp);
     ASSERT_TRUE(reports_excluded);
     PASS();

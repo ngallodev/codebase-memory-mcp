@@ -404,7 +404,7 @@ jobs:
             # The expected hash comes from the selector's provenance manifest,
             # not from the file being checked. package-release.sh independently
             # re-hashes the file and therefore exercises manifest -> file ->
-            # archive/MCPB binding instead of comparing a file to itself.
+            # archive binding instead of comparing a file to itself.
             selected_sha="$(awk -F '\t' -v wanted="$target" '!header { for (i = 1; i <= NF; i++) { if ($i == "target") target_col = i; if ($i == "selected_sha256") sha_col = i } if (target_col && sha_col) header = 1; next } $target_col == wanted { count++; selected = $sha_col } END { if (count != 1 || length(selected) != 64 || selected ~ /[^0-9a-f]/) exit 3; print selected }' release-selection/release-selection.tsv)"
             scripts/package-release.sh "$goos" "$goarch" \
               --selected-binary "$selected" \
@@ -437,7 +437,6 @@ jobs:
           subject-path: |
             release-containers/**/*.tar.gz
             release-containers/**/*.zip
-            release-containers/**/*.mcpb
             selection-evidence/*.tsv
 
       - name: Preserve candidate selection evidence

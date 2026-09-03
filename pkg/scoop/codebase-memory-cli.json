@@ -5,9 +5,9 @@
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/DeusData/codebase-memory-mcp/releases/download/v0.8.1/codebase-memory-mcp-windows-amd64.zip",
+      "url": "https://github.com/DeusData/codebase-memory-mcp/releases/download/v0.8.1/codebase-memory-cli-windows-amd64.zip",
       "hash": "a602ad090ed3f49d86c55472f73f27ad7055222806a82358f2e08513e027f00f",
-      "bin": "codebase-memory-mcp.exe"
+      "bin": "codebase-memory-cli.exe"
     }
   },
   "checkver": {
@@ -16,10 +16,10 @@
   "autoupdate": {
     "architecture": {
       "64bit": {
-        "url": "https://github.com/DeusData/codebase-memory-mcp/releases/download/v$version/codebase-memory-mcp-windows-amd64.zip",
+        "url": "https://github.com/DeusData/codebase-memory-mcp/releases/download/v$version/codebase-memory-cli-windows-amd64.zip",
         "hash": {
           "url": "https://github.com/DeusData/codebase-memory-mcp/releases/download/v$version/checksums.txt",
-          "find": "([a-f0-9]{64})\\s+codebase-memory-mcp-windows-amd64\\.zip"
+          "find": "([a-f0-9]{64})\\s+codebase-memory-cli-windows-amd64\\.zip"
         }
       }
     }

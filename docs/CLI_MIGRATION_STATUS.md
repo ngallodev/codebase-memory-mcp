@@ -1,6 +1,6 @@
 # Codebase Memory CLI Migration — Plan and Status
 
-**Updated:** 2026-09-02  
+**Updated:** 2026-09-03  
 **Current authoritative baseline:** latest complete consolidated source attached to the project sources page  
 **Checkpoint policy:** prior overlay/checkpoint archives are historical only and are not replayed or used to reconstruct repository state.  
 **Direction:** CLI-first code intelligence with a protocol-neutral operation API and coordination daemon; MCP is transitional compatibility only and must ultimately disappear.
@@ -14,7 +14,7 @@ Status markers: **COMPLETE**, **PARTIAL**, **REMAINING**, **BLOCKED/EXTERNAL**.
 - **COMPLETE** Canonical exploration loop exists for `index`, `projects`, `status`, `search`, `snippet`, `trace`, and `coverage`.
 - **COMPLETE** Neutral graph/source commands now also include `schema`, `query`, `architecture`, `changes`, `source-search`, `outline`, and `compare`.
 - **COMPLETE** Existing cache/index/database naming and persisted compatibility-sensitive internals remain unchanged.
-- **PARTIAL** Legacy installer/release cleanup remains where MCP-era ownership/removal compatibility is still required.
+- **PARTIAL** Legacy installer/update/uninstall cleanup remains only for ownership-aware removal of MCP-era state; active install paths are structurally CLI-first and no longer carry an MCP-enable transition flag.
 
 ## 2. Neutral operation API / MCP extraction
 
@@ -34,14 +34,13 @@ Status markers: **COMPLETE**, **PARTIAL**, **REMAINING**, **BLOCKED/EXTERNAL**.
 - **COMPLETE** `get_file_outline` -> `outline`
 - **COMPLETE** `compare_graphs` -> `compare`
 
-For migrated operations, the authoritative implementation lives under `src/operations/`; MCP routes through a compatibility adapter and must not own a duplicate handler body.
+The authoritative application implementation lives under `src/operations/`; there is no production MCP compatibility adapter or duplicate MCP handler body.
 
 ### Protocol-neutral execution support
 
 - **COMPLETE (consolidated CP39 implementation)** bounded shell-command/process-tree execution used by source search and change detection moved out of MCP into `src/operations/command_runner.*`.
 - **COMPLETE (consolidated CP39 implementation)** operation runtime carries cancellation and bounded-command test/limit overrides without an MCP server dependency.
 - **COMPLETE (consolidated CP39 implementation)** daemon `REQUEST_OPERATION` supplies neutral cancellation context to long-running operations.
-- **COMPLETE (consolidated CP39 implementation)** MCP compatibility maps its request cancellation/test seams into the neutral operation runtime.
 
 ### Remaining read-only audit
 
@@ -101,20 +100,24 @@ Rule during extraction: preserve behavior first, route all consumers to the neut
 
 ## 7. MCP subsystem retirement
 
+- **COMPLETE (CP40/CP41):** `src/mcp/`, protocol-only MCP tests, MCP stdio fuzz/introspection tooling, Glama MCP-directory packaging, MCP registry metadata, and MCPB bundle publication machinery are removed from active product/release infrastructure.
+- **COMPLETE (CP41):** stale test-runner/TSan references to deleted MCP suites are removed, restoring a coherent neutral test graph.
 - **COMPLETE for read-analysis business logic:** all ordinary read-heavy handlers identified in the handoff, plus file outline and graph comparison, now live under `src/operations/`; MCP is only a compatibility adapter for them.
 - **COMPLETE:** the generation-aware store recovery/cache host now lives in `src/operations/store_host.*`, including integrity classification, confirmed-corruption quarantine, legacy renamed-database fallback, request/idle invalidation, and no-store diagnostics.
 - **COMPLETE:** daemon `REQUEST_OPERATION` sessions own/use the neutral store host directly; neutral operation store resolution no longer reaches through `cbm_mcp_server_t` or public MCP store-adapter APIs.
 - **COMPLETE for production execution:** normal CLI, daemon, supervised worker, and UI paths no longer construct or call `cbm_mcp_server_t`. The UI `/rpc` compatibility endpoint maps its two allowlisted calls directly to neutral operations and a neutral store host.
 - **COMPLETE:** supervised worker -> daemon coordinator result transport now uses a neutral operation-result wire (`payload` + `is_error`) rather than an MCP tool-result envelope.
 - **COMPLETE:** reusable JSON argument parsing, supervised-result classification, auto-index file-count admission, tool-profile vocabulary, and CLI/client tool metadata/schema ownership have neutral homes outside `src/mcp/`.
-- **COMPLETE for production link:** `MCP_SRCS` is empty; `src/mcp/mcp.c` is no longer part of `PROD_SRCS`. Changed production surfaces strict-compile with `-Werror`; the full native build has progressed through the large grammar/LSP compile without a missing-MCP dependency, but has not yet reached link completion inside the bounded command window.
-- **PARTIAL:** `src/mcp/` remains in the repository only because MCP-specific historical tests still include and exercise that API. It is no longer a production dependency.
-- **REMAINING:** migrate/delete MCP-only tests and fixtures, then physically delete `src/mcp/{mcp.c,mcp.h,mcp_internal.h}` and remove the empty Makefile category.
-- **REMAINING:** decide whether any tool-catalog metadata should be simplified now that it serves CLI/agent adapters rather than `tools/list`; prompts and JSON-RPC protocol code disappear with `src/mcp/`.
-- **REMAINING:** remove MCP-only installer/release surfaces once legacy owned-config cleanup is no longer required.
-- **REMAINING:** delete `src/mcp/` only after it owns no application business logic.
+- **COMPLETE:** the physical `src/mcp/` subsystem and protocol-only `tests/test_mcp.c` suite are removed.
+- **COMPLETE:** behavioral indexing/grammar/incremental/integration test harnesses no longer construct an MCP server; retained suites use a neutral test operation host over `cbm_operation_execute`.
+- **COMPLETE:** the empty `MCP_SRCS` Makefile category is removed; production and test source lists no longer require MCP sources.
+- **COMPLETE:** reusable JSON argument parsing used by test/daemon surfaces has a neutral `src/operations/json_args.*` home.
+- **COMPLETE for active invariant/security harnesses:** `scripts/smoke-invariants.sh` now exercises the CLI-first workflow rather than MCP initialize/tools-list protocol behavior, and `scripts/security-audit.sh` no longer expects `src/mcp/mcp.c`.
+- **PARTIAL:** active release/package tooling still contains MCP-era product naming and publication assumptions. These are release-surface debt, not runtime architecture dependencies.
+- **REMAINING:** simplify tool-catalog metadata where MCP-era metadata is no longer useful to CLI/agent clients.
+- **REMAINING:** clean active installer/release/package/smoke assumptions while preserving ownership-aware cleanup of legacy installed MCP state.
 
-There are no remaining authoritative `handle_*` application bodies in `src/mcp/mcp.c`. Cross-repository mode and ADR both route through the neutral operation layer. `src/mcp/` now has no production consumer. Its remaining value is historical test coverage and protocol-era fixtures; production session, cancellation, store recovery, indexing, UI dispatch, argument parsing, tool metadata, auto-index admission, and supervised-result classification are neutral.
+No production or retained C behavioral-test source includes `mcp/mcp.h` or calls `cbm_mcp_server_*` / `cbm_mcp_handle_tool`. The obsolete protocol implementation is physically absent from the tree.
 
 ## 8. Release readiness
 
@@ -125,10 +128,9 @@ There are no remaining authoritative `handle_*` application bodies in `src/mcp/m
 ### Public CLI-first release
 
 - **NOT READY YET.** Primary blockers:
-  1. MCP-specific historical tests/fixtures must be migrated or retired so `src/mcp/` can be physically deleted.
-  2. Legacy MCP release/install publishing surfaces still require cleanup or explicit quarantine as legacy removal support.
-  3. Native Windows validation evidence must be reviewed.
-  4. Final high-value end-to-end/concurrency/recovery/release verification remains.
+  1. Legacy MCP release/install/package/smoke publishing surfaces still require cleanup or explicit quarantine as legacy removal support.
+  2. Native Windows validation evidence must be reviewed.
+  3. Final high-value end-to-end/concurrency/recovery/release verification remains.
 
 ## 9. Consolidated-source policy
 
@@ -147,9 +149,9 @@ There are no remaining authoritative `handle_*` application bodies in `src/mcp/m
 7. **COMPLETE:** retire transitional `REQUEST_TOOL`; CLI/daemon application commands now use only the neutral operation request and preserve operation error status without MCP envelopes.
 8. **COMPLETE:** split the generic maintenance observer into `src/daemon/maintenance_monitor.*` and delete the orphaned `REQUEST_MCP`/JSON-RPC stdio frontend.
 9. **COMPLETE for production:** remove direct UI MCP dispatch and neutralize production utility/schema/profile ownership; unlink `src/mcp/mcp.c` from the product build.
-10. Migrate/delete MCP-only tests and fixtures, physically delete `src/mcp/`, and clean legacy installer/release surfaces.
+10. **COMPLETE for runtime/test architecture:** migrate/delete MCP-only tests and physically delete `src/mcp/`; **REMAINING:** clean legacy installer/release/package/smoke surfaces.
 11. Complete benchmark/baseline tooling and run the high-value end-to-end/concurrency/recovery/release verification appropriate for the milestone.
 
 ## 11. Drift assessment
 
-**On target.** Runtime Assurance and concurrency work was front-loaded before the second read-heavy extraction group. Subprocess cancellation/supervision, indexing, ADR, deletion, trace-ingest, and cross-repository behavior have now crossed the neutral operation boundary without leaving duplicate authoritative handlers in MCP. The project is at the intended next phase boundary: normal daemon operation state (store, root/project policy, cancellation) is neutral and does not allocate MCP. The production runtime and product link are now MCP-free. The remaining MCP work is repository cleanup: migrate or retire MCP-specific historical tests/fixtures, physically delete `src/mcp/`, and remove legacy installer/release surfaces while preserving the neutral coordination/correctness kernel.
+**On target.** Runtime Assurance and concurrency work was front-loaded before the second read-heavy extraction group. Subprocess cancellation/supervision, indexing, ADR, deletion, trace-ingest, and cross-repository behavior have now crossed the neutral operation boundary without leaving duplicate authoritative handlers in MCP. The project is at the intended next phase boundary: normal daemon operation state (store, root/project policy, cancellation) is neutral and does not allocate MCP. The production runtime and product link are now MCP-free. The remaining MCP-era work is now release/package/documentation cleanup rather than runtime architecture: remove obsolete protocol assumptions and product naming while preserving legacy owned-state cleanup where compatibility requires it.

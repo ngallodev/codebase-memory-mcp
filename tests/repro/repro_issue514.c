@@ -156,7 +156,7 @@ TEST(repro_issue514_data_flow_surfaces_arg_expr) {
              "\"mode\":\"data_flow\"}",
              lp.project);
 
-    char *resp = cbm_mcp_handle_tool(lp.srv, "trace_path", args);
+    char *resp = cbm_test_operation_execute(lp.srv, "trace_path", args);
     ASSERT_NOT_NULL(resp);
 
     fprintf(stderr, "  [514] trace_path data_flow response: %.400s\n", resp);

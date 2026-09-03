@@ -294,7 +294,7 @@ if [ "${CBM_RUN_HANG_TEST:-0}" = "1" ]; then
     bash "$ROOT/tests/test_cpp_index_hang.sh"
 fi
 
-# Step 5: Parent-death watchdog regression (#406/#407). Builds the prod stdio
+# Step 5: Parent-death watchdog regression (#406/#407). Builds the production CLI
 # binary and verifies it self-exits when its launching parent is killed.
 #
 # TEST_SEAMS=1: the worker-mode leg below needs the crash-orphan probe, which is
@@ -304,7 +304,7 @@ fi
 # they stay that way.
 echo "=== Step 5: parent-death watchdog regression (#406/#407) ==="
 make -j"$NPROC" -f Makefile.cbm cbm TEST_SEAMS=1 ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"}
-WATCHDOG_BINARY="$ROOT/$BUILD_DIR/codebase-memory-mcp"
+WATCHDOG_BINARY="$ROOT/$BUILD_DIR/codebase-memory-cli"
 CBM_TEST_BINARY="$WATCHDOG_BINARY" bash "$ROOT/tests/test_parent_watchdog.sh"
 
 # Step 5b: worker-mode parent-death watchdog (#845). A supervised index worker
@@ -313,7 +313,7 @@ CBM_TEST_BINARY="$WATCHDOG_BINARY" bash "$ROOT/tests/test_parent_watchdog.sh"
 echo "=== Step 5b: worker-mode watchdog regression (#845) ==="
 CBM_TEST_BINARY="$WATCHDOG_BINARY" bash "$ROOT/tests/test_worker_watchdog.sh"
 
-# Step 5c: a worker-delivered MCP error is transport success. The outer CLI
+# Step 5c: a worker-delivered operation error is transport success. The outer CLI
 # still exits nonzero for the user-facing tool error, but the supervisor must
 # preserve that response instead of misreporting exit_nonzero as a file crash.
 echo "=== Step 5c: worker error-response transport regression ==="

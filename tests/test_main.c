@@ -21,7 +21,8 @@ int tf_skip_count = 0;
 #include "daemon/ipc.h"            /* Windows private-lock re-exec probe */
 #include "daemon/version_cohort.h" /* Windows crash-turnover re-exec probe */
 #include "operations/index_supervisor.h"  /* cbm_index_set_worker_role */
-#include "mcp/mcp.h"               /* cbm_mcp_handle_tool — act as a real worker */
+#include "operations/json_args.h"
+#include "test_operation_host.h"
 #include "ui/http_server.h"       /* deleted-self executable probe */
 #include <sqlite3.h>
 #include <errno.h>
@@ -309,7 +310,7 @@ static void tf_index_worker_probe(const char *args_json, const char *response_ou
  * exact build-bound worker grammar produced by cbm_index_worker_start(), act
  * as a faithful in-process index worker instead of re-running the test suites.
  * This lets the deterministic
- * gating guard (test_mcp.c) spawn a REAL worker child that indexes the fixture and
+ * gating guard spawn a REAL worker child that indexes the fixture and
  * writes its response back, using only public APIs — no production test seam.
  * Returns an exit code (>=0) when it handled a worker invocation, else -1. */
 static int tf_maybe_run_index_worker(int argc, char **argv) {
@@ -339,7 +340,7 @@ static int tf_maybe_run_index_worker(int argc, char **argv) {
     }
     /* Mirror the production worker entry (run_cli's caller in main.c): the log
      * header is the first thing a worker records. */
-    char *worker_repo_path = cbm_mcp_get_string_arg(invocation.args_json, "repo_path");
+    char *worker_repo_path = cbm_json_string_arg(invocation.args_json, "repo_path");
     cbm_index_worker_log_begin(invocation.args_json, worker_repo_path);
     free(worker_repo_path);
     cbm_index_set_worker_role_options(true, invocation.response_out, invocation.single_thread,
@@ -347,11 +348,11 @@ static int tf_maybe_run_index_worker(int argc, char **argv) {
                                       invocation.memory_budget_bytes);
     cbm_mem_init_with_cap(0.5, invocation.memory_budget_bytes);
     tf_index_worker_probe(invocation.args_json, invocation.response_out);
-    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    cbm_test_operation_host_t *srv = cbm_test_operation_host_new(NULL);
     if (!srv) {
         return 1;
     }
-    char *result = cbm_mcp_handle_tool(srv, "index_repository", invocation.args_json);
+    char *result = cbm_test_operation_execute(srv, "index_repository", invocation.args_json);
     if (result) {
         const char *ro = cbm_index_worker_response_out();
         if (ro) {
@@ -612,22 +613,6 @@ static int tf_maybe_run_runtime_mapped_hello_client(int argc, char **argv) {
 #endif
 }
 
-static int tf_maybe_run_mcp_idxfailclosed_probe(int argc, char **argv) {
-#ifndef _WIN32
-    if (argc != 4 || strcmp(argv[1], "__cbm_mcp_idxfailclosed_probe") != 0) {
-        return -1;
-    }
-    extern int mcp_test_idxfailclosed_supervisor_start_check(const char *repo_dir,
-                                                             const char *cache_dir);
-    alarm(20);
-    return mcp_test_idxfailclosed_supervisor_start_check(argv[2], argv[3]);
-#else
-    (void)argc;
-    (void)argv;
-    return -1;
-#endif
-}
-
 static int tf_maybe_run_deleted_self_probe(int argc, char **argv) {
 #if defined(__linux__) || defined(__APPLE__)
     if (argc != 5 || strcmp(argv[1], "__cbm_deleted_self_probe") != 0) {
@@ -758,8 +743,6 @@ extern void suite_store_nodes(void);
 extern void suite_store_edges(void);
 extern void suite_store_search(void);
 extern void suite_cypher(void);
-extern void suite_mcp(void);
-extern void suite_mcp_mutation_guard(void);
 extern void suite_index_supervisor(void);
 extern void suite_daemon(void);
 extern void suite_project_lock(void);
@@ -898,12 +881,8 @@ int main(int argc, char **argv) {
     /* Installation tests use this executable as a structurally real candidate.
      * Mirror the production binary's minimal verification contract. */
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-        (void)puts("codebase-memory-mcp test-runner");
+        (void)puts("codebase-memory-cli test-runner");
         return 0;
-    }
-    int mcp_idxfailclosed_rc = tf_maybe_run_mcp_idxfailclosed_probe(argc, argv);
-    if (mcp_idxfailclosed_rc >= 0) {
-        return mcp_idxfailclosed_rc;
     }
     int runtime_image_rc = tf_maybe_run_runtime_image_holder(argc, argv);
     if (runtime_image_rc >= 0) {
@@ -943,7 +922,7 @@ int main(int argc, char **argv) {
 
     /* Capture once so the parent tests and any re-exec'd worker bind to this
      * executable image. A worker with an unavailable/mismatched identity is
-     * rejected by the exact parser below before any suite or MCP state exists. */
+     * rejected by the exact parser below before any suite or operation state exists. */
     (void)cbm_index_supervisor_capture_build_fingerprint();
 
     /* #832: if spawned as a supervised index worker, do the real work and exit
@@ -953,7 +932,7 @@ int main(int argc, char **argv) {
         return worker_rc;
     }
 
-    /* #845 belt-and-suspenders: this binary EMBEDS cbm_mcp_handle_tool. The
+    /* #845 belt-and-suspenders: this binary can execute the neutral index operation. The
      * supervisor gate already ignores unmarked hosts, but pin the kill switch
      * too so even a future supervisor-marked test host can never resolve THIS
      * binary as `<self> cli --index-worker …` and recursively re-run suites.
@@ -981,7 +960,7 @@ int main(int argc, char **argv) {
         }
     }
     if (!g_list_only) {
-        printf("\n  codebase-memory-mcp  C test suite\n");
+        printf("\n  codebase-memory-cli  C test suite\n");
     }
 
     /* Foundation */
@@ -1022,12 +1001,10 @@ int main(int argc, char **argv) {
     /* Cypher (M6) */
     RUN_SELECTED_SUITE(cypher);
 
-    /* MCP Server (M9) */
-    RUN_SELECTED_SUITE(mcp);
-    RUN_SELECTED_SUITE(mcp_mutation_guard);
+    /* Neutral index supervision and daemon coordination. */
     RUN_SELECTED_SUITE(index_supervisor);
 
-    /* Shared MCP daemon coordination + private framing */
+    /* Daemon coordination + private framing */
     RUN_SELECTED_SUITE(daemon);
     RUN_SELECTED_SUITE(project_lock);
     RUN_SELECTED_SUITE(version_cohort);

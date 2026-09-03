@@ -42,13 +42,13 @@ test('Unix extraction requests only the validated root executable', () => {
 
   extractExactTarArchive(
     '/tmp/release.tar.gz', '/tmp/extract', UNIX_ARCHIVE_NAMES,
-    'codebase-memory-mcp', runner,
+    'codebase-memory-cli', runner,
   );
 
   assert.deepEqual(calls[0].args, ['-tzf', '/tmp/release.tar.gz']);
   assert.deepEqual(
     calls[1].args,
-    ['-xzf', '/tmp/release.tar.gz', '-C', '/tmp/extract', 'codebase-memory-mcp'],
+    ['-xzf', '/tmp/release.tar.gz', '-C', '/tmp/extract', 'codebase-memory-cli'],
   );
 });
 

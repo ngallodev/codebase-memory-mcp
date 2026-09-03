@@ -82,7 +82,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-SOURCE_BINARY="$BUILD_DIR/codebase-memory-mcp"
+SOURCE_BINARY="$BUILD_DIR/codebase-memory-cli"
 if [ "$GOOS" = "windows" ] && [ -f "${SOURCE_BINARY}.exe" ]; then
     SOURCE_BINARY="${SOURCE_BINARY}.exe"
 fi
@@ -144,9 +144,9 @@ if [ "$GOOS" = "windows" ]; then
         bash test-infrastructure/vm/vm-smoke.sh
 else
     tar -xzf "$WORK_DIR/$NAME.tar.gz" -C "$EXTRACT_DIR"
-    chmod +x "$EXTRACT_DIR/codebase-memory-mcp"
+    chmod +x "$EXTRACT_DIR/codebase-memory-cli"
     echo "=== smoke-artifact: smoking EXTRACTED $NAME.tar.gz via smoke-local.sh ==="
     CBM_SMOKE_ARTIFACT_DIR="$EXTRACT_DIR" \
-        scripts/smoke-local.sh "$EXTRACT_DIR/codebase-memory-mcp"
+        scripts/smoke-local.sh "$EXTRACT_DIR/codebase-memory-cli"
 fi
 echo "=== smoke-artifact: $NAME passed ==="

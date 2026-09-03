@@ -55,7 +55,7 @@ CANONICAL = re.compile(
     r"|scripts/check-no-test-skips\.sh"
     r"|scripts/check-lsp-originality\.sh"
     r"|scripts/test-windows\.ps1"
-    r"|pkg/glama/verify\.sh"
+
 )
 
 # ── Layer 1: forbidden in ANY workflow (the known drift signatures) ──
