@@ -6,7 +6,7 @@ Date: 2026-09-03
 
 - Local path: `/lump/apps/codebase-memory-cli`
 - Branch: `release-tooling`
-- HEAD: `4c3b8234` (`feat: unlink production MCP implementation`)
+- HEAD: `fae6ff45` (`docs: deprecate MCP-dependent tests`)
 - Fork: `https://github.com/ngallodev/codebase-memory-cli`
 
 ## Completed
@@ -18,6 +18,8 @@ Date: 2026-09-03
 - Deleted the daemon MCP frontend, its test, and MCP index-supervisor sources.
 - Preserved focused incremental local build rules and neutral session teardown.
 - Added `scripts/analyze-memory.sh` and maintained `BACKLOG.md`.
+- Marked all detected MCP-dependent test and repro sources deprecated in
+  `tests/DEPRECATED_MCP_TESTS.md`.
 
 ## Validation
 
