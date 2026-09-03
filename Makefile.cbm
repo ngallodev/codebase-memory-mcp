@@ -540,6 +540,8 @@ TEST_STORE_SRCS = \
 TEST_CYPHER_SRCS = \
     tests/test_cypher.c
 
+# DEPRECATED: MCP-dependent tests are inventoried in
+# tests/DEPRECATED_MCP_TESTS.md and are outside CLI validation.
 TEST_MCP_SRCS = \
     tests/test_mcp.c \
     tests/test_index_supervisor.c
