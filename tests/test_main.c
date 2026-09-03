@@ -767,7 +767,6 @@ extern void suite_version_cohort(void);
 extern void suite_daemon_version(void);
 extern void suite_daemon_runtime(void);
 extern void suite_daemon_application(void);
-extern void suite_daemon_frontend(void);
 extern void suite_daemon_bootstrap(void);
 extern void suite_daemon_ipc(void);
 extern void suite_language(void);
@@ -1035,7 +1034,6 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(daemon_version);
     RUN_SELECTED_SUITE(daemon_runtime);
     RUN_SELECTED_SUITE(daemon_application);
-    RUN_SELECTED_SUITE(daemon_frontend);
     RUN_SELECTED_SUITE(daemon_bootstrap);
     RUN_SELECTED_SUITE(daemon_ipc);
 

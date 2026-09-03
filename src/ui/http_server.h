@@ -3,7 +3,7 @@
  *
  * Binds to 127.0.0.1:<port> only (localhost).
  * Serves embedded frontend assets and proxies /rpc to a dedicated
- * read-only cbm_mcp_server_t instance.
+ * neutral read-side store host.
  *
  * Runs in a background pthread, same pattern as the watcher thread.
  */
@@ -27,7 +27,7 @@ typedef bool (*cbm_http_project_mutation_begin_fn)(void *context, const char *pr
 typedef void (*cbm_http_project_mutation_end_fn)(void *context, const char *project);
 
 /* Create an HTTP server on the given port.
- * Creates its own cbm_mcp_server_t with a separate read-only SQLite connection.
+ * Creates its own neutral store host with a separate read-only SQLite connection.
  * Returns NULL on failure (e.g. port in use). */
 cbm_http_server_t *cbm_http_server_new(int port);
 

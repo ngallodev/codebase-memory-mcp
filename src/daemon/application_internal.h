@@ -5,7 +5,6 @@
 #define CBM_DAEMON_APPLICATION_INTERNAL_H
 
 #include "daemon/application.h"
-#include "mcp/mcp.h" /* cbm_jsonrpc_request_t */
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -37,12 +36,5 @@ int cbm_daemon_application_background_initializes_for_test(void);
  * that a request QUEUED rather than erroring or starting. */
 int cbm_daemon_application_busy_queue_waits_for_test(void);
 
-/* Build the JSON-RPC error substituted for a reply too large to frame (#1375).
- * Exposed because the alternative — driving a real >10 MiB reply — needs a
- * ~20k-node index, a fixture cost the unit suite should not carry. The
- * end-to-end behaviour is covered by the repro in the issue. Caller frees.
- * `request` may be NULL (unparseable message → no id echoed). */
-char *cbm_daemon_application_framable_response_for_test(char *response,
-                                                        const cbm_jsonrpc_request_t *request);
 
 #endif /* CBM_DAEMON_APPLICATION_INTERNAL_H */

@@ -3752,7 +3752,9 @@ TEST(daemon_ipc_posix_current_generation_crash_cleanup_requires_startup_lock) {
         (void)close(ready_pipe[1]);
         /* Deliberately bypass listener_close: the kernel releases descriptors
          * and locks, while the current-generation socket identity remains. */
-        _exit(listener && reported ? 0 : 1);
+        int child_result = listener && reported ? 0 : 1;
+        cbm_daemon_ipc_endpoint_free(endpoint);
+        _exit(child_result);
     }
     if (child > 0) {
         (void)close(ready_pipe[1]);

@@ -924,7 +924,7 @@ static void *runtime_real_application_detect_changes_thread(void *opaque) {
     runtime_real_application_call_t *call = opaque;
     uint32_t timeout_ms = call->timeout_ms ? call->timeout_ms : RUNTIME_TEST_TIMEOUT_MS;
     call->status =
-        cbm_daemon_application_client_tool(call->client, "detect_changes", call->arguments,
+        cbm_daemon_application_client_operation(call->client, "detect_changes", call->arguments,
                                            &call->response, &call->response_length, timeout_ms);
     atomic_store_explicit(&call->completed, true, memory_order_release);
     return NULL;
@@ -934,7 +934,7 @@ static bool runtime_real_application_ingest_probe(cbm_daemon_runtime_client_t *c
     uint8_t *response = NULL;
     uint32_t response_length = 0;
     cbm_daemon_runtime_application_status_t status =
-        cbm_daemon_application_client_tool(client, "ingest_traces", "{\"traces\":[]}", &response,
+        cbm_daemon_application_client_operation(client, "ingest_traces", "{\"traces\":[]}", &response,
                                            &response_length, RUNTIME_TEST_TIMEOUT_MS);
     bool usable = status == CBM_DAEMON_RUNTIME_APPLICATION_OK && response && response_length > 0 &&
                   strstr((const char *)response, "traces_received");
@@ -3661,10 +3661,10 @@ TEST(daemon_runtime_disconnect_cancels_blocked_non_index_child_and_preserves_oth
               : NULL;
     bool contexts_set =
         first && second &&
-        cbm_daemon_application_client_set_context(first, root, root, CBM_MCP_TOOL_PROFILE_ALL, NULL,
+        cbm_daemon_application_client_set_context(first, root, root, CBM_TOOL_PROFILE_ALL, NULL,
                                                   NULL, RUNTIME_TEST_TIMEOUT_MS) ==
             CBM_DAEMON_RUNTIME_APPLICATION_OK &&
-        cbm_daemon_application_client_set_context(second, root, root, CBM_MCP_TOOL_PROFILE_ALL,
+        cbm_daemon_application_client_set_context(second, root, root, CBM_TOOL_PROFILE_ALL,
                                                   NULL, NULL, RUNTIME_TEST_TIMEOUT_MS) ==
             CBM_DAEMON_RUNTIME_APPLICATION_OK;
     bool second_usable_before =

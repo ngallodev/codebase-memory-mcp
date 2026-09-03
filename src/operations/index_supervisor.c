@@ -859,3 +859,19 @@ void cbm_index_worker_result_free(cbm_index_worker_result_t *result) {
         result->response = NULL;
     }
 }
+
+cbm_index_supervised_result_disposition_t cbm_index_supervised_result_disposition(
+    int spawn_result, const cbm_index_worker_result_t *worker_result) {
+    if (spawn_result != 0 || !worker_result || worker_result->outcome == CBM_PROC_SPAWN_FAILED) {
+        return CBM_INDEX_SUPERVISED_RESULT_FALLBACK;
+    }
+    if (worker_result->cancellation_requested || !worker_result->tree_quiesced ||
+        worker_result->supervision_failed) {
+        return CBM_INDEX_SUPERVISED_RESULT_UNSAFE_TERMINAL;
+    }
+    if (worker_result->outcome == CBM_PROC_CLEAN) {
+        return worker_result->response ? CBM_INDEX_SUPERVISED_RESULT_SUCCESS
+                                       : CBM_INDEX_SUPERVISED_RESULT_FALLBACK;
+    }
+    return CBM_INDEX_SUPERVISED_RESULT_CONTAINED_FAILURE;
+}

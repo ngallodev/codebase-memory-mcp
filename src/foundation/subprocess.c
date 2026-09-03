@@ -901,7 +901,7 @@ static cbm_proc_poll_t cbm_subprocess_poll_win(cbm_subprocess_t *process, cbm_pr
  * Raising the budget for everyone would be the wrong fix: an unsanitized
  * machine that is genuinely out of capacity should still fail fast rather than
  * hang for seconds. So the extra patience is scoped to the builds that need it,
- * the same way the daemon announce backstop is (test_daemon_frontend.c). Three
+ * the same way the daemon announce backstop is in the daemon IPC coverage. Three
  * more doublings take the sanitized ceiling to roughly 5s. */
 #if CBM_SANITIZED
 enum { CBM_SPAWN_RETRY = 2, CBM_SPAWN_RETRY_ATTEMPTS = 9 };

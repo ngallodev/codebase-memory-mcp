@@ -46,6 +46,7 @@ enum {
 #include "operations/operation.h"
 #include "operations/index.h"
 #include "operations/project_arg.h"
+#include "operations/store_host.h"
 #include "store/store.h"
 #include <sqlite3.h>
 #include "cypher/cypher.h"
@@ -1477,10 +1478,7 @@ bool cbm_mcp_get_bool_arg(const char *args_json, const char *key) {
  * ══════════════════════════════════════════════════════════════════ */
 
 struct cbm_mcp_server {
-    cbm_store_t *store;     /* currently open project store (or NULL) */
-    bool owns_store;        /* true if we opened the store */
-    char *current_project;  /* which project store is open for (heap) */
-    time_t store_last_used; /* last time resolve_store was called for a named project */
+    cbm_store_host_t *store_host; /* neutral generation-aware cached store host */
 
     /* Session + auto-index state */
     char session_root[CBM_SZ_1K];     /* detected project root path */
@@ -1499,8 +1497,6 @@ struct cbm_mcp_server {
     cbm_mcp_project_mutation_try_begin_fn mutation_try_begin;
     cbm_mcp_project_mutation_end_fn mutation_end;
     void *mutation_context;
-    cbm_mcp_quarantine_test_hook_fn quarantine_test_hook;
-    void *quarantine_test_context;
     cbm_mcp_command_test_hook_fn command_test_hook;
     void *command_test_context;
 #ifdef CBM_ENABLE_TEST_SEAMS
@@ -1533,7 +1529,6 @@ static cbm_mcp_server_t *mcp_server_alloc_base(void) {
     }
     cbm_mutex_init(&srv->request_scope_mutex);
     atomic_init(&srv->pipeline_cancel_requested, 0);
-    srv->owns_store = true;
     srv->tool_profile = CBM_MCP_TOOL_PROFILE_ALL;
     srv->background_tasks = true;
     return srv;
@@ -1545,19 +1540,25 @@ cbm_mcp_server_t *cbm_mcp_server_new(const char *store_path) {
         return NULL;
     }
 
-    /* If a store_path is given, open that project directly.
-     * Otherwise, create an in-memory store for test/embedded use. */
-    if (store_path) {
-        srv->store = cbm_store_open(store_path);
-        srv->current_project = heap_strdup(store_path);
-    } else {
-        srv->store = cbm_store_open_memory();
+    srv->store_host = cbm_store_host_new(store_path);
+    if (!srv->store_host) {
+        cbm_mutex_destroy(&srv->request_scope_mutex);
+        free(srv);
+        return NULL;
     }
     return srv;
 }
 
 cbm_mcp_server_t *cbm_mcp_server_new_deferred_store(void) {
-    return mcp_server_alloc_base();
+    cbm_mcp_server_t *srv = mcp_server_alloc_base();
+    if (!srv) return NULL;
+    srv->store_host = cbm_store_host_new_deferred();
+    if (!srv->store_host) {
+        cbm_mutex_destroy(&srv->request_scope_mutex);
+        free(srv);
+        return NULL;
+    }
+    return srv;
 }
 
 void cbm_mcp_server_set_tool_profile(cbm_mcp_server_t *srv, cbm_mcp_tool_profile_t profile) {
@@ -1567,15 +1568,11 @@ void cbm_mcp_server_set_tool_profile(cbm_mcp_server_t *srv, cbm_mcp_tool_profile
 }
 
 cbm_store_t *cbm_mcp_server_store(cbm_mcp_server_t *srv) {
-    return srv ? srv->store : NULL;
+    return srv ? cbm_store_host_store(srv->store_host) : NULL;
 }
 
 void cbm_mcp_server_set_project(cbm_mcp_server_t *srv, const char *project) {
-    if (!srv) {
-        return;
-    }
-    free(srv->current_project);
-    srv->current_project = project ? heap_strdup(project) : NULL;
+    if (srv) cbm_store_host_set_project(srv->store_host, project);
 }
 
 void cbm_mcp_server_set_watcher(cbm_mcp_server_t *srv, struct cbm_watcher *w) {
@@ -1585,20 +1582,9 @@ void cbm_mcp_server_set_watcher(cbm_mcp_server_t *srv, struct cbm_watcher *w) {
 }
 
 void cbm_mcp_server_detach_project(cbm_mcp_server_t *srv, const char *project) {
-    if (!srv || !project || !project[0]) {
-        return;
-    }
-    if (srv->current_project && strcmp(srv->current_project, project) == 0) {
-        if (srv->owns_store && srv->store) {
-            cbm_store_close(srv->store);
-            srv->store = NULL;
-        }
-        free(srv->current_project);
-        srv->current_project = NULL;
-    }
-    if (srv->watcher) {
-        cbm_watcher_unwatch(srv->watcher, project);
-    }
+    if (!srv || !project || !project[0]) return;
+    cbm_store_host_detach_project(srv->store_host, project);
+    if (srv->watcher) cbm_watcher_unwatch(srv->watcher, project);
 }
 
 void cbm_mcp_server_set_config(cbm_mcp_server_t *srv, struct cbm_config *cfg) {
@@ -1697,12 +1683,15 @@ void cbm_mcp_server_set_project_mutation_guard(cbm_mcp_server_t *srv,
     srv->mutation_try_begin = NULL;
     srv->mutation_end = end;
     srv->mutation_context = begin ? context : NULL;
+    cbm_store_host_set_mutation_guard(srv->store_host, begin, srv->mutation_try_begin, end, context);
 }
 
 void cbm_mcp_server_set_project_mutation_try_guard(
     cbm_mcp_server_t *srv, cbm_mcp_project_mutation_try_begin_fn try_begin) {
     if (srv && srv->mutation_begin) {
         srv->mutation_try_begin = try_begin;
+        cbm_store_host_set_mutation_guard(srv->store_host, srv->mutation_begin, try_begin,
+                                          srv->mutation_end, srv->mutation_context);
     }
 }
 
@@ -1728,10 +1717,7 @@ void cbm_mcp_server_free(cbm_mcp_server_t *srv) {
     if (srv->autoindex_active) {
         cbm_thread_join(&srv->autoindex_tid);
     }
-    if (srv->owns_store && srv->store) {
-        cbm_store_close(srv->store);
-    }
-    free(srv->current_project);
+    cbm_store_host_free(srv->store_host);
     free(srv->allowed_root);
     free(srv->active_request_id_str);
     cbm_mutex_destroy(&srv->request_scope_mutex);
@@ -1741,42 +1727,15 @@ void cbm_mcp_server_free(cbm_mcp_server_t *srv) {
 /* ── Idle store eviction ──────────────────────────────────────── */
 
 void cbm_mcp_server_evict_idle(cbm_mcp_server_t *srv, int timeout_s) {
-    if (!srv || !srv->store) {
-        return;
-    }
-    /* Protect initial in-memory stores that were never accessed via a named project.
-     * store_last_used stays 0 until resolve_store is called with a non-NULL project. */
-    if (srv->store_last_used == 0) {
-        return;
-    }
-
-    time_t now = time(NULL);
-    if ((now - srv->store_last_used) < timeout_s) {
-        return;
-    }
-
-    if (srv->owns_store) {
-        cbm_store_close(srv->store);
-    }
-    srv->store = NULL;
-    free(srv->current_project);
-    srv->current_project = NULL;
-    srv->store_last_used = 0;
+    if (srv) cbm_store_host_evict_idle(srv->store_host, timeout_s);
 }
 
 bool cbm_mcp_server_has_cached_store(cbm_mcp_server_t *srv) {
-    return (srv && srv->store != NULL) != 0;
+    return srv && cbm_store_host_has_cached_store(srv->store_host);
 }
 
 bool cbm_mcp_server_release_pristine_memory_store(cbm_mcp_server_t *srv) {
-    const char *db_path = srv && srv->store ? cbm_store_db_path(srv->store) : NULL;
-    if (!srv || !srv->owns_store || !srv->store || srv->current_project ||
-        srv->store_last_used != 0 || db_path != NULL) {
-        return false;
-    }
-    cbm_store_close(srv->store);
-    srv->store = NULL;
-    return true;
+    return srv && cbm_store_host_release_pristine_memory_store(srv->store_host);
 }
 
 cbm_pipeline_t *cbm_mcp_server_active_pipeline(cbm_mcp_server_t *srv) {
@@ -1835,8 +1794,7 @@ void cbm_mcp_server_set_quarantine_test_hook(cbm_mcp_server_t *srv,
     if (!srv) {
         return;
     }
-    srv->quarantine_test_hook = hook;
-    srv->quarantine_test_context = context;
+    cbm_store_host_set_quarantine_step_hook(srv->store_host, hook, context);
 }
 
 void cbm_mcp_server_set_command_test_hook(cbm_mcp_server_t *srv, cbm_mcp_command_test_hook_fn hook,
@@ -1868,386 +1826,34 @@ void cbm_mcp_server_set_search_scan_timeout_for_test(cbm_mcp_server_t *srv, uint
     }
 }
 
-/* ── Cache dir + project DB path helpers ───────────────────────── */
-
-/* Returns the cache directory. Writes to buf, returns buf for convenience. */
-static const char *cache_dir(char *buf, size_t bufsz) {
-    const char *dir = cbm_resolve_cache_dir();
-    if (!dir) {
-        dir = cbm_tmpdir();
-    }
-    snprintf(buf, bufsz, "%s", dir);
-    return buf;
-}
-
-/* Returns full .db path for a project: <cache_dir>/<project>.db */
-static const char *project_db_path(const char *project, char *buf, size_t bufsz) {
-    if (!cbm_validate_project_name(project)) {
-        buf[0] = '\0';
-        return buf;
-    }
-    char dir[CBM_SZ_1K];
-    cache_dir(dir, sizeof(dir));
-    snprintf(buf, bufsz, "%s/%s.db", dir, project);
-    return buf;
-}
-
-/* ── Store resolution ──────────────────────────────────────────── */
-
-/* Read the sole INTERNAL project name from a .db file at full_path.
- * Opens the file query-mode (no create) and succeeds ONLY when the db holds
- * exactly one project row with a non-empty name — this filters ghost/empty
- * /corrupt dbs (0-byte file, missing `projects` table, or >1 row). On success
- * the internal name is copied into name_out; if out_store is non-NULL the open
- * handle is transferred to the caller (who must cbm_store_close it). On failure
- * the store is always closed. Defined after is_project_db_file below. */
-static bool db_internal_project_name(const char *full_path, char *name_out, size_t name_sz,
-                                     cbm_store_t **out_store);
-
-/* #704 fallback: scan the cache dir for the db whose sole internal project name
- * equals `project`, returning an open store handle (caller owns it) or NULL.
- * Used only when <project>.db is absent or its internal name differs from the
- * passed name (drifted filename). Defined after is_project_db_file below. */
-static cbm_store_t *resolve_store_fallback_scan(const char *project);
-
-static bool reserve_unique_corrupt_pending(const char *path, char *pending, size_t pending_size,
-                                           char *backup, size_t backup_size) {
-    static atomic_uint_fast64_t sequence = 0;
-    for (unsigned int attempt = 0; attempt < 128; attempt++) {
-        uint64_t token = cbm_now_ns() ^ ((uint64_t)(unsigned int)getpid() << 32) ^
-                         atomic_fetch_add_explicit(&sequence, 1, memory_order_relaxed);
-        int backup_written =
-            snprintf(backup, backup_size, "%s.corrupt.%016llx", path, (unsigned long long)token);
-        int pending_written = snprintf(pending, pending_size, "%s.corrupt.pending.%016llx", path,
-                                       (unsigned long long)token);
-        if (backup_written <= 0 || (size_t)backup_written >= backup_size || pending_written <= 0 ||
-            (size_t)pending_written >= pending_size) {
-            return false;
-        }
-        if (cbm_file_exists(backup)) {
-            continue;
-        }
-#ifdef _WIN32
-        wchar_t *wide = cbm_path_to_wide(pending);
-        HANDLE file = wide ? CreateFileW(wide, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_NEW,
-                                         FILE_ATTRIBUTE_NORMAL, NULL)
-                           : INVALID_HANDLE_VALUE;
-        DWORD create_error = file == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
-        free(wide);
-        if (file != INVALID_HANDLE_VALUE) {
-            CloseHandle(file);
-            return true;
-        }
-        if (create_error != ERROR_FILE_EXISTS && create_error != ERROR_ALREADY_EXISTS) {
-            return false;
-        }
-#else
-        int fd = open(pending, O_WRONLY | O_CREAT | O_EXCL, 0600);
-        if (fd >= 0) {
-            (void)close(fd);
-            return true;
-        }
-        if (errno != EEXIST) {
-            return false;
-        }
-#endif
-    }
-    return false;
-}
-
-static void discard_corrupt_pending(const char *pending) {
-    if (!pending) {
-        return;
-    }
-    (void)cbm_remove_db_sidecars(pending);
-    (void)cbm_unlink(pending);
-}
-
-#ifndef _WIN32
-static bool sync_parent_directory(const char *path) {
-    char directory[CBM_SZ_2K];
-    int written = snprintf(directory, sizeof(directory), "%s", path ? path : "");
-    if (written <= 0 || (size_t)written >= sizeof(directory)) {
-        return false;
-    }
-    char *slash = strrchr(directory, '/');
-    if (!slash) {
-        snprintf(directory, sizeof(directory), ".");
-    } else if (slash == directory) {
-        slash[1] = '\0';
-    } else {
-        *slash = '\0';
-    }
-    int fd = open(directory, O_RDONLY | O_DIRECTORY);
-    if (fd < 0) {
-        return false;
-    }
-    int rc;
-    do {
-        rc = fsync(fd);
-    } while (rc != 0 && errno == EINTR);
-    (void)close(fd);
-    return rc == 0;
-}
-#endif
-
-/* Publish only a fully closed SQLite snapshot, without ever replacing a prior
- * recovery file. POSIX link() and Windows MoveFileExW without REPLACE are
- * atomic no-clobber operations within the cache directory. */
-static bool publish_corrupt_backup(const char *pending, const char *backup) {
-#ifdef _WIN32
-    wchar_t *wide_pending = cbm_path_to_wide(pending);
-    wchar_t *wide_backup = cbm_path_to_wide(backup);
-    bool published = wide_pending && wide_backup &&
-                     MoveFileExW(wide_pending, wide_backup, MOVEFILE_WRITE_THROUGH) != 0;
-    free(wide_pending);
-    free(wide_backup);
-    return published;
-#else
-    if (link(pending, backup) != 0) {
-        return false;
-    }
-    if (!sync_parent_directory(backup)) {
-        (void)cbm_unlink(backup);
-        return false;
-    }
-    /* A crash before this cleanup merely leaves a second link to the same
-     * complete snapshot; the published recovery generation is already safe. */
-    (void)cbm_unlink(pending);
-    (void)sync_parent_directory(backup);
-    return true;
-#endif
-}
-
-static bool quarantine_step_allowed(cbm_mcp_server_t *srv, const char *step) {
-    return !srv || !srv->quarantine_test_hook ||
-           srv->quarantine_test_hook(srv->quarantine_test_context, step);
-}
-
-/* Create one transactionally consistent, self-contained recovery snapshot
- * (SQLite backup incorporates committed WAL frames), publish it atomically,
- * and only then remove the corrupt live generation. A crash can therefore
- * leave the live DB, the completed backup, or both, but never destroys the
- * only recoverable generation. */
-static bool quarantine_corrupt_store(cbm_mcp_server_t *srv, const char *project, const char *path,
-                                     char *backup_out, size_t backup_out_size) {
-    char backup[CBM_SZ_2K];
-    char pending[CBM_SZ_2K];
-    /* #1425 belt-and-braces: an empty store path would render the backup as a
-     * bare relative ".corrupt.<hex>" in the process cwd. There is nothing at
-     * such a path worth quarantining. */
-    if (!path || !path[0]) {
-        cbm_log_error("store.auto_clean_failed", "project", project, "path", "", "reason",
-                      "empty store path");
-        return false;
-    }
-    if (!reserve_unique_corrupt_pending(path, pending, sizeof(pending), backup, sizeof(backup))) {
-        cbm_log_error("store.auto_clean_failed", "project", project, "path", path, "reason",
-                      "cannot reserve unique backup");
-        return false;
-    }
-
-    if (cbm_store_backup_path(path, pending) != CBM_STORE_OK ||
-        cbm_store_prepare_path_for_replace(pending) != CBM_STORE_OK) {
-        discard_corrupt_pending(pending);
-        cbm_log_error("store.auto_clean_failed", "project", project, "path", path, "reason",
-                      "cannot create self-contained recovery snapshot");
-        return false;
-    }
-
-    cbm_store_t *snapshot = cbm_store_open_path_query(pending);
-    if (!snapshot) {
-        discard_corrupt_pending(pending);
-        cbm_log_error("store.auto_clean_failed", "project", project, "path", path, "reason",
-                      "recovery snapshot cannot be reopened");
-        return false;
-    }
-    cbm_store_close(snapshot);
-
-    if (!quarantine_step_allowed(srv, "before_snapshot_publish") ||
-        !publish_corrupt_backup(pending, backup)) {
-        discard_corrupt_pending(pending);
-        cbm_log_error("store.auto_clean_failed", "project", project, "path", path, "reason",
-                      "cannot atomically publish recovery snapshot");
-        return false;
-    }
-    discard_corrupt_pending(pending);
-
-    if (!quarantine_step_allowed(srv, "after_snapshot_publish")) {
-        cbm_log_error("store.auto_clean_failed", "project", project, "path", path, "reason",
-                      "backup complete; live generation retained", "backup", backup);
-        return false;
-    }
-
-    if (cbm_unlink(path) != 0 && errno != ENOENT) {
-        cbm_log_error("store.auto_clean_failed", "project", project, "path", path, "reason",
-                      "backup complete; live database removal failed", "backup", backup);
-        return false;
-    }
-    if (cbm_remove_db_sidecars(path) != 0) {
-        cbm_log_error("store.auto_clean_sidecars", "project", project, "path", path, "reason",
-                      "backup complete; stale sidecar cleanup deferred");
-    }
-
-    if (backup_out && backup_out_size > 0) {
-        snprintf(backup_out, backup_out_size, "%s", backup);
-    }
-    return true;
-}
-
-/* Open the right project's .db file for query tools.
- * Caches the connection — reopens only when project changes.
- * Tracks last-access time so the event loop can evict idle stores. */
-typedef enum {
-    STORE_RECOVERY_NONE,
-    STORE_RECOVERY_BUSY,
-    STORE_RECOVERY_TRY_GUARD_UNAVAILABLE,
-} store_recovery_status_t;
-
+/* ── Store resolution is protocol-neutral; MCP retains compatibility wrappers only. */
 static cbm_store_t *resolve_store_internal(cbm_mcp_server_t *srv, const char *project,
                                            bool mutation_already_held, bool nonblocking_recovery,
-                                           store_recovery_status_t *recovery_status) {
-    if (recovery_status) {
-        *recovery_status = STORE_RECOVERY_NONE;
-    }
-    if (!project) {
-        return NULL; /* project is required — no implicit fallback */
-    }
-
-    srv->store_last_used = time(NULL);
-
-    /* Already open for this project? */
-    if (srv->current_project && strcmp(srv->current_project, project) == 0 && srv->store) {
-        return srv->store;
-    }
-
-    /* Close old store */
-    if (srv->owns_store && srv->store) {
-        cbm_store_close(srv->store);
-        srv->store = NULL;
-    }
-
-    /* Open project's .db file — query-only open (no SQLITE_OPEN_CREATE) to
-     * prevent ghost .db file creation for unknown/unindexed projects.
-     * #1425: an invalid project name yields an empty path. SQLite opens ""
-     * as an anonymous temp db, which then fails the integrity check and
-     * quarantines a db that never existed — as a RELATIVE .corrupt.<hex>
-     * file in the daemon's cwd. Skip the direct open entirely; the fallback
-     * scan below still resolves legacy dbs whose internal name predates
-     * validation. */
-    char path[CBM_SZ_1K];
-    project_db_path(project, path, sizeof(path));
-    srv->store = path[0] ? cbm_store_open_path_query(path) : NULL;
-    if (srv->store) {
-        /* Check DB integrity — back up (never silently delete) a corrupt DB */
-        if (!cbm_store_check_integrity(srv->store)) {
-            cbm_store_close(srv->store);
-            srv->store = NULL;
-            bool mutation_acquired = mutation_already_held;
-            if (!mutation_acquired) {
-                mutation_acquired = nonblocking_recovery
-                                        ? mcp_project_mutation_try_begin(srv, project)
-                                        : mcp_project_mutation_begin(srv, project);
-            }
-            if (!mutation_acquired) {
-                if (nonblocking_recovery && recovery_status) {
-                    *recovery_status = srv->mutation_try_begin
-                                           ? STORE_RECOVERY_BUSY
-                                           : STORE_RECOVERY_TRY_GUARD_UNAVAILABLE;
-                }
-                return NULL;
-            }
-
-            /* The lease may have waited behind a publisher. Re-open and trust
-             * only the current generation, never the stale pre-wait verdict.
-             * Use the verdict API here — this is the point that decides whether
-             * a healthy DB gets quarantined. The plain bool check cannot tell
-             * corruption from a transient SQLITE_BUSY race (#1206: concurrent
-             * instances quarantining each other's DBs) and does not run
-             * quick_check, so page-torn DBs with an intact projects table sail
-             * through (#1037). Only a confirmed CORRUPT verdict is quarantined;
-             * TRANSIENT (lock/IO) falls through and retries on next access. */
-            srv->store = cbm_store_open_path_query(path);
-            cbm_integrity_verdict_t verdict = srv->store
-                                                  ? cbm_store_check_integrity_verdict(srv->store)
-                                                  : CBM_INTEGRITY_TRANSIENT;
-            bool current_valid = (verdict == CBM_INTEGRITY_OK);
-            if (verdict == CBM_INTEGRITY_TRANSIENT) {
-                /* The DB could not be conclusively evaluated (lock contention,
-                 * busy writer, IO hiccup). Do NOT quarantine — close and let
-                 * the next resolve retry. A spurious quarantine here is exactly
-                 * what destroys healthy DBs under concurrent access. */
-                cbm_store_close(srv->store);
-                srv->store = NULL;
-                if (recovery_status) {
-                    *recovery_status = STORE_RECOVERY_BUSY;
-                }
-                if (!mutation_already_held) {
-                    mcp_project_mutation_end(srv, project);
-                }
-                return NULL;
-            }
-            if (!current_valid) {
-                cbm_store_close(srv->store);
-                srv->store = NULL;
-                char backup[CBM_SZ_2K] = {0};
-                bool quarantined =
-                    quarantine_corrupt_store(srv, project, path, backup, sizeof(backup));
-                cbm_log_error("store.auto_clean", "project", project, "path", path, "action",
-                              quarantined ? "corrupt generation quarantined"
-                                          : "corrupt generation preserved",
-                              "backup", quarantined ? backup : "none");
-            }
-            if (!mutation_already_held) {
-                mcp_project_mutation_end(srv, project);
-            }
-            if (!srv->store) {
-                return NULL;
-            }
-        }
-
-        /* Verify the project actually exists in this database.
-         * A .db file may exist but be empty (e.g., after delete_project on
-         * Linux where unlink defers actual removal). Opening an empty/deleted
-         * store without closing it leaks the SQLite connection. */
-        cbm_project_t proj_verify = {0};
-        if (cbm_store_get_project(srv->store, project, &proj_verify) == CBM_STORE_OK) {
-            cbm_project_free_fields(&proj_verify);
-            srv->owns_store = true;
-            free(srv->current_project);
-            srv->current_project = heap_strdup(project);
-            return srv->store; /* fast path: filename == internal name */
-        }
-        /* #704: <project>.db exists but its INTERNAL project name differs from
-         * the passed name (a copied/renamed db, or a legacy '.'-vs-'-' username
-         * twin). Close it and fall through to the cache-dir scan below. */
-        cbm_store_close(srv->store);
-        srv->store = NULL;
-    }
-
-    /* #704 fallback: either <project>.db is absent or its internal name drifted
-     * from its filename. Node rows are keyed on the INTERNAL name (== the passed
-     * name, since list_projects now advertises internal names), so scan the
-     * cache dir for the db whose sole internal project name equals `project` and
-     * adopt it. Runs ONLY on the fallback — the common fast path is unchanged.
-     * No match → NULL (a genuine typo stays not-found). */
-    cbm_store_t *scanned = resolve_store_fallback_scan(project);
-    if (scanned) {
-        srv->store = scanned;
-        srv->owns_store = true;
-        free(srv->current_project);
-        srv->current_project = heap_strdup(project);
-    }
-
-    return srv->store;
+                                           cbm_operation_store_recovery_status_t *recovery_status) {
+    return srv ? cbm_store_host_resolve(srv->store_host, project, mutation_already_held,
+                                        nonblocking_recovery, recovery_status)
+               : NULL;
 }
 
 static cbm_store_t *resolve_store(cbm_mcp_server_t *srv, const char *project) {
     return resolve_store_internal(srv, project, false, false, NULL);
 }
 
-/* Forward decl — definition lives below alongside list_projects. */
-static bool is_project_db_file(const char *name, size_t len);
+static const char *cache_dir(char *buf, size_t bufsz) {
+    const char *dir = cbm_resolve_cache_dir();
+    if (!dir) dir = cbm_tmpdir();
+    snprintf(buf, bufsz, "%s", dir);
+    return buf;
+}
+
+static bool is_project_db_file(const char *name, size_t len) {
+    return cbm_store_host_is_project_db_file(name, len);
+}
+
+static bool db_internal_project_name(const char *full_path, char *name_out, size_t name_sz,
+                                     cbm_store_t **out_store) {
+    return cbm_store_host_db_internal_project_name(full_path, name_out, name_sz, out_store);
+}
 
 /* Forward decl — definition lives below in handle_trace_call_path's helpers. */
 static void free_node_contents(cbm_node_t *n);
@@ -2356,126 +1962,7 @@ static char *build_project_list_error(const char *reason) {
     return heap_strdup(buf);
 }
 
-/* Distinct from "unknown project": the caller omitted the project argument
- * entirely (no recognized key). Name the literal "project" key so the fix is
- * obvious (#640). Caller must free() result. */
-static char *build_missing_project_error(void) {
-    return heap_strdup("{\"error\":\"missing required argument: project\",\"hint\":\"Pass "
-                       "the project as the \\\"project\\\" argument, e.g. "
-                       "{\\\"project\\\":\\\"<name from list_projects>\\\"}. Run "
-                       "list_projects to see indexed projects.\"}");
-}
-
-/* Pick the right no-store error: a NULL project means the argument was missing
- * (clearer message); a non-NULL project that didn't resolve means it's
- * unknown/unindexed (list the available ones). */
-static char *build_no_store_error(const char *project) {
-    return project ? build_project_list_error("project not found or not indexed")
-                   : build_missing_project_error();
-}
-
-/* Bail with the right error when no store is available. */
-#define REQUIRE_STORE(store, project)                     \
-    do {                                                  \
-        if (!(store)) {                                   \
-            char *_err = build_no_store_error(project);   \
-            char *_res = cbm_mcp_text_result(_err, true); \
-            free(_err);                                   \
-            free(project);                                \
-            return _res;                                  \
-        }                                                 \
-    } while (0)
-
 /* ── Tool handler implementations ─────────────────────────────── */
-
-/* Return true if filename is a valid project .db file (not temp/internal).
- *
- * Project names derived from /tmp/... source roots legitimately begin with
- * "tmp-" (cbm_project_name_from_path: "/tmp/bench/..." → "tmp-bench-...";
- * see tests/test_pipeline.c fixtures), so the prefix must NOT be excluded.
- * The "_" prefix is reserved for internal/hidden DBs, and ":memory:" is the
- * SQLite in-memory marker (defensive — never appears as a real file). */
-static bool is_project_db_file(const char *name, size_t len) {
-    if (len < MCP_MIN_DB_NAME || strcmp(name + len - MCP_DB_EXT, ".db") != 0) {
-        return false;
-    }
-    if (strncmp(name, "_", SLEN("_")) == 0 || strncmp(name, ":memory:", SLEN(":memory:")) == 0) {
-        return false;
-    }
-    return true;
-}
-
-/* db_internal_project_name — see forward declaration above resolve_store. */
-static bool db_internal_project_name(const char *full_path, char *name_out, size_t name_sz,
-                                     cbm_store_t **out_store) {
-    if (out_store) {
-        *out_store = NULL;
-    }
-    cbm_store_t *st = cbm_store_open_path_query(full_path);
-    if (!st) {
-        return false; /* nonexistent / unreadable */
-    }
-    cbm_project_t *projs = NULL;
-    int n = 0;
-    bool ok = false;
-    if (cbm_store_list_projects(st, &projs, &n) == CBM_STORE_OK) {
-        /* Ignore internal shadow projects ("<name>::missed" miss-graph rows):
-         * they share the db with the primary project and must not make it
-         * unresolvable — requiring n == 1 over ALL rows made every project
-         * with a miss graph vanish from list_projects and the UI (#1044). */
-        int primary = -1;
-        int primary_count = 0;
-        for (int i = 0; i < n; i++) {
-            if (projs[i].name && projs[i].name[0] && !strstr(projs[i].name, "::")) {
-                primary = i;
-                primary_count++;
-            }
-        }
-        if (primary_count == 1) {
-            snprintf(name_out, name_sz, "%s", projs[primary].name);
-            ok = true;
-        }
-    }
-    cbm_store_free_projects(projs, n);
-    if (ok && out_store) {
-        *out_store = st; /* transfer ownership to caller */
-    } else {
-        cbm_store_close(st);
-    }
-    return ok;
-}
-
-/* resolve_store_fallback_scan — see forward declaration above resolve_store. */
-static cbm_store_t *resolve_store_fallback_scan(const char *project) {
-    char dir_path[CBM_SZ_1K];
-    cache_dir(dir_path, sizeof(dir_path));
-    cbm_dir_t *d = cbm_opendir(dir_path);
-    if (!d) {
-        return NULL;
-    }
-    cbm_store_t *found = NULL;
-    cbm_dirent_t *entry;
-    while ((entry = cbm_readdir(d)) != NULL) {
-        const char *n = entry->name;
-        size_t len = strlen(n);
-        if (!is_project_db_file(n, len)) {
-            continue;
-        }
-        char full_path[CBM_SZ_2K];
-        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, n);
-        char iname[CBM_SZ_1K];
-        cbm_store_t *st = NULL;
-        if (db_internal_project_name(full_path, iname, sizeof(iname), &st)) {
-            if (strcmp(iname, project) == 0) {
-                found = st; /* adopt — caller takes ownership */
-                break;
-            }
-            cbm_store_close(st);
-        }
-    }
-    cbm_closedir(d);
-    return found;
-}
 
 /* Open a .db file briefly, collect node/edge counts and root_path,
  * then append a JSON entry to arr. */
@@ -4600,40 +4087,25 @@ static char *build_worker_unsafe_terminal_response(const char *args, cbm_proc_ou
  * writes the DB and the parent only needs the return code, so there is nothing
  * to invalidate. */
 static void invalidate_cached_store(cbm_mcp_server_t *srv) {
-    if (!srv) {
-        return;
-    }
-    if (srv->owns_store && srv->store) {
-        cbm_store_close(srv->store);
-        srv->store = NULL;
-    }
-    free(srv->current_project);
-    srv->current_project = NULL;
+    if (srv) cbm_store_host_invalidate(srv->store_host);
 }
 
-cbm_store_t *cbm_mcp_server_operation_store_resolve(
-    cbm_mcp_server_t *srv, const char *project, bool mutation_already_held,
+static cbm_store_t *mcp_operation_store_resolve(
+    void *context, const char *project, bool mutation_already_held,
     bool nonblocking_recovery, cbm_operation_store_recovery_status_t *recovery_status) {
-    store_recovery_status_t local = STORE_RECOVERY_NONE;
-    cbm_store_t *store = resolve_store_internal(srv, project, mutation_already_held,
-                                                nonblocking_recovery, &local);
-    if (recovery_status) {
-        *recovery_status = local == STORE_RECOVERY_BUSY
-                               ? CBM_OPERATION_STORE_RECOVERY_BUSY
-                               : local == STORE_RECOVERY_TRY_GUARD_UNAVAILABLE
-                                     ? CBM_OPERATION_STORE_RECOVERY_TRY_GUARD_UNAVAILABLE
-                                     : CBM_OPERATION_STORE_RECOVERY_NONE;
-    }
-    return store;
+    cbm_mcp_server_t *srv = context;
+    return resolve_store_internal(srv, project, mutation_already_held, nonblocking_recovery,
+                                  recovery_status);
 }
 
-void cbm_mcp_server_operation_store_invalidate(cbm_mcp_server_t *srv) {
+static void mcp_operation_store_invalidate(void *context) {
+    cbm_mcp_server_t *srv = context;
     invalidate_cached_store(srv);
 }
 
-char *cbm_mcp_server_operation_store_error(cbm_mcp_server_t *srv, const char *project) {
-    (void)srv;
-    return build_no_store_error(project);
+static char *mcp_operation_store_error(void *context, const char *project) {
+    (void)context;
+    return cbm_store_host_error(project);
 }
 
 /* Resolve a per-supervisor-run temp path <cache_dir>/logs/.supervisor-<pid><suffix>
@@ -5303,7 +4775,7 @@ static __attribute__((unused)) char *build_snippet_response(cbm_mcp_server_t *sr
     yyjson_doc *props_doc = NULL;
 
     /* Caller/callee counts — store already resolved by calling handler */
-    cbm_store_t *store = srv->store;
+    cbm_store_t *store = cbm_store_host_store(srv->store_host);
     int in_deg = 0;
     int out_deg = 0;
     cbm_store_node_degree(store, node->id, &in_deg, &out_deg);
@@ -5391,11 +4863,9 @@ static void mcp_operation_runtime_project_detach(void *context, const char *proj
 static void mcp_operation_runtime_project_invalidate(void *context, const char *project) {
     cbm_mcp_server_t *srv = context;
     if (!srv) return;
-    if (srv->current_project && project && strcmp(srv->current_project, project) != 0) return;
-    if (srv->owns_store && srv->store) cbm_store_close(srv->store);
-    srv->store = NULL;
-    free(srv->current_project);
-    srv->current_project = NULL;
+    const char *current = cbm_store_host_current_project(srv->store_host);
+    if (current && project && strcmp(current, project) != 0) return;
+    cbm_store_host_invalidate(srv->store_host);
 }
 
 static cbm_operation_result_t mcp_operation_runtime_index_execute(void *context,
@@ -5437,9 +4907,9 @@ static char *mcp_operation_adapter(cbm_mcp_server_t *srv, cbm_operation_id_t ope
         .mutation_try_begin = mcp_operation_runtime_mutation_try_begin,
         .mutation_end = mcp_operation_runtime_mutation_end,
         .mutation_context = srv,
-        .store_resolve = (cbm_operation_store_resolve_fn)cbm_mcp_server_operation_store_resolve,
-        .store_invalidate = (cbm_operation_store_invalidate_fn)cbm_mcp_server_operation_store_invalidate,
-        .store_error = (cbm_operation_store_error_fn)cbm_mcp_server_operation_store_error,
+        .store_resolve = mcp_operation_store_resolve,
+        .store_invalidate = mcp_operation_store_invalidate,
+        .store_error = mcp_operation_store_error,
         .store_context = srv,
         .project_detach = mcp_operation_runtime_project_detach,
         .project_detach_context = srv,
@@ -5551,27 +5021,14 @@ static char *dispatch_tool(cbm_mcp_server_t *srv, const char *tool_name, const c
  * entirely. Embedded/in-memory stores have no path and retain their existing
  * process lifetime. */
 static void release_request_store(cbm_mcp_server_t *srv) {
-    if (!srv || !srv->owns_store || !srv->store || !cbm_store_db_path(srv->store)) {
-        return;
-    }
-    cbm_store_close(srv->store);
-    srv->store = NULL;
-    free(srv->current_project);
-    srv->current_project = NULL;
-    /* The close above frees a connection's worth of page cache. Ask the
-     * allocator to hand those pages back now, which keeps a long-lived daemon
-     * flat across thousands of request-scoped stores (#581). This only became
-     * meaningful once the Windows interposer made the pages mimalloc's: an
-     * earlier attempt aimed at the CRT heap instead and could not release
-     * them. POSIX already purges on free, so this is a no-op there. */
+    if (!srv) return;
+    cbm_store_t *store = cbm_store_host_store(srv->store_host);
+    if (!store || !cbm_store_db_path(store)) return;
+    cbm_store_host_invalidate(srv->store_host);
     cbm_mem_collect();
 }
 
 char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const char *args_json) {
-    /* Phase marks bracket the WHOLE request with no unlabelled gap, so growth
-     * cannot hide between them (CBM_MEM_PHASES=1; see foundation/mem.h). The
-     * "idle" label owns everything outside a request, which is what makes a
-     * request-path retainer distinguishable from background growth. */
     cbm_mem_phase_mark("request.scope_begin");
     bool request_scope = !srv || cbm_mcp_server_request_scope_begin(srv);
     if (!request_scope) {
@@ -5582,16 +5039,10 @@ char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const ch
     cbm_mem_phase_mark("request.dispatch_tool");
     char *result = dispatch_tool(srv, tool_name, args_json);
     cbm_mem_phase_mark("request.scope_end");
-    if (srv) {
-        cbm_mcp_server_request_scope_end(srv);
-    }
+    if (srv) cbm_mcp_server_request_scope_end(srv);
     cbm_mem_phase_mark("request.release_store");
     release_request_store(srv);
     cbm_mem_phase_mark("idle");
-    /* One census per completed request, so growth can be attributed to a POOL
-     * rather than inferred from a process total (#581). Emitted after the
-     * request store is released, which is the point where a well-behaved
-     * request has given everything back. */
     cbm_mem_census_log("mcp.request");
     return result;
 }
@@ -5799,49 +5250,6 @@ static void maybe_auto_index(cbm_mcp_server_t *srv) {
     if (cbm_thread_create(&srv->autoindex_tid, 0, autoindex_thread, srv) == 0) {
         srv->autoindex_active = true;
     }
-}
-
-/* ── Server request handler ───────────────────────────────────── */
-
-bool cbm_mcp_jsonrpc_response_prepend_notice(char **response_io, const char *notice) {
-    if (!response_io || !*response_io || !notice || !notice[0]) {
-        return false;
-    }
-    yyjson_doc *document = yyjson_read(*response_io, strlen(*response_io), 0);
-    if (!document) {
-        return false;
-    }
-    yyjson_mut_doc *mutable_document = yyjson_mut_doc_new(NULL);
-    yyjson_mut_val *root =
-        mutable_document ? yyjson_val_mut_copy(mutable_document, yyjson_doc_get_root(document))
-                         : NULL;
-    yyjson_doc_free(document);
-    if (!mutable_document || !root) {
-        yyjson_mut_doc_free(mutable_document);
-        return false;
-    }
-    yyjson_mut_doc_set_root(mutable_document, root);
-    yyjson_mut_val *result = yyjson_mut_is_obj(root) ? yyjson_mut_obj_get(root, "result") : NULL;
-    yyjson_mut_val *content =
-        result && yyjson_mut_is_obj(result) ? yyjson_mut_obj_get(result, "content") : NULL;
-    yyjson_mut_val *item =
-        content && yyjson_mut_is_arr(content) ? yyjson_mut_obj(mutable_document) : NULL;
-    bool added = item && yyjson_mut_obj_add_str(mutable_document, item, "type", "text") &&
-                 yyjson_mut_obj_add_str(mutable_document, item, "text", notice) &&
-                 yyjson_mut_arr_prepend(content, item);
-    if (!added) {
-        yyjson_mut_doc_free(mutable_document);
-        return false;
-    }
-    char *replacement =
-        yyjson_mut_write(mutable_document, YYJSON_WRITE_ALLOW_INVALID_UNICODE, NULL);
-    yyjson_mut_doc_free(mutable_document);
-    if (!replacement) {
-        return false;
-    }
-    free(*response_io);
-    *response_io = replacement;
-    return true;
 }
 
 char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {

@@ -5,19 +5,20 @@
  * the routes and their handlers:
  *   GET /             → embedded index.html
  *   GET /assets/...   → embedded JS/CSS
- *   POST /rpc         → JSON-RPC dispatch via own cbm_mcp_server_t
+ *   POST /rpc         → compatibility JSON-RPC mapped to neutral operations
  *   OPTIONS /rpc      → CORS preflight (for vite dev on :5173)
  *   GET/POST /api/... → UI support endpoints (layout, index, browse, …)
  *   *                 → 404
  *
  * Runs in a background pthread. Binds to 127.0.0.1 only (see httpd.c).
- * Has its own cbm_mcp_server_t with a separate SQLite connection (WAL reader).
+ * Owns a neutral store host with a separate SQLite connection (WAL reader).
  */
 #include "ui/http_server.h"
 #include "ui/httpd.h"
 #include "ui/embedded_assets.h"
 #include "ui/layout3d.h"
-#include "mcp/mcp.h"
+#include "operations/operation.h"
+#include "operations/store_host.h"
 #include "store/store.h"
 #include "watcher/watcher.h"
 #include "cli/cli.h"
@@ -171,7 +172,7 @@ typedef struct {
 
 struct cbm_http_server {
     cbm_httpd_t *listener;
-    cbm_mcp_server_t *mcp;       /* own MCP server instance (read-only) */
+    cbm_store_host_t *store_host; /* own neutral read-side store cache */
     struct cbm_watcher *watcher; /* external watcher ref (not owned) */
     cbm_http_index_executor_fn index_executor;
     void *index_executor_context;
@@ -1761,14 +1762,80 @@ static bool rpc_is_allowed_for_ui(const char *body, size_t body_len) {
     return allowed;
 }
 
-static void handle_rpc(cbm_http_conn_t *c, const cbm_http_req_t *req, cbm_mcp_server_t *mcp) {
-    if (req->body_len == 0 || req->body_len > MAX_BODY_SIZE || !req->body) {
+static cbm_store_t *http_operation_store_resolve(void *context, const char *project,
+                                                 bool mutation_already_held,
+                                                 bool nonblocking_recovery,
+                                                 cbm_operation_store_recovery_status_t *status) {
+    return cbm_store_host_resolve((cbm_store_host_t *)context, project, mutation_already_held,
+                                  nonblocking_recovery, status);
+}
+
+static void http_operation_store_invalidate(void *context) {
+    cbm_store_host_invalidate((cbm_store_host_t *)context);
+}
+
+static char *http_operation_store_error(void *context, const char *project) {
+    (void)context;
+    return cbm_store_host_error(project);
+}
+
+static char *http_rpc_response(yyjson_val *id, const cbm_operation_result_t *operation_result) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = doc ? yyjson_mut_obj(doc) : NULL;
+    if (!doc || !root) {
+        if (doc) yyjson_mut_doc_free(doc);
+        return NULL;
+    }
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "jsonrpc", "2.0");
+    if (id) {
+        yyjson_mut_val *id_copy = yyjson_val_mut_copy(doc, id);
+        if (id_copy) yyjson_mut_obj_add_val(doc, root, "id", id_copy);
+        else yyjson_mut_obj_add_null(doc, root, "id");
+    } else {
+        yyjson_mut_obj_add_null(doc, root, "id");
+    }
+
+    yyjson_mut_val *result = yyjson_mut_obj(doc);
+    yyjson_mut_val *content = yyjson_mut_arr(doc);
+    yyjson_mut_val *item = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_str(doc, item, "type", "text");
+    yyjson_mut_obj_add_strcpy(doc, item, "text",
+                              operation_result && operation_result->payload
+                                  ? operation_result->payload
+                                  : "");
+    yyjson_mut_arr_add_val(content, item);
+    yyjson_mut_obj_add_val(doc, result, "content", content);
+    yyjson_mut_obj_add_bool(doc, result, "isError",
+                            operation_result ? operation_result->is_error : true);
+
+    if (operation_result && operation_result->payload) {
+        yyjson_doc *payload_doc = yyjson_read(operation_result->payload,
+                                              strlen(operation_result->payload), 0);
+        yyjson_val *payload_root = payload_doc ? yyjson_doc_get_root(payload_doc) : NULL;
+        if (yyjson_is_obj(payload_root)) {
+            yyjson_mut_val *structured = yyjson_val_mut_copy(doc, payload_root);
+            if (structured) yyjson_mut_obj_add_val(doc, result, "structuredContent", structured);
+        } else if (operation_result->is_error) {
+            yyjson_mut_val *structured = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_strcpy(doc, structured, "error", operation_result->payload);
+            yyjson_mut_obj_add_val(doc, result, "structuredContent", structured);
+        }
+        if (payload_doc) yyjson_doc_free(payload_doc);
+    }
+    yyjson_mut_obj_add_val(doc, root, "result", result);
+    char *response = yyjson_mut_write(doc, 0, NULL);
+    yyjson_mut_doc_free(doc);
+    return response;
+}
+
+static void handle_rpc(cbm_http_server_t *srv, cbm_http_conn_t *c, const cbm_http_req_t *req) {
+    if (!srv || req->body_len == 0 || req->body_len > MAX_BODY_SIZE || !req->body) {
         cbm_http_replyf(c, 400, g_cors_json,
                         "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,"
                         "\"message\":\"invalid request size\"},\"id\":null}");
         return;
     }
-
     if (!rpc_is_allowed_for_ui(req->body, req->body_len)) {
         cbm_http_replyf(c, 403, g_cors_json,
                         "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32601,"
@@ -1776,15 +1843,38 @@ static void handle_rpc(cbm_http_conn_t *c, const cbm_http_req_t *req, cbm_mcp_se
         return;
     }
 
-    /* req->body is NUL-terminated by the transport */
-    char *response = cbm_mcp_server_handle(mcp, req->body);
+    yyjson_doc *request_doc = yyjson_read(req->body, req->body_len, 0);
+    yyjson_val *root = request_doc ? yyjson_doc_get_root(request_doc) : NULL;
+    yyjson_val *id = yyjson_is_obj(root) ? yyjson_obj_get(root, "id") : NULL;
+    yyjson_val *params = yyjson_is_obj(root) ? yyjson_obj_get(root, "params") : NULL;
+    yyjson_val *name = yyjson_is_obj(params) ? yyjson_obj_get(params, "name") : NULL;
+    yyjson_val *arguments = yyjson_is_obj(params) ? yyjson_obj_get(params, "arguments") : NULL;
+    const char *tool_name = yyjson_is_str(name) ? yyjson_get_str(name) : NULL;
+    const cbm_operation_descriptor_t *operation = cbm_operation_find(tool_name);
+    char *args_json = arguments ? yyjson_val_write(arguments, 0, NULL) : strdup("{}");
 
-    if (response) {
-        cbm_http_replyf(c, 200, g_cors_json, "%s", response);
-        free(response);
+    cbm_operation_result_t result = {0};
+    if (!operation || !args_json) {
+        result = cbm_operation_result_copy("UI RPC request could not be prepared", true);
     } else {
-        cbm_http_replyf(c, 204, g_cors, "%s", "");
+        cbm_operation_runtime_t runtime = {0};
+        runtime.store_resolve = http_operation_store_resolve;
+        runtime.store_invalidate = http_operation_store_invalidate;
+        runtime.store_error = http_operation_store_error;
+        runtime.store_context = srv->store_host;
+        cbm_operation_context_t context = {.runtime = &runtime};
+        result = cbm_operation_execute(&context, operation->id, args_json);
     }
+
+    char *response = http_rpc_response(id, &result);
+    if (response) cbm_http_replyf(c, 200, g_cors_json, "%s", response);
+    else cbm_http_replyf(c, 500, g_cors_json,
+                         "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,"
+                         "\"message\":\"internal error\"},\"id\":null}");
+    free(response);
+    cbm_operation_result_dispose(&result);
+    free(args_json);
+    if (request_doc) yyjson_doc_free(request_doc);
 }
 
 /* ── Request dispatch ─────────────────────────────────────────── */
@@ -1943,7 +2033,7 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
 
     /* POST /rpc → JSON-RPC dispatch (reuses existing MCP tools) */
     if (is_post && cbm_http_path_match(req->path, "/rpc")) {
-        handle_rpc(c, req, srv->mcp);
+        handle_rpc(srv, c, req);
         return;
     }
 
@@ -2044,15 +2134,6 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
 
 /* ── Public API ───────────────────────────────────────────────── */
 
-static char *http_read_only_index_rejected(void *context, const char *repo_path,
-                                           const char *args_json) {
-    (void)context;
-    (void)repo_path;
-    (void)args_json;
-    return cbm_mcp_text_result("UI RPC indexing is disabled; use the coordinated /api/index route",
-                               true);
-}
-
 cbm_http_server_t *cbm_http_server_new(int port) {
     cbm_http_server_t *srv = calloc(1, sizeof(*srv));
     if (!srv)
@@ -2062,15 +2143,13 @@ cbm_http_server_t *cbm_http_server_new(int port) {
     atomic_init(&srv->stop_flag, 0);
     atomic_init(&srv->run_state, HTTP_RUN_IDLE);
 
-    /* Create a dedicated MCP server for HTTP (own SQLite connection) */
-    srv->mcp = cbm_mcp_server_new(NULL);
-    if (!srv->mcp) {
-        cbm_log_error("ui.http.mcp_fail", "reason", "cannot create MCP instance");
+    /* Dedicated neutral read-side store host (own SQLite connection/cache). */
+    srv->store_host = cbm_store_host_new_deferred();
+    if (!srv->store_host) {
+        cbm_log_error("ui.http.store_host_fail", "reason", "cannot create store host");
         free(srv);
         return NULL;
     }
-    cbm_mcp_server_set_background_tasks(srv->mcp, false);
-    cbm_mcp_server_set_index_executor(srv->mcp, http_read_only_index_rejected, srv);
 
     /* Bind to localhost only (httpd refuses anything else by construction) */
     srv->listener = cbm_httpd_listen(port);
@@ -2079,7 +2158,7 @@ cbm_http_server_t *cbm_http_server_new(int port) {
         snprintf(port_str, sizeof(port_str), "%d", port);
         cbm_log_warn("ui.unavailable", "port", port_str, "reason", "in_use", "hint",
                      "use --port=N to override");
-        cbm_mcp_server_free(srv->mcp);
+        cbm_store_host_free(srv->store_host);
         free(srv);
         return NULL;
     }
@@ -2113,7 +2192,7 @@ bool cbm_http_server_free(cbm_http_server_t *srv) {
     }
     if (!cbm_httpd_close(srv->listener))
         return false;
-    cbm_mcp_server_free(srv->mcp);
+    cbm_store_host_free(srv->store_host);
     cbm_secure_zero(srv->readiness_secret, sizeof(srv->readiness_secret));
     free(srv);
     return true;
@@ -2228,8 +2307,8 @@ void cbm_http_server_set_project_mutation_guard(cbm_http_server_t *srv,
     srv->mutation_begin = begin;
     srv->mutation_end = end;
     srv->mutation_context = begin ? context : NULL;
-    cbm_mcp_server_set_project_mutation_guard(srv->mcp, begin, end, begin ? context : NULL);
-    cbm_mcp_server_set_project_mutation_try_guard(srv->mcp, begin);
+    cbm_store_host_set_mutation_guard(srv->store_host, begin, begin, end,
+                                      begin ? context : NULL);
 }
 
 void cbm_http_server_set_readiness_secret(cbm_http_server_t *srv,

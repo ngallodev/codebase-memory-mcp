@@ -6,12 +6,13 @@
 #include "cli/client_adapter.h"
 
 #include "foundation/constants.h"
-#include "mcp/mcp.h"
+#include "operations/tool_catalog.h"
 
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 /* A generated module is small and bounded by the registry size; grow a plain
  * buffer rather than pulling in a builder for two call sites. */
@@ -146,7 +147,7 @@ char *cbm_client_adapter_pi(const char *binary_path) {
     if (!cbm_client_adapter_escape_js(binary_path, bin, sizeof(bin))) {
         return NULL;
     }
-    int count = cbm_mcp_tool_count();
+    int count = (int)cbm_tool_catalog_count();
     if (count <= 0) {
         return NULL;
     }
@@ -209,13 +210,13 @@ char *cbm_client_adapter_pi(const char *binary_path) {
      * just cbm's tools (#1550). */
     sb_append(&sb, "export default function (pi) {\n");
     for (int i = 0; i < count; i++) {
-        const char *name = cbm_mcp_tool_name(i);
+        const char *name = cbm_tool_catalog_name((size_t)i);
         if (!name || !name[0]) {
             continue;
         }
-        const char *title = cbm_mcp_tool_title(name);
-        const char *description = cbm_mcp_tool_description(name);
-        const char *schema = cbm_mcp_tool_input_schema(name);
+        const char *title = cbm_tool_catalog_title(name);
+        const char *description = cbm_tool_catalog_description(name);
+        const char *schema = cbm_tool_catalog_input_schema(name);
         sb_append(&sb, "  pi.registerTool({\n");
         sb_append(&sb, "    name: ");
         sb_append_js_string(&sb, name);

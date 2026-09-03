@@ -13,7 +13,7 @@
 #include "daemon/runtime.h"
 #include "daemon/project_lock.h"
 #include "operations/index_supervisor.h"
-#include "mcp/mcp.h"
+#include "operations/tool_profile.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -88,10 +88,7 @@ typedef struct {
 
 typedef enum {
     CBM_DAEMON_APPLICATION_REQUEST_SET_CONTEXT = 1,
-    CBM_DAEMON_APPLICATION_REQUEST_MCP = 2,
     CBM_DAEMON_APPLICATION_REQUEST_OPERATION = 3,
-    /* Transitional legacy dispatcher for application behavior not yet extracted. */
-    CBM_DAEMON_APPLICATION_REQUEST_TOOL = 7,
     CBM_DAEMON_APPLICATION_REQUEST_HOOK_AUGMENT = 4,
     CBM_DAEMON_APPLICATION_REQUEST_SET_UI_CONFIG = 5,
     CBM_DAEMON_APPLICATION_REQUEST_UI_READINESS_PROOF = 6,
@@ -130,7 +127,7 @@ cbm_daemon_runtime_application_callbacks_t cbm_daemon_application_runtime_callba
  * response_length excludes that terminator. */
 cbm_daemon_runtime_application_status_t cbm_daemon_application_client_set_context(
     cbm_daemon_runtime_client_t *client, const char *session_root, const char *allowed_root,
-    cbm_mcp_tool_profile_t tool_profile, const char *hook_event, const char *hook_dialect,
+    cbm_tool_profile_t tool_profile, const char *hook_event, const char *hook_dialect,
     uint32_t timeout_ms);
 
 /* Persist a masked UI configuration mutation in the daemon. A zero/unknown
@@ -147,27 +144,17 @@ cbm_daemon_runtime_application_status_t cbm_daemon_application_client_ui_readine
     cbm_daemon_runtime_client_t *client, const uint8_t challenge[32], uint8_t proof_out[32],
     uint32_t timeout_ms);
 
-cbm_daemon_runtime_application_status_t cbm_daemon_application_client_mcp(
-    cbm_daemon_runtime_client_t *client, const char *message, uint8_t **response_out,
-    uint32_t *response_length_out, uint32_t timeout_ms);
-
-/* Cancellable frontend variant using a token reserved on the runtime client. */
-cbm_daemon_runtime_application_status_t cbm_daemon_application_client_mcp_tagged(
-    cbm_daemon_runtime_client_t *client, cbm_daemon_runtime_application_token_t request_token,
-    const char *message, uint8_t **response_out, uint32_t *response_length_out,
-    uint32_t timeout_ms);
-
 /* Execute a protocol-neutral operation. The response is the canonical operation
  * payload, never an MCP/JSON-RPC envelope. */
 cbm_daemon_runtime_application_status_t cbm_daemon_application_client_operation(
     cbm_daemon_runtime_client_t *client, const char *operation_name, const char *args_json,
     uint8_t **response_out, uint32_t *response_length_out, uint32_t timeout_ms);
 
-/* Transitional compatibility path for behavior still owned by the legacy MCP
- * dispatcher. New/extracted callers must use client_operation instead. */
-cbm_daemon_runtime_application_status_t cbm_daemon_application_client_tool(
-    cbm_daemon_runtime_client_t *client, const char *tool_name, const char *args_json,
-    uint8_t **response_out, uint32_t *response_length_out, uint32_t timeout_ms);
+/* Result-aware variant used by CLI/frontends that must preserve operation
+ * failure exit semantics without reintroducing an MCP result envelope. */
+cbm_daemon_runtime_application_status_t cbm_daemon_application_client_operation_result(
+    cbm_daemon_runtime_client_t *client, const char *operation_name, const char *args_json,
+    uint8_t **response_out, uint32_t *response_length_out, bool *is_error_out, uint32_t timeout_ms);
 
 cbm_daemon_runtime_application_status_t cbm_daemon_application_client_hook_augment(
     cbm_daemon_runtime_client_t *client, const char *input_json, uint8_t **response_out,

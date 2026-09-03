@@ -23,7 +23,7 @@
 #include "foundation/log.h"
 #include "foundation/sha256.h"
 #include "cli/client_adapter.h"
-#include "mcp/mcp.h" // cbm_mcp_tool_input_schema — CLI flag parser + per-tool --help
+#include "operations/tool_catalog.h" // cbm_mcp_tool_input_schema — CLI flag parser + per-tool --help
 #include "operations/index_supervisor.h"
 
 /* CLI buffer size constants. */
@@ -12772,7 +12772,7 @@ bool cbm_cli_args_from_stdin_allowed(const char *tool_name, bool stdin_is_tty) {
      * never start it, and let the caller fall through to `{}` exactly as an
      * interactive run already did. Tools that DO declare properties keep the
      * documented `echo '<json>' | cli <tool>` channel untouched. */
-    const char *schema_str = cbm_mcp_tool_input_schema(tool_name);
+    const char *schema_str = cbm_tool_catalog_input_schema(tool_name);
     if (!schema_str) {
         /* Unknown tool: dispatch rejects it by name and no stdin content can
          * change that verdict, so do not block for input we would discard. */
@@ -12818,7 +12818,7 @@ char *cbm_cli_build_args_json(const char *tool_name, int argc, char **argv, char
 
     /* The tool's input_schema (may be NULL for an unknown tool — then every
      * value is treated as a string). Static lifetime; do not free. */
-    const char *schema_str = cbm_mcp_tool_input_schema(tool_name);
+    const char *schema_str = cbm_tool_catalog_input_schema(tool_name);
     yyjson_doc *schema_doc = NULL;
     yyjson_val *props = NULL;
     if (schema_str) {
@@ -12936,7 +12936,7 @@ char *cbm_cli_build_args_json(const char *tool_name, int argc, char **argv, char
 }
 
 static int cli_print_tool_flags_impl(const char *tool_name) {
-    const char *schema_str = cbm_mcp_tool_input_schema(tool_name);
+    const char *schema_str = cbm_tool_catalog_input_schema(tool_name);
     if (!schema_str) {
         return CLI_ERR;
     }
@@ -12992,7 +12992,7 @@ int cbm_cli_print_tool_flags(const char *tool_name) {
 }
 
 int cbm_cli_print_tool_help(const char *tool_name) {
-    if (!cbm_mcp_tool_input_schema(tool_name)) {
+    if (!cbm_tool_catalog_input_schema(tool_name)) {
         return CLI_ERR;
     }
     printf("Usage:\n");

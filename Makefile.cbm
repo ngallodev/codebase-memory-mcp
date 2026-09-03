@@ -98,9 +98,10 @@ endif
 KOTLIN_DEDUP_TEST_DEFINE = -DCBM_KOTLIN_DEDUP_TEST_API=1
 CALL_REFERENCE_LOOKUP_TEST_DEFINE = -DCBM_CALL_REFERENCE_LOOKUP_TEST_API=1
 INCREMENTAL_TEST_DEFINE = -DCBM_INCREMENTAL_TEST_API=1
+CFLAGS_TEST_EXTRA ?=
 CFLAGS_TEST = $(CFLAGS_COMMON) $(EDITOR_TEST_DEFINES) $(SANITIZED_DEFINE) \
 	$(KOTLIN_DEDUP_TEST_DEFINE) $(CALL_REFERENCE_LOOKUP_TEST_DEFINE) \
-	$(INCREMENTAL_TEST_DEFINE) -g -O1 $(SANITIZE)
+	$(INCREMENTAL_TEST_DEFINE) -g -O1 $(SANITIZE) $(CFLAGS_TEST_EXTRA)
 CXXFLAGS_TEST = $(CXXFLAGS_COMMON) $(SANITIZED_DEFINE) -g -O1 $(SANITIZE) $(CXX_STDLIB_FLAGS)
 
 # TSan (can't combine with ASan)
@@ -229,7 +230,8 @@ FOUNDATION_SRCS = \
     src/foundation/secure_random.c \
     src/foundation/macos_acl.c \
     src/foundation/private_file_lock.c \
-    src/foundation/lock_registry.c
+    src/foundation/lock_registry.c \
+    src/foundation/json_args.c
 
 # Existing extraction C code (compiled from current location)
 EXTRACTION_SRCS = \
@@ -299,8 +301,8 @@ STORE_SRCS = src/store/store.c
 CYPHER_SRCS = src/cypher/cypher.c
 
 # MCP server module (new)
-MCP_SRCS = src/mcp/mcp.c
-OPERATION_SRCS = src/operations/registry.c src/operations/reliability_events.c src/operations/execute.c src/operations/mutation.c src/operations/adr.c src/operations/cross_repo.c src/operations/index.c src/operations/project_arg.c src/operations/index_supervisor.c src/operations/command_runner.c src/operations/read.c src/operations/coverage.c src/operations/snippet.c src/operations/search.c src/operations/trace.c src/operations/trace_ingest.c src/operations/schema.c src/operations/query.c src/operations/architecture.c src/operations/changes.c src/operations/source_search.c src/operations/file_outline.c src/operations/compare.c src/operations/compact_out.c
+MCP_SRCS =
+OPERATION_SRCS = src/operations/registry.c src/operations/reliability_events.c src/operations/execute.c src/operations/result_wire.c src/operations/tool_catalog.c src/operations/index_admission.c src/operations/store_host.c src/operations/session_state.c src/operations/mutation.c src/operations/adr.c src/operations/cross_repo.c src/operations/index.c src/operations/project_arg.c src/operations/index_supervisor.c src/operations/command_runner.c src/operations/read.c src/operations/coverage.c src/operations/snippet.c src/operations/search.c src/operations/trace.c src/operations/trace_ingest.c src/operations/schema.c src/operations/query.c src/operations/architecture.c src/operations/changes.c src/operations/source_search.c src/operations/file_outline.c src/operations/compare.c src/operations/compact_out.c
 
 # Shared MCP daemon coordination and local transport
 DAEMON_SRCS = \
@@ -310,7 +312,7 @@ DAEMON_SRCS = \
     src/daemon/service.c \
     src/daemon/runtime.c \
     src/daemon/application.c \
-    src/daemon/frontend.c \
+    src/daemon/maintenance_monitor.c \
     src/daemon/host.c \
     src/daemon/bootstrap.c \
     src/daemon/ipc.c
@@ -482,10 +484,13 @@ PROD_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(OPERATION_SRCS) $(
 EXISTING_C_SRCS = $(EXTRACTION_SRCS) $(LSP_SRCS) $(TS_RUNTIME_SRC) \
                   $(GRAMMAR_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC)
 
-# Project headers remain link prerequisites for the aggregate targets. The local
-# test and production source objects also emit compiler dependency files, so a
-# changed included header recompiles the affected translation units instead of
-# silently testing an old object.
+# Project headers, as prerequisites for the targets built in one compiler
+# invocation from sources (test-runner, test-repro-runner, test-runner-tsan,
+# codebase-memory-cli, test-foundation). Those rules list only .c files, so
+# editing a header changed nothing make could see and the target was NOT
+# rebuilt — an incremental build then silently tested the OLD header value.
+# Found while revert-checking a constants.h change: the check passed because
+# nothing had recompiled.
 #
 # Vendored trees are deliberately excluded — they are pinned, they carry their
 # own explicit dep lists (LSP_UNITY_DEPS, TS_RUNTIME_DEPS), and globbing tens of
@@ -546,7 +551,6 @@ TEST_DAEMON_SRCS = \
     tests/test_daemon_version.c \
     tests/test_daemon_runtime.c \
     tests/test_daemon_application.c \
-    tests/test_daemon_frontend.c \
     tests/test_daemon_bootstrap.c \
     tests/test_daemon_ipc.c
 
@@ -894,9 +898,9 @@ OBJS_VENDORED_TSAN = $(MIMALLOC_OBJ_TSAN) $(SQLITE3_OBJ_TSAN) $(TRE_OBJ_TSAN) $(
 
 $(BUILD_DIR)/test-runner: $(TEST_SOURCE_OBJS) $(OBJS_VENDORED_TEST) $(PROJECT_HDRS) | $(BUILD_DIR)
 	$(CC) $(CFLAGS_TEST) -Itests -Itests/repro -o $@ \
-		$(TEST_SOURCE_OBJS) \
-		$(OBJS_VENDORED_TEST) \
-		$(LDFLAGS_TEST)
+	$(TEST_SOURCE_OBJS) \
+	$(OBJS_VENDORED_TEST) \
+	$(LDFLAGS_TEST)
 
 test: $(BUILD_DIR)/test-runner
 	cd $(CURDIR) && $(BUILD_DIR)/test-runner
@@ -951,9 +955,9 @@ test-repro: $(BUILD_DIR)/test-repro-runner
 #
 # NO EXCLUSIONS. A sanitizer covers the complete surface or it is asserting
 # coverage it does not have. The three suites once excluded here
-# (daemon_runtime, daemon_ipc, daemon_frontend) are back:
-#   daemon_ipc, daemon_frontend — the documented test-harness race and thread
-#     leaks no longer reproduce; both run clean under TSan.
+# (daemon_runtime, daemon_ipc) are back:
+#   daemon_ipc — the documented test-harness race and thread leaks no longer
+#     reproduce; it runs clean under TSan.
 #   daemon_runtime — did NOT deadlock as documented. It reported a REAL
 #     production data race on the log sink (plain global function pointer,
 #     written by the configuring thread, read AND CALLED by connection
@@ -961,15 +965,14 @@ test-repro: $(BUILD_DIR)/test-repro-runner
 #     had hidden it.
 TEST_TSAN_SUITES ?= mem slab_alloc parallel worker_pool watcher httpd pipeline \
                     diagnostics mcp mcp_mutation_guard subprocess daemon daemon_application \
-                    daemon_runtime daemon_ipc daemon_frontend
+                    daemon_runtime daemon_ipc
 # halt_on_error: a race is a bug, stop at the first one.
 #
 # report_thread_leaks=0: this disables TSan's thread-HYGIENE check only —
 # RACE detection, the reason the lane exists, is completely unaffected. Some
 # daemon fixtures fork after the process has gone multi-threaded, and in the
 # forked child TSan sees the parent's finished threads as never-joined even
-# though the fixture joins them (test_daemon_frontend.c:726 joins the thread
-# reported at :698). It fires on macOS and not Linux, i.e. it tracks fork
+# though the fixture joins them. It fires on macOS and not Linux, i.e. it tracks fork
 # semantics rather than anything about our code. The alternative was dropping
 # whole suites from the lane, which costs real race coverage; this costs none.
 TSAN_OPTIONS ?= halt_on_error=1:report_thread_leaks=0
@@ -1060,9 +1063,9 @@ $(BUILD_DIR)/.build-config: build-config-check | $(BUILD_DIR)
 
 $(BUILD_DIR)/codebase-memory-cli: $(PROD_SOURCE_OBJS) $(OBJS_VENDORED_PROD) $(BUILD_DIR)/.build-config $(PROJECT_HDRS) | $(BUILD_DIR)
 	$(CC) $(CFLAGS_PROD) -o $@ \
-		$(PROD_SOURCE_OBJS) \
-		$(OBJS_VENDORED_PROD) \
-		$(LDFLAGS)
+	$(PROD_SOURCE_OBJS) \
+	$(OBJS_VENDORED_PROD) \
+	$(LDFLAGS)
 
 cbm: $(BUILD_DIR)/codebase-memory-cli
 	@echo "Built: $(BUILD_DIR)/codebase-memory-cli"

@@ -1,0 +1,10 @@
+#ifndef CBM_OPERATIONS_TOOL_PROFILE_H
+#define CBM_OPERATIONS_TOOL_PROFILE_H
+
+typedef enum {
+    CBM_TOOL_PROFILE_ALL = 0,
+    CBM_TOOL_PROFILE_ANALYSIS = 1,
+    CBM_TOOL_PROFILE_SCOUT = 2,
+} cbm_tool_profile_t;
+
+#endif

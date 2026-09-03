@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+
 static cbm_operation_result_t mutation_json_result(const char *project, const char *status,
                                                     const char *error_detail, bool is_error) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);

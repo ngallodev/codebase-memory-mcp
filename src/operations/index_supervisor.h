@@ -129,6 +129,13 @@ int cbm_index_supervisor_spawn_count(void);
  * recovery is parallel-only; no sequential runs). */
 int cbm_index_supervisor_spawn_st_count(void);
 
+typedef enum {
+    CBM_INDEX_SUPERVISED_RESULT_FALLBACK = 0,
+    CBM_INDEX_SUPERVISED_RESULT_SUCCESS,
+    CBM_INDEX_SUPERVISED_RESULT_CONTAINED_FAILURE,
+    CBM_INDEX_SUPERVISED_RESULT_UNSAFE_TERMINAL,
+} cbm_index_supervised_result_disposition_t;
+
 typedef struct {
     cbm_proc_outcome_t outcome; /* how the worker ended */
     int exit_code;              /* worker exit code (-1 if signalled) */
@@ -141,6 +148,9 @@ typedef struct {
     char *response;         /* worker result only after a contained, uncancelled CLEAN exit;
                              * borrowed for async polls, caller-owned from the sync wrapper */
 } cbm_index_worker_result_t;
+
+cbm_index_supervised_result_disposition_t cbm_index_supervised_result_disposition(
+    int spawn_result, const cbm_index_worker_result_t *worker_result);
 
 /* Daemon-owned, nonblocking supervisor for one contained worker process tree. */
 typedef struct cbm_index_worker_handle cbm_index_worker_handle_t;

@@ -168,15 +168,6 @@ void cbm_mcp_server_set_watcher(cbm_mcp_server_t *srv, struct cbm_watcher *w);
  * removes its watcher subscription; it does not acquire mutation authority. */
 void cbm_mcp_server_detach_project(cbm_mcp_server_t *srv, const char *project);
 
-/* Transitional generic store-host adapters for neutral operations. These
- * preserve the existing generation-aware recovery policy while that policy is
- * moved out of the MCP session object. */
-cbm_store_t *cbm_mcp_server_operation_store_resolve(
-    cbm_mcp_server_t *srv, const char *project, bool mutation_already_held,
-    bool nonblocking_recovery, cbm_operation_store_recovery_status_t *recovery_status);
-void cbm_mcp_server_operation_store_invalidate(cbm_mcp_server_t *srv);
-char *cbm_mcp_server_operation_store_error(cbm_mcp_server_t *srv, const char *project);
-
 /* Set external config store reference (for auto_index setting). Not owned. */
 void cbm_mcp_server_set_config(cbm_mcp_server_t *srv, struct cbm_config *cfg);
 

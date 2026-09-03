@@ -24,12 +24,14 @@
 #include "store/store.h" // cbm_alloc_init — bind 3rd-party allocators to mimalloc before any sqlite/git init
 #include "daemon/application.h"
 #include "daemon/bootstrap.h"
-#include "daemon/frontend.h"
+#include "daemon/maintenance_monitor.h"
 #include "daemon/host.h"
 #include "daemon/ipc.h"
 #include "daemon/project_lock.h"
 #include "daemon/version_cohort.h"
-#include "mcp/mcp.h"
+#include "foundation/json_args.h"
+#include "operations/tool_profile.h"
+#include "operations/result_wire.h"
 #include "operations/operation.h"
 #include "operations/reliability_events.h"
 #include "pipeline/pipeline.h"
@@ -136,7 +138,7 @@ typedef struct {
 
 typedef struct {
     cbm_mutex_t mutex;
-    cbm_mcp_server_t *server;
+    atomic_int *cancel_flag;
     bool maintenance_cancelled;
 } main_local_maintenance_context_t;
 
@@ -150,13 +152,13 @@ static void main_local_maintenance_context_destroy(main_local_maintenance_contex
     memset(context, 0, sizeof(*context));
 }
 
-static void main_local_maintenance_server_bind(main_local_maintenance_context_t *context,
-                                               cbm_mcp_server_t *server) {
+static void main_local_maintenance_cancel_bind(main_local_maintenance_context_t *context,
+                                                atomic_int *cancel_flag) {
     if (!context) {
         return;
     }
     cbm_mutex_lock(&context->mutex);
-    context->server = server;
+    context->cancel_flag = cancel_flag;
     cbm_mutex_unlock(&context->mutex);
 }
 
@@ -166,7 +168,10 @@ static bool main_local_command_cancel(void *opaque) {
         return false;
     }
     cbm_mutex_lock(&context->mutex);
-    bool cancelled = context->server && cbm_mcp_server_cancel_active(context->server);
+    bool cancelled = context->cancel_flag != NULL;
+    if (context->cancel_flag) {
+        atomic_store_explicit(context->cancel_flag, 1, memory_order_release);
+    }
     context->maintenance_cancelled = context->maintenance_cancelled || cancelled;
     cbm_mutex_unlock(&context->mutex);
     return cancelled;
@@ -519,6 +524,7 @@ static bool worker_start_parent_watchdog(pid_t initial_ppid) {
     return cbm_thread_detach(&worker_watchdog_tid) == 0;
 }
 
+#if 0 /* retained only as historical MCP-client source */
 static bool client_start_parent_watchdog(pid_t initial_ppid) {
     if (initial_ppid <= 1) {
         return true;
@@ -539,6 +545,7 @@ static bool client_start_parent_watchdog(pid_t initial_ppid) {
     }
     return true;
 }
+#endif
 #endif
 
 /* ── CLI mode ───────────────────────────────────────────────────── */
@@ -587,6 +594,7 @@ static const cbm_cli_command_alias_t *cli_command_alias_find(const char *command
 /* Extract text content from MCP tool result envelope and print it.
  * MCP results: {"content":[{"type":"text","text":"..."}],"isError":...}
  * Returns 1 if the result was an error, 0 otherwise. */
+#if 0 /* retained only as historical MCP-result formatting source */
 static int cli_print_mcp_result(const char *result) {
     yyjson_doc *doc = yyjson_read(result, strlen(result), 0);
     if (!doc) {
@@ -614,12 +622,14 @@ static int cli_print_mcp_result(const char *result) {
     yyjson_doc_free(doc);
     return is_error ? SKIP_ONE : 0;
 }
+#endif
 
 /* Canonical CLI JSON deliberately strips the MCP content envelope. During the
  * first vertical slice the private dispatcher still returns that envelope, but
  * it is migration debt, not the public machine contract. If the operation text
  * is itself JSON, emit it directly; otherwise wrap the text in a tiny stable
  * CLI object. */
+#if 0 /* retained only as historical MCP-result formatting source */
 static int cli_print_canonical_json_result(const char *result) {
     yyjson_doc *doc = result ? yyjson_read(result, strlen(result), 0) : NULL;
     yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
@@ -679,6 +689,7 @@ static int cli_print_canonical_json_result(const char *result) {
     }
     return is_error ? SKIP_ONE : 0;
 }
+#endif
 
 
 /* Strip a flag from argv, returning true if found. */
@@ -774,7 +785,7 @@ static bool cli_first_nonspace_is_brace(const char *s) {
     return *s == '{';
 }
 
-static char *main_local_cli_daemon_execute(const char *tool_name, const char *args_json);
+static char *main_local_cli_daemon_execute(const char *tool_name, const char *args_json, bool *is_error_out);
 
 /* Slice 1 product boundary: canonical read-only CLI commands execute in the
  * already-coordinated one-shot process instead of opening a daemon-backed MCP
@@ -849,7 +860,7 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
     }
 
     bool progress_requested = cli_strip_flag(&argc, argv, "--progress");
-    bool raw_json = cli_strip_flag(&argc, argv, "--json");
+    (void)cli_strip_flag(&argc, argv, "--json");
 
     /* Supervisor worker role: when this process was spawned as a supervised index
      * worker, run indexing in-process (never re-supervise) and write the result to
@@ -960,10 +971,10 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
     /* Indexing always executes daemon-side now (the daemon's supervisor
      * spawns and budgets the worker); no local supervision prep remains for
      * one-shot commands. */
-    cbm_mcp_server_t *srv = NULL;
-    char *result = NULL;
     cbm_operation_result_t operation_result = {0};
     bool have_operation_result = false;
+    atomic_int local_cancel_flag;
+    atomic_init(&local_cancel_flag, 0);
     main_local_cli_mutation_t mutation = {
         .manager = project_locks,
         .feedback = progress ? stderr : NULL,
@@ -996,29 +1007,30 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
         free(default_project);
         maintenance_cancelled = main_local_maintenance_was_cancelled(maintenance_context);
     } else if (!index_worker) {
-        result = main_local_cli_daemon_execute(tool_name, args_json);
+        bool daemon_operation_error = false;
+        operation_result.payload =
+            main_local_cli_daemon_execute(tool_name, args_json, &daemon_operation_error);
+        operation_result.is_error = daemon_operation_error;
+        have_operation_result = operation_result.payload != NULL;
     } else {
-        srv = cbm_mcp_server_new(NULL);
-        if (srv) {
-            /* The supervised index worker still uses the historical dispatcher
-             * until index_repository is extracted in a later slice. */
-            cbm_mcp_server_set_background_tasks(srv, false);
-            if (project_locks) {
-                cbm_mcp_server_set_project_mutation_guard(srv, main_local_cli_mutation_begin,
-                                                          main_local_cli_mutation_end, &mutation);
-                cbm_mcp_server_set_project_mutation_try_guard(srv,
-                                                              main_local_cli_mutation_try_begin);
-            }
-        }
-        maintenance_binding_failed = srv && !maintenance_context;
-        if (srv && maintenance_context) {
-            main_local_maintenance_server_bind(maintenance_context, srv);
-            result = cbm_mcp_handle_tool(srv, tool_name, args_json);
-            main_local_maintenance_server_bind(maintenance_context, NULL);
+        const cbm_operation_descriptor_t *operation = cbm_operation_find(tool_name);
+        cbm_operation_runtime_t runtime = {0};
+        runtime.mutation_begin = main_local_cli_mutation_begin;
+        runtime.mutation_try_begin = main_local_cli_mutation_try_begin;
+        runtime.mutation_end = main_local_cli_mutation_end;
+        runtime.mutation_context = &mutation;
+        runtime.cancel_flag = &local_cancel_flag;
+        cbm_operation_context_t operation_context = {.runtime = &runtime};
+        maintenance_binding_failed = maintenance_context == NULL;
+        if (operation && maintenance_context) {
+            main_local_maintenance_cancel_bind(maintenance_context, &local_cancel_flag);
+            operation_result = cbm_operation_execute(&operation_context, operation->id, args_json);
+            have_operation_result = true;
+            main_local_maintenance_cancel_bind(maintenance_context, NULL);
             maintenance_cancelled = main_local_maintenance_was_cancelled(maintenance_context);
         }
     }
-    if (!result && (!have_operation_result || !operation_result.payload)) {
+    if (!have_operation_result || !operation_result.payload) {
         if (maintenance_binding_failed) {
             (void)fprintf(stderr,
                           "error: local %s maintenance cancellation could not bind safely\n",
@@ -1026,7 +1038,6 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
         } else if (index_worker) {
             (void)fprintf(stderr, "error: failed to run local worker server\n");
         }
-        cbm_mcp_server_free(srv);
         main_local_cli_mutation_release_all(&mutation);
         if (progress) {
             cbm_progress_sink_fini();
@@ -1037,56 +1048,30 @@ static int run_cli(int argc, char **argv, cbm_project_lock_manager_t *project_lo
     }
     int exit_code = 0;
 
-    if (have_operation_result) {
-        FILE *stream = operation_result.is_error ? stderr : stdout;
-        if (operation_result.payload) {
-            (void)fprintf(stream, "%s\n", operation_result.payload);
-        }
-        exit_code = operation_result.is_error ? SKIP_ONE : 0;
-        exit_code = cbm_cli_exit_status_after_maintenance(exit_code, maintenance_cancelled);
-    } else {
-    {
-        /* Supervised worker: hand the full result string to the parent via the
-         * response file before printing (parent reads it back on a clean exit). */
+    if (cbm_index_worker_active()) {
         const char *ro = cbm_index_worker_response_out();
+        char *wire = cbm_operation_result_wire_encode(&operation_result);
         bool worker_response_written = false;
-        if (ro) {
+        if (ro && wire) {
             FILE *rf = cbm_fopen(ro, "wb");
             if (rf) {
-                int write_rc = fputs(result, rf);
+                int write_rc = fputs(wire, rf);
                 int close_rc = fclose(rf);
                 worker_response_written = write_rc >= 0 && close_rc == 0;
             }
         }
-        if (raw_json) {
-            if (canonical_mode) {
-                exit_code = cli_print_canonical_json_result(result);
-            } else {
-                printf("%s\n", result);
-                /* Legacy parity mode preserves the historical MCP envelope. */
-                exit_code = cbm_cli_mcp_result_is_error(result) ? SKIP_ONE : 0;
-            }
-        } else {
-            exit_code = cli_print_mcp_result(result);
-        }
-        exit_code = cbm_cli_exit_status_after_maintenance(exit_code, maintenance_cancelled);
-        if (cbm_index_worker_active()) {
-            /* The supervisor protocol classifies the PROCESS, not the tool
-             * result: a valid MCP error response is a healthy worker outcome.
-             * Propagating cli_print_mcp_result's isError exit code made the
-             * parent discard that response and falsely report exit_nonzero as
-             * "crashed on a file". Fail only when the response transport itself
-             * failed. Skip multi-GB teardown; the OS reclaims it at exit. */
-            cbm_log_info("index.worker.fast_exit", "action", "_Exit");
-            fflush(NULL);
-            _Exit(worker_response_written ? 0 : SKIP_ONE);
-        }
-        free(result);
+        free(wire);
+        cbm_log_info("index.worker.fast_exit", "action", "_Exit");
+        fflush(NULL);
+        _Exit(worker_response_written ? 0 : SKIP_ONE);
     }
-
+    FILE *stream = operation_result.is_error ? stderr : stdout;
+    if (operation_result.payload) {
+        (void)fprintf(stream, "%s\n", operation_result.payload);
     }
+    exit_code = operation_result.is_error ? SKIP_ONE : 0;
+    exit_code = cbm_cli_exit_status_after_maintenance(exit_code, maintenance_cancelled);
     cbm_operation_result_dispose(&operation_result);
-    cbm_mcp_server_free(srv);
     main_local_cli_mutation_release_all(&mutation);
     if (progress) {
         cbm_progress_sink_fini();
@@ -1356,33 +1341,6 @@ static int handle_subcommand(int argc, char **argv, cbm_project_lock_manager_t *
     (void)fprintf(stderr, "error: unknown command '%s'\n", argv[1]);
     (void)fprintf(stderr, "hint: run 'codebase-memory-cli --help' for available commands\n");
     return EXIT_FAILURE;
-}
-
-/* Parse --ui= and --port= into a per-field daemon mutation. */
-static uint8_t parse_ui_flags(int argc, char **argv, bool *ui_enabled, int *ui_port,
-                              bool *explicit_enable) {
-    uint8_t update_mask = 0;
-    for (int i = SKIP_ONE; i < argc; i++) {
-        if (strncmp(argv[i], "--ui=", SLEN("--ui=")) == 0) {
-            *ui_enabled = strcmp(argv[i] + MAIN_FLAG_OFF, "true") == 0;
-            if (explicit_enable && *ui_enabled) {
-                *explicit_enable = true;
-            }
-            update_mask |= CBM_DAEMON_APPLICATION_UI_CONFIG_ENABLED;
-        }
-        if (strncmp(argv[i], "--port=", SLEN("--port=")) == 0) {
-            const char *value = argv[i] + MAIN_PORT_OFF;
-            char *end = NULL;
-            errno = 0;
-            long port = strtol(value, &end, CBM_DECIMAL_BASE);
-            if (errno == 0 && end != value && end && *end == '\0' && port > 0 &&
-                port < MAIN_MAX_PORT) {
-                *ui_port = (int)port;
-                update_mask |= CBM_DAEMON_APPLICATION_UI_CONFIG_PORT;
-            }
-        }
-    }
-    return update_mask;
 }
 
 /* Install platform-specific signal handlers. */
@@ -1914,7 +1872,7 @@ static bool main_session_context(const char *preferred_root, char root_out[MAIN_
 }
 
 static bool main_set_client_context(cbm_daemon_runtime_client_t *client, const char *preferred_root,
-                                    cbm_mcp_tool_profile_t tool_profile, const char *hook_event,
+                                    cbm_tool_profile_t tool_profile, const char *hook_event,
                                     const char *hook_dialect, uint32_t timeout_ms) {
     char root[MAIN_PATH_CAP];
     char allowed[MAIN_PATH_CAP];
@@ -2051,11 +2009,14 @@ static cbm_daemon_bootstrap_status_t main_client_bootstrap_with_upgrade(
     return cbm_daemon_bootstrap_execute(config, result);
 }
 
-/* One-shot CLI commands execute through the shared daemon, exactly like MCP
- * sessions and hooks: an active daemon (any starter) is recycled, an absent
+/* One-shot CLI commands execute through the shared daemon through the neutral
+ * operation request path; hooks use their own narrow request type: an active daemon (any starter) is recycled, an absent
  * one is spawned for this command — with a hint that `daemon start` removes
  * that per-command cost. Only supervised index workers stay in-process. */
-static char *main_local_cli_daemon_execute(const char *tool_name, const char *args_json) {
+static char *main_local_cli_daemon_execute(const char *tool_name, const char *args_json, bool *is_error_out) {
+    if (is_error_out) {
+        *is_error_out = false;
+    }
     cbm_daemon_ipc_endpoint_t *endpoint = cbm_daemon_bootstrap_endpoint_new(NULL);
     char executable_path[MAIN_PATH_CAP] = {0};
     cbm_daemon_build_identity_t identity;
@@ -2098,17 +2059,21 @@ static char *main_local_cli_daemon_execute(const char *tool_name, const char *ar
     uint32_t response_length = 0;
     bool context_ok =
         main_session_context(NULL, session_root, allowed_root, &allowed_root_ptr) &&
-        main_set_client_context(bootstrap.client, session_root, CBM_MCP_TOOL_PROFILE_ALL, NULL,
+        main_set_client_context(bootstrap.client, session_root, CBM_TOOL_PROFILE_ALL, NULL,
                                 NULL, MAIN_CONNECT_TIMEOUT_MS);
+    bool operation_error = false;
     if (context_ok &&
-        cbm_daemon_application_client_tool(bootstrap.client, tool_name, args_json, &response,
-                                           &response_length, MAIN_REQUEST_TIMEOUT_MS) ==
-            CBM_DAEMON_RUNTIME_APPLICATION_OK &&
+        cbm_daemon_application_client_operation_result(
+            bootstrap.client, tool_name, args_json, &response, &response_length, &operation_error,
+            MAIN_REQUEST_TIMEOUT_MS) == CBM_DAEMON_RUNTIME_APPLICATION_OK &&
         response && response_length > 0) {
         result = malloc((size_t)response_length + 1U);
         if (result) {
             memcpy(result, response, response_length);
             result[response_length] = '\0';
+            if (is_error_out) {
+                *is_error_out = operation_error;
+            }
         }
     }
     free(response);
@@ -2216,7 +2181,7 @@ static int main_run_hook_frontend(cbm_daemon_runtime_client_t *client, const cha
     }
     char *hook_cwd = main_hook_cwd(input);
     bool context_set =
-        main_set_client_context(client, hook_cwd, CBM_MCP_TOOL_PROFILE_ALL, hook_event,
+        main_set_client_context(client, hook_cwd, CBM_TOOL_PROFILE_ALL, hook_event,
                                 hook_dialect, MAIN_HOOK_CONNECT_TIMEOUT_MS);
     free(hook_cwd);
     if (!context_set) {
@@ -2877,7 +2842,7 @@ static int main_run_daemon_ctl(int argc, char **argv, const cbm_daemon_ipc_endpo
         ui_port = requested_port > 0 ? requested_port : ui_config.ui_port;
         uint8_t update_mask = 0x03U; /* enabled + port */
         bool context_set =
-            main_set_client_context(start_result.client, ".", CBM_MCP_TOOL_PROFILE_ALL, NULL, NULL,
+            main_set_client_context(start_result.client, ".", CBM_TOOL_PROFILE_ALL, NULL, NULL,
                                     MAIN_CONNECT_TIMEOUT_MS);
         if (!context_set || cbm_daemon_application_client_set_ui_config(
                                 start_result.client, update_mask, true, ui_port,
@@ -2952,13 +2917,6 @@ int main(int argc, char **argv) {
     cbm_profile_init();
     cbm_log_init_from_env();
 
-    cbm_mcp_tool_profile_t tool_profile = CBM_MCP_TOOL_PROFILE_ALL;
-    if (role == CBM_DAEMON_PROCESS_MCP_CLIENT &&
-        cbm_mcp_parse_tool_profile_args(argc, (const char *const *)argv, &tool_profile) != 0) {
-        (void)fprintf(stderr, "codebase-memory-cli: --tool-profile requires the supported value "
-                              "'analysis' or 'scout'\n");
-        return 2;
-    }
     const char *hook_event = NULL;
     const char *hook_dialect = NULL;
     if (role == CBM_DAEMON_PROCESS_HOOK_CLIENT &&
@@ -3198,7 +3156,7 @@ int main(int argc, char **argv) {
          * reports were missing: who I am, what I was asked to index, with what
          * arguments. Everything below here can crash and the log still names
          * the run. */
-        char *worker_repo_path = cbm_mcp_get_string_arg(invocation.args_json, "repo_path");
+        char *worker_repo_path = cbm_json_arg_string(invocation.args_json, "repo_path");
         cbm_index_worker_log_begin(invocation.args_json, worker_repo_path);
         free(worker_repo_path);
         cbm_daemon_ipc_endpoint_t *worker_endpoint = cbm_daemon_bootstrap_endpoint_new(NULL);
@@ -3458,59 +3416,13 @@ int main(int argc, char **argv) {
 
     g_daemon_client = bootstrap_result.client;
 
-    if (role == CBM_DAEMON_PROCESS_MCP_CLIENT &&
-        !main_set_client_context(g_daemon_client, NULL, tool_profile, NULL, NULL,
-                                 MAIN_CONNECT_TIMEOUT_MS)) {
-        (void)fprintf(stderr, "codebase-memory-cli: daemon session context was rejected\n");
-        (void)cbm_daemon_runtime_client_close(g_daemon_client, MAIN_CLOSE_TIMEOUT_MS);
-        g_daemon_client = NULL;
-        (void)main_version_cohort_close(&client_cohort_lease, &client_cohort_manager);
-        return EXIT_FAILURE;
-    }
-
-    /* Persist UI mutations only after the exact-build HELLO succeeds. A
-     * conflicting binary must be observationally read-only: applying its
-     * flags before bootstrap could reconfigure the already-running daemon
-     * even though that client was then rejected. */
-    if (role == CBM_DAEMON_PROCESS_MCP_CLIENT && cbm_mcp_tool_profile_allows_http(tool_profile)) {
-        bool ui_enabled = false;
-        int ui_port = 0;
-        bool explicitly_enabled = false;
-        uint8_t update_mask =
-            parse_ui_flags(argc, argv, &ui_enabled, &ui_port, &explicitly_enabled);
-        if (update_mask != 0 && cbm_daemon_application_client_set_ui_config(
-                                    g_daemon_client, update_mask, ui_enabled, ui_port,
-                                    MAIN_CONNECT_TIMEOUT_MS) != CBM_DAEMON_RUNTIME_APPLICATION_OK) {
-            (void)fprintf(stderr, "codebase-memory-cli: daemon UI configuration update failed\n");
-            (void)cbm_daemon_runtime_client_close(g_daemon_client, MAIN_CLOSE_TIMEOUT_MS);
-            g_daemon_client = NULL;
-            (void)main_version_cohort_close(&client_cohort_lease, &client_cohort_manager);
-            return EXIT_FAILURE;
-        }
-        if (explicitly_enabled && !(CBM_EMBEDDED_FILE_COUNT > 0)) {
-            (void)fprintf(stderr, "codebase-memory-cli: --ui requested, but this binary was built "
-                                  "without UI support; rebuild with `make -f Makefile.cbm "
-                                  "cbm-with-ui`.\n");
-        }
-    }
-#ifndef _WIN32
-    if (!client_start_parent_watchdog(process_initial_ppid)) {
-        (void)fprintf(stderr, "codebase-memory-cli: parent-death watchdog could not start\n");
-        (void)cbm_daemon_runtime_client_close(g_daemon_client, MAIN_CLOSE_TIMEOUT_MS);
-        g_daemon_client = NULL;
-        (void)main_version_cohort_close(&client_cohort_lease, &client_cohort_manager);
-        return EXIT_FAILURE;
-    }
-#endif
-
-    setup_signal_handlers();
-    int result = cbm_daemon_frontend_mcp_run(g_daemon_client, client_cohort_manager, stdin, stdout);
-    g_daemon_client = NULL; /* frontend consumed the handle */
-    bool client_cohort_cleanup =
-        main_version_cohort_close(&client_cohort_lease, &client_cohort_manager);
-    atomic_store(&g_shutdown, 1);
-    if (!client_cohort_cleanup) {
-        return EXIT_FAILURE;
-    }
-    return result < 0 ? EXIT_FAILURE : result;
+    /* The CLI-first role classifier has no public MCP-stdio role. Reaching this
+     * generic client tail therefore indicates an internal classification drift,
+     * not a request to start a hidden protocol frontend. */
+    (void)fprintf(stderr,
+                  "codebase-memory-cli: internal client role has no CLI frontend\n");
+    (void)cbm_daemon_runtime_client_close(g_daemon_client, MAIN_CLOSE_TIMEOUT_MS);
+    g_daemon_client = NULL;
+    (void)main_version_cohort_close(&client_cohort_lease, &client_cohort_manager);
+    return EXIT_FAILURE;
 }
