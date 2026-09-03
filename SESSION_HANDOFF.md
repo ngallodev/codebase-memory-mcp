@@ -1,54 +1,41 @@
-# Session Handoff
+# Developer Handoff
 
-Date: 2026-09-02
+Date: 2026-09-03
 
 ## Repository
 
 - Local path: `/lump/apps/codebase-memory-cli`
+- Branch: `release-tooling`
+- HEAD: `4c3b8234` (`feat: unlink production MCP implementation`)
 - Fork: `https://github.com/ngallodev/codebase-memory-cli`
-- Upstream: `https://github.com/DeusData/codebase-memory-mcp`
-- Current branch: `release-tooling`
-- Last committed revision: `43f27d4d`
-- Existing CLI PR: `https://github.com/ngallodev/codebase-memory-cli/pull/3`
 
-## Current project state
+## Completed
 
-The CP35 Windows-validation overlay was applied and committed. The CLI builds
-as `build/c/codebase-memory-cli`. Existing untracked overlay archives and
-`.codebase-memory/` were intentionally preserved.
+- Applied the cumulative `codebase-memory-cli-production-mcp-unlinked` overlay.
+- Production `MCP_SRCS` is empty; neutral JSON arguments, result wire,
+  operation catalog, index admission, session state, and store host own the
+  production paths.
+- Deleted the daemon MCP frontend, its test, and MCP index-supervisor sources.
+- Preserved focused incremental local build rules and neutral session teardown.
+- Added `scripts/analyze-memory.sh` and maintained `BACKLOG.md`.
 
-## Jenkins task in progress
+## Validation
 
-Requested: a Jenkins pipeline that builds and tests the local `release-tooling`
-branch, triggered by script only, with no SCM polling.
+- `scripts/build-dev.sh`: passed; production binary linked without MCP.
+- `scripts/test.sh --suites daemon_application,daemon_ipc`: blocked at the
+  test-runner link because legacy MCP-dependent tests and repro harnesses still
+  reference `cbm_mcp_*` while `MCP_SRCS` is empty. These remnants are outside
+  the CLI test scope and are recorded in `BACKLOG.md`.
+- `git diff --check`: passed before commit.
 
-Intended files:
+## Working-tree policy
 
-- `Jenkinsfile`: local checkout of `release-tooling`, then `scripts/build.sh`
-  and `scripts/test.sh`.
-- `scripts/jenkins-local-job.xml`: Pipeline SCM job definition with an empty
-  `<triggers/>` element.
-- `scripts/jenkins-local-job.sh`: `configure`, `inspect`, and `trigger`
-  commands.
+- The overlay archives and `.codebase-memory/` are intentionally untracked and
+  preserved; they are not included in the source handoff archive.
+- No push was performed.
 
-## Blocker
+## Next work
 
-Jenkins CLI/server availability was not completed. `/usr/bin/jenkins` exists,
-but `http://localhost:8080` refused connections and Docker access was denied.
-The active checkout also has no committed `release-tooling` pipeline files yet.
-
-The workspace mapping was stale during the prior attempt and wrote temporary
-Jenkins files under `/lump/apps/codebase-memory-mcp`; inspect and reconcile
-those files before copying anything into this repository.
-
-## Next actions
-
-1. Confirm the active checkout path and inspect the temporary files under the
-   old path.
-2. Add the three Jenkins files to this repository using the normal patch path.
-3. Commit them on `release-tooling`.
-4. Start or connect to the local Jenkins server through the supported Jenkins
-   CLI/API.
-5. Configure the job, inspect that `<triggers/>` contains no `pollSCM`, and
-   trigger it explicitly with the script.
-6. Record the Jenkins build URL/result and any test failures here.
+1. Retire or migrate the remaining MCP-dependent test/repro source lists.
+2. Classify residual neutral daemon Heaptrack allocations in `BACKLOG.md`.
+3. Complete native Windows release evidence and full phase-end CI validation.
