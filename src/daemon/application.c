@@ -18,7 +18,6 @@
 #include "operations/index_supervisor.h"
 #include "foundation/json_args.h"
 #include "operations/index_admission.h"
-#include "operations/tool_profile.h"
 #include "operations/operation.h"
 #include "operations/session_state.h"
 #include "operations/result_wire.h"
@@ -52,7 +51,7 @@
 #endif
 
 enum {
-    APPLICATION_CONTEXT_HEADER_SIZE = 19,
+    APPLICATION_CONTEXT_HEADER_SIZE = 18,
     APPLICATION_OPERATION_HEADER_SIZE = 5,
     APPLICATION_OPERATION_RESPONSE_HEADER_SIZE = 1,
     APPLICATION_UI_CONFIG_REQUEST_SIZE = 7,
@@ -116,7 +115,6 @@ struct cbm_daemon_application_session {
     cbm_daemon_client_id_t client_id;
     uint64_t authenticated_process_id;
     bool context_set;
-    cbm_tool_profile_t tool_profile;
     char *hook_event;
     char *hook_dialect;
     bool session_cancelled;
@@ -561,8 +559,7 @@ static bool application_session_workspace_allowed(const cbm_daemon_application_s
 static void application_refresh_watch_locked(cbm_daemon_application_session_t *session) {
     cbm_daemon_application_t *application = session->application;
     if (!application->watcher || !session->context_set ||
-        session->tool_profile != CBM_TOOL_PROFILE_ALL || session->hook_event ||
-        session->hook_dialect || session->auto_index_subscribed) {
+        session->hook_event || session->hook_dialect || session->auto_index_subscribed) {
         return;
     }
     const char *project = cbm_operation_session_project(session->operation_session);
@@ -1532,7 +1529,7 @@ static void application_job_recover(cbm_daemon_application_job_t *job,
 
 /* A capacity/cancellation conflict is resolved by the terminal publication
  * that freed the project or global slot. Admit waiting session auto-index work
- * at that same boundary so an otherwise-idle MCP session does not need to send
+ * at that same boundary so an otherwise-idle daemon session does not need to send
  * another request merely to make background progress. Caller holds mutex. */
 static void application_auto_index_retry_pending_locked(cbm_daemon_application_t *application) {
     if (application->stopping) {
@@ -2103,8 +2100,7 @@ static char *application_auto_index_args(const char *root_path) {
 
 static void application_background_initialize_impl(cbm_daemon_application_session_t *session) {
     if (!session || !session->application || !session->context_set ||
-        session->tool_profile != CBM_TOOL_PROFILE_ALL || session->hook_event ||
-        session->hook_dialect) {
+        session->hook_event || session->hook_dialect) {
         return;
     }
     cbm_daemon_application_t *application = session->application;
@@ -2426,7 +2422,6 @@ static cbm_daemon_runtime_application_session_t *application_session_open(
     cbm_store_host_set_mutation_guard(session->store_host, application_session_mutation_begin,
                                       application_session_mutation_try_begin,
                                       application_session_mutation_end, session);
-    session->tool_profile = CBM_TOOL_PROFILE_ALL;
     session->application = application;
     session->client_id = client_id;
     session->authenticated_process_id = authenticated_process_id;
@@ -2453,19 +2448,14 @@ static cbm_daemon_runtime_application_status_t application_set_context(
     uint32_t root_length = application_get_u32(request + 1);
     bool allowed_present = request[5] == 1;
     uint32_t allowed_length = application_get_u32(request + 6);
-    uint8_t profile_value = request[10];
-    uint32_t event_length = application_get_u32(request + 11);
-    uint32_t dialect_length = application_get_u32(request + 15);
+    uint32_t event_length = application_get_u32(request + 10);
+    uint32_t dialect_length = application_get_u32(request + 14);
     uint64_t expected = (uint64_t)APPLICATION_CONTEXT_HEADER_SIZE + root_length + allowed_length +
                         event_length + dialect_length;
     if (request[5] > 1 || root_length == 0 || expected != request_length ||
-        (!allowed_present && allowed_length != 0) ||
-        profile_value > (uint8_t)CBM_TOOL_PROFILE_SCOUT ||
-        (profile_value != (uint8_t)CBM_TOOL_PROFILE_ALL &&
-         (event_length != 0 || dialect_length != 0))) {
+        (!allowed_present && allowed_length != 0)) {
         return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
     }
-    cbm_tool_profile_t tool_profile = (cbm_tool_profile_t)profile_value;
     const uint8_t *payload = request + APPLICATION_CONTEXT_HEADER_SIZE;
     char *root = application_text_copy(request + APPLICATION_CONTEXT_HEADER_SIZE, root_length);
     char *allowed =
@@ -2506,7 +2496,6 @@ static cbm_daemon_runtime_application_status_t application_set_context(
         free(hook_dialect);
         return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
     }
-    session->tool_profile = tool_profile;
     session->hook_event = hook_event;
     session->hook_dialect = hook_dialect;
     session->context_set = true;
@@ -2572,8 +2561,7 @@ static cbm_daemon_runtime_application_status_t application_set_ui_config(
     const uint8_t *request, uint32_t request_length) {
     const uint8_t valid_mask =
         CBM_DAEMON_APPLICATION_UI_CONFIG_ENABLED | CBM_DAEMON_APPLICATION_UI_CONFIG_PORT;
-    if (!session || !session->context_set || session->tool_profile != CBM_TOOL_PROFILE_ALL ||
-        request_length != APPLICATION_UI_CONFIG_REQUEST_SIZE) {
+    if (!session || !session->context_set || request_length != APPLICATION_UI_CONFIG_REQUEST_SIZE) {
         return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
     }
     uint8_t update_mask = request[1];
@@ -3192,7 +3180,7 @@ static cbm_daemon_runtime_application_status_t application_client_exchange(
 
 cbm_daemon_runtime_application_status_t cbm_daemon_application_client_set_context(
     cbm_daemon_runtime_client_t *client, const char *session_root, const char *allowed_root,
-    cbm_tool_profile_t tool_profile, const char *hook_event, const char *hook_dialect,
+    const char *hook_event, const char *hook_dialect,
     uint32_t timeout_ms) {
     if (!client || !session_root || !session_root[0]) {
         return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
@@ -3203,9 +3191,7 @@ cbm_daemon_runtime_application_status_t cbm_daemon_application_client_set_contex
     size_t dialect_length = hook_dialect ? strlen(hook_dialect) : 0;
     uint64_t total = (uint64_t)APPLICATION_CONTEXT_HEADER_SIZE + root_length + allowed_length +
                      event_length + dialect_length;
-    if (tool_profile < CBM_TOOL_PROFILE_ALL || tool_profile > CBM_TOOL_PROFILE_SCOUT ||
-        (tool_profile != CBM_TOOL_PROFILE_ALL && (event_length != 0 || dialect_length != 0)) ||
-        !cbm_hook_augment_invocation_supported(hook_event, hook_dialect) ||
+    if (!cbm_hook_augment_invocation_supported(hook_event, hook_dialect) ||
         root_length > UINT32_MAX || allowed_length > UINT32_MAX || event_length > UINT32_MAX ||
         dialect_length > UINT32_MAX || total > CBM_DAEMON_RUNTIME_APPLICATION_PAYLOAD_MAX) {
         return CBM_DAEMON_RUNTIME_APPLICATION_REJECTED;
@@ -3218,9 +3204,8 @@ cbm_daemon_runtime_application_status_t cbm_daemon_application_client_set_contex
     application_put_u32(request + 1, (uint32_t)root_length);
     request[5] = allowed_root ? 1U : 0U;
     application_put_u32(request + 6, (uint32_t)allowed_length);
-    request[10] = (uint8_t)tool_profile;
-    application_put_u32(request + 11, (uint32_t)event_length);
-    application_put_u32(request + 15, (uint32_t)dialect_length);
+    application_put_u32(request + 10, (uint32_t)event_length);
+    application_put_u32(request + 14, (uint32_t)dialect_length);
     memcpy(request + APPLICATION_CONTEXT_HEADER_SIZE, session_root, root_length);
     if (allowed_root) {
         memcpy(request + APPLICATION_CONTEXT_HEADER_SIZE + root_length, allowed_root,

@@ -51,7 +51,6 @@ int cbm_cli_print_tool_flags(const char *tool_name);
 /* Inspect a raw MCP tool-result envelope. Returns true only when the root
  * object carries the exact boolean field `isError: true`; malformed JSON,
  * strings, and nested lookalikes are not tool errors. */
-bool cbm_cli_mcp_result_is_error(const char *result);
 
 /* Maintenance cancellation is authoritative even if a tool races to produce
  * a nominal success result. Preserve an existing failure code; otherwise turn

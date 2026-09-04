@@ -1,4 +1,5 @@
 #include "operations/store_host.h"
+#include "operations/reliability_events.h"
 
 #include "foundation/compat.h"
 #include "foundation/compat_fs.h"
@@ -380,6 +381,13 @@ cbm_store_t *cbm_store_host_resolve(cbm_store_host_t *host, const char *project,
         cbm_integrity_verdict_t verdict = host->store ? cbm_store_check_integrity_verdict(host->store)
                                                        : CBM_INTEGRITY_TRANSIENT;
         if (verdict == CBM_INTEGRITY_TRANSIENT) {
+            cbm_reliability_record(&(cbm_reliability_record_t){
+                .event = CBM_RELIABILITY_EVENT_STORE_INTEGRITY_TRANSIENT,
+                .project = project,
+                .operation = "store.resolve",
+                .reason = "integrity recheck was transient after acquiring mutation coordination",
+                .retry = true,
+            });
             if (host->store) cbm_store_close(host->store);
             host->store = NULL;
             if (recovery_status) *recovery_status = CBM_OPERATION_STORE_RECOVERY_BUSY;
@@ -387,13 +395,41 @@ cbm_store_t *cbm_store_host_resolve(cbm_store_host_t *host, const char *project,
             return NULL;
         }
         if (verdict != CBM_INTEGRITY_OK) {
+            cbm_reliability_record(&(cbm_reliability_record_t){
+                .event = CBM_RELIABILITY_EVENT_STORE_INTEGRITY_CORRUPT,
+                .project = project,
+                .operation = "store.resolve",
+                .reason = "integrity recheck classified the persisted generation as corrupt",
+            });
             if (host->store) cbm_store_close(host->store);
             host->store = NULL;
             char backup[CBM_SZ_2K] = {0};
             bool q = quarantine_corrupt_store(host, project, path, backup, sizeof(backup));
+            if (q) {
+                cbm_reliability_record(&(cbm_reliability_record_t){
+                    .event = CBM_RELIABILITY_EVENT_STORE_QUARANTINE,
+                    .project = project,
+                    .operation = "store.resolve",
+                    .reason = "corrupt persisted generation moved to a recovery snapshot",
+                });
+                cbm_reliability_record(&(cbm_reliability_record_t){
+                    .event = CBM_RELIABILITY_EVENT_STORE_REBUILD_REQUESTED,
+                    .project = project,
+                    .operation = "store.resolve",
+                    .reason = "live corrupt generation removed; repository index must be rebuilt",
+                    .retry = true,
+                });
+            }
             cbm_log_error("store.auto_clean", "project", project, "path", path, "action",
                           q ? "corrupt generation quarantined" : "corrupt generation preserved",
                           "backup", q ? backup : "none");
+        } else {
+            cbm_reliability_record(&(cbm_reliability_record_t){
+                .event = CBM_RELIABILITY_EVENT_STORE_INTEGRITY_OK,
+                .project = project,
+                .operation = "store.resolve",
+                .reason = "integrity recheck succeeded after mutation coordination",
+            });
         }
         if (!mutation_already_held) mutation_end(host, project);
         if (!host->store) return NULL;

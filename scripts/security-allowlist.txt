@@ -45,7 +45,7 @@ src/watcher/watcher.c:popen:via cbm_popen wrapper calls
 src/git/git_context.c:cbm_popen:git rev-parse/symbolic-ref/merge-base metadata lookup
 src/git/git_context.c:popen:via cbm_popen wrapper call
 
-# ── MCP server: search and change detection ────────────────────────────────
+# ── Code intelligence: search and change detection ────────────────────────
 
 # ── Pipeline: git history parsing (git log) ────────────────────────────────
 src/pipeline/pass_githistory.c:cbm_popen:git log for file history (path validated)

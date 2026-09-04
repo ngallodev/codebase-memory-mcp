@@ -239,7 +239,7 @@ static void detect_collect_seeds(cbm_store_t *store, const char *project, const 
 }
 
 /* Module key for the impacted rollup = the first TWO path segments
- * ("src/mcp/mcp.c" -> "src/mcp"), a quotient of the blast radius coarse enough
+ * ("src/operations/search.c" -> "src/operations"), a quotient of the blast radius coarse enough
  * to fit yet specific enough to localize (one segment collapses a whole tree
  * to "src"). Falls back to one segment, then the whole path. */
 static void detect_module_of(const char *file, char *out, size_t outsz) {

@@ -1,4 +1,5 @@
 # Codebase Memory CLI Migration — Plan and Status
+> **Planning re-baseline (CP61):** the CLI-first/MCP-removal architecture phase is closed unless qualification evidence exposes a concrete defect. Remaining work is release qualification: Linux consolidation, immutable GitHub RC artifacts, native Windows validation on `luigi.home.arpa`, frozen-corpus comparative benchmarking, agent usability, production skill, and release decision. See `docs/RELEASE_QUALIFICATION_PLAN.md`.
 
 **Updated:** 2026-09-03  
 **Current authoritative baseline:** latest complete consolidated source attached to the project sources page  
@@ -190,3 +191,103 @@ No production or retained C behavioral-test source includes `mcp/mcp.h` or calls
 - **COMPLETE:** `docs/CONFIGURATION.md` distinguishes compatibility-sensitive persisted `codebase-memory-mcp` paths from the active CLI product and removes stale MCP-only request-path wording.
 - **COMPLETE:** version- and language-count contract surfaces now point at the renamed CLI package files; the vacuous npm language-count surface was removed from the contract because it no longer publishes a count.
 - **COMPLETE:** active test/workflow comments and usage examples touched by this slice no longer describe neutral indexing/runtime behavior as MCP behavior.
+
+### CP55 — Internal profile/observability and UI protocol cleanup
+
+- **COMPLETE:** removed the dead `cbm_log_mcp_request()` observability helper and its self-only unit coverage; production had no callers after physical MCP removal.
+- **COMPLETE:** removed the daemon `ALL/ANALYSIS/SCOUT` tool-profile field and `src/operations/tool_profile.h`. Every production context caller already used the unrestricted value, so the profile byte was transition-only state rather than a live product choice.
+- **COMPLETE:** simplified daemon SET_CONTEXT wire state by removing the unused profile byte while preserving root, allowed-root, hook event/dialect, cancellation, watcher, auto-index, update, and UI coordination behavior.
+- **COMPLETE:** migrated retained daemon-application lifecycle tests from retired numeric request kind 2 / JSON-RPC pings to neutral operation requests or direct context establishment; deleted tests whose only contract was MCP notifications/restricted MCP surfaces.
+- **COMPLETE:** removed the UI `POST /rpc` JSON-RPC compatibility endpoint. The current embedded UI has no consumer for it; supported UI behavior remains on neutral `/api/...` routes and direct neutral operations/store infrastructure.
+- **COMPLETE:** migrated retained HTTP security/watchdog tests to supported `/api/...` endpoints and deleted the RPC allowlist test that protected only the retired protocol envelope.
+- **PRESERVED:** tier-profile renderers and exact `--tool-profile=analysis|scout` strings remain only in ownership-aware uninstall/update recognition of files produced by historical releases. Clean install does not expose a daemon profile mode.
+- **PRESERVED:** historical repository URLs, persisted `codebase-memory-mcp` cache/config paths, owned-entry markers, and negative guards remain compatibility/history rather than active architecture.
+
+### CP56 — Legacy profile compatibility boundary and doctor configuration visibility
+
+- **COMPLETE:** renamed the historical tier/profile renderer source and test surfaces to `legacy_agent_profiles.*`, making their ownership explicit: they reproduce bytes from prior releases solely so update/uninstall can remove exact Codebase Memory-owned documents without deleting modified or foreign files.
+- **PRESERVED:** historical `--tool-profile=analysis|scout`, MCP server names, and old agent dialect payloads remain inside that legacy renderer because byte-accurate recognition is a safety mechanism, not an active install capability.
+- **COMPLETE:** new OpenClaw compaction augmentation now writes `Codebase Knowledge Graph (codebase-memory-cli)`. Cleanup recognizes and removes both the current CLI label and the historical MCP label.
+- **COMPLETE:** the durable agent-instructions contract test now validates the actual CLI-first instructions and rejects `codebase-memory-mcp`/`search_graph` leakage from new instructions.
+- **COMPLETE:** `doctor` now reports effective watcher state plus UI enabled/port configuration in both human and JSON output, reusing existing configuration sources rather than introducing duplicate health infrastructure.
+
+## CP57 — creation-era test and dead result-helper cleanup
+
+- **COMPLETE:** removed the unused `cbm_cli_mcp_result_is_error()` API. It had no production caller and survived only through a self-test for the retired MCP result envelope.
+- **COMPLETE:** removed creation-era CLI tests that expected fresh tiered MCP subagents, per-agent MCP server blocks, or `--tool-profile` registrations. Current install behavior is CLI-first; byte-accurate historical renderers remain tested separately for ownership-aware update/uninstall cleanup.
+- **PRESERVED:** durable CLI instructions, skills, hooks, exact legacy cleanup recognition, foreign-file protection, and tier-profile uninstall/migration coverage remain in the active test graph.
+
+## CP58 — recovery observability and concurrency evidence audit
+
+- **COMPLETE:** audited the retained recovery/concurrency harnesses and confirmed substantive coverage already exists for cross-process lock ordering/fairness, cancellation rollback, WAL crash recovery, mutation serialization, index coalescing, worker containment, daemon stop/refusal, and corruption quarantine/recovery. No duplicate concurrency framework or broad low-value unit-test expansion was added.
+- **COMPLETE:** the neutral store host now records reliability events when a previously suspect persisted generation rechecks as transient, corrupt, successfully quarantined, or requiring rebuild. A successful coordinated recheck is also recorded as integrity-ok.
+- **COMPLETE:** human `doctor` output now surfaces observed bounded reliability-event counts in addition to the existing JSON summary; unobserved/reserved event identifiers remain absent rather than being presented as synthetic zero evidence.
+- **PRESERVED:** BUSY/LOCKED classification remains distinct from corruption; the new event wiring records only verdicts actually produced by the existing recovery boundary and does not infer SQLite error codes it does not own.
+- **REMAINING:** establish real workflow performance baselines and run the phase-end Linux reliability pass; native Windows validation remains external evidence.
+
+## CP59 — Agent-workflow performance harness
+
+**PARTIAL** — The performance-baseline harness is now CLI-first and reproducible. The canonical
+workflow runner covers index, search, architecture, snippet, outline, changes, status, and optional
+cross-repository intelligence using an isolated cache. `scripts/benchmark-index.sh` no longer uses
+the deprecated raw `cli index_repository` compatibility interface.
+
+Numeric baseline capture remains **REMAINING** for this checkpoint because the production `-O2`
+build did not complete within the available uninterrupted compiler window; no substitute
+unoptimized/older binary was used for measurements. See `docs/PERFORMANCE_BASELINE.md`.
+
+## CP60 — Benchmark reproducibility contract
+
+- **COMPLETE:** the workflow benchmark now defines a reproducibility contract rather than treating raw timings as self-validating evidence. Comparative runs must pin executable identity/hash, benchmark-repository commit and dirty state, harness revision/parameters, cache-state procedure, host metadata, and relevant `CBM_*` environment.
+- **COMPLETE:** each benchmark invocation is one independent trial and refuses a reused result/cache directory. Repeated read cases receive one unrecorded warm-up before recorded timings so reference/candidate comparisons use the same steady-state semantics.
+- **COMPLETE:** `environment.txt` records binary/harness SHA-256, repository revision/origin/dirty state, timestamp, CPU, memory, filesystem, workload parameters, and benchmark-relevant environment where available.
+- **COMPLETE:** the documented release comparison procedure calls for at least three independent fresh-cache trials per binary, median-based read comparison, exact input/harness parity, correctness/graph-shape checks, and explicit invalidation conditions for mismatched runs.
+- **REMAINING:** capture numeric reference/candidate baselines with a successfully linked production-optimized binary. The methodology is now explicit enough for those results to be independently repeated; numeric evidence is still not claimed by this checkpoint.
+
+## CP61 — Release qualification planning re-baseline
+
+- **COMPLETE:** migration-era sequencing is superseded by `docs/RELEASE_QUALIFICATION_PLAN.md`; further architecture changes require evidence from qualification rather than generic cleanup.
+- **COMPLETE:** native Windows release validation is specified as an external procedure against immutable GitHub-published bytes on `luigi.home.arpa`; portable and installed forms are both required.
+- **COMPLETE:** comparative Windows benchmarking is specified around a frozen repository corpus, exact artifact identity, fresh-cache alternating trials, correctness/shape parity, and retained raw evidence.
+- **COMPLETE:** a standalone Windows qualification-agent runbook defines acquisition, identity verification, frozen-corpus checks, functional/recovery testing, install/update/uninstall validation, benchmarking, failure classification, and evidence summary requirements.
+- **COMPLETE:** benchmark corpus revisions are immutable within a corpus generation. Any repository revision change creates a new generation and requires a new baseline capture rather than comparison against older results.
+- **REMAINING:** finalize the exact `agent-workflow` remote and select/pin the fourth larger open-source repository already available on `r6d12`/the qualification environment.
+- **REMAINING:** complete Linux consolidation, publish an immutable GitHub release candidate, execute native Windows qualification and comparative baselines, then run agent usability and produce the final product skill.
+
+## CP62 — Frozen benchmark corpus finalization
+
+**COMPLETE (planning):** `windows-corpus-1` now has fixed repository identities: codebase-memory-cli, specgen-aw, agent-workflow, agent-workflow-spec-contracts, and herdr. Repository remotes are explicit in `docs/qualification/BENCHMARK_CORPUS.json`. Exact commit SHAs remain deliberately unset until the one-time initialization reads them from the actual clean frozen checkouts used on `luigi.home.arpa`; after pinning, any commit change creates a new corpus generation and requires new baseline capture.
+
+
+
+## CP63 — Linux qualification consolidation
+
+Status: **IN PROGRESS / QUALIFICATION**
+
+The project is now executing the release-qualification plan rather than further migration cleanup. The fast sanitized foundation gate has been repaired to use a true foundation-only incremental runner and currently passes 312 tests with two explicit Windows-only skips. Release/runtime/security/smoke contracts have been reconciled with the supported CLI-first release topology and pass. See `docs/LINUX_RELEASE_QUALIFICATION.md` for evidence and remaining Linux phase-end work.
+
+The current optimized production build has not yet reached final link within this execution environment's bounded compiler windows; no production compiler error has been observed. Final-link evidence remains required for the current candidate and will also be obtained from the immutable GitHub RC build.
+
+## CP64 — external qualification release hold
+
+**COMPLETE:** GitHub release preparation now defaults to a draft external-qualification hold. A separate promotion workflow validates `luigi.home.arpa` qualification evidence against the exact Windows release archive/executable hashes before registry publication or public un-drafting. Linux broad sanitized qualification remains in progress due build duration; no source failure has surfaced in the incremental build.
+
+### CP65 — RC dispatch reproducibility (release qualification)
+
+Status: **COMPLETE**
+
+- Added a deterministic RC-dispatch preparation tool that refuses dirty trees and non-`vX.Y.Z-rc.N` tags.
+- Added a standalone GitHub RC dispatch agent runbook.
+- RC dispatch evidence now binds source commit, workflow hash, corpus manifest hash, qualification host, and held-draft release inputs.
+- The first CLI-first RC is recommended as `v0.11.0-rc.1` after the current public `v0.10.8`, but version selection remains an explicit operator decision.
+- Broad Linux ASan/UBSan runner compilation remains in progress locally; no compiler/source failure has surfaced in the preserved incremental build.
+
+### CP66 — explicit first-CLI baseline decision
+
+Status: **COMPLETE (release qualification contract)**
+
+- RC dispatch now refuses to proceed without an explicit benchmark-baseline decision: either `--baseline-zero` or an immutable `--baseline-tag`.
+- The first CLI-first candidate (`v0.11.0-rc.1` under the current plan) must explicitly use `BASELINE_ZERO`; `v0.10.8` is not treated as a like-for-like CLI workflow performance baseline.
+- `BASELINE_ZERO` is never inferred automatically. After the first qualified CLI release, later candidates must name the exact prior qualified CLI release tag for comparative benchmarking.
+- The Windows qualification runbook consumes the RC dispatch decision and must not substitute an incompatible baseline artifact.
+- Local broad sanitized compilation remains useful supporting evidence, but the held GitHub RC workflow is the authoritative final build/test source for immutable release bytes.

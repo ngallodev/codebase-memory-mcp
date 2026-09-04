@@ -1,10 +1,14 @@
 /*
- * agent_profiles.h — Canonical tiered codebase-memory agent profiles.
+ * legacy_agent_profiles.h — Historical tiered profile renderers retained only for safe cleanup.
  */
-#ifndef CBM_CLI_AGENT_PROFILES_H
-#define CBM_CLI_AGENT_PROFILES_H
+#ifndef CBM_CLI_LEGACY_AGENT_PROFILES_H
+#define CBM_CLI_LEGACY_AGENT_PROFILES_H
 
 #include <stdbool.h>
+
+/* These renderers are not an install/product surface. They reproduce bytes from
+ * historical releases so update/uninstall can remove only exact Codebase
+ * Memory-owned documents and preserve modified or foreign files. */
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,4 +72,4 @@ char *cbm_render_graph_prompt(cbm_graph_tier_t tier, cbm_graph_access_t access);
 }
 #endif
 
-#endif /* CBM_CLI_AGENT_PROFILES_H */
+#endif /* CBM_CLI_LEGACY_AGENT_PROFILES_H */

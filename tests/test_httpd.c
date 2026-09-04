@@ -159,9 +159,7 @@ static char *th_request_with_ui_headers(int port, const char *request) {
 
     const char *target = strchr(request, ' ');
     target = target ? target + 1 : NULL;
-    bool protected_route =
-        target && (strncmp(target, "/api/", 5) == 0 || strncmp(target, "/rpc ", 5) == 0 ||
-                   strncmp(target, "/rpc?", 5) == 0);
+    bool protected_route = target && strncmp(target, "/api/", 5) == 0;
     bool mutation = strncmp(request, "POST ", 5) == 0;
     bool have_host = strstr(request, "\r\nHost:") != NULL;
     bool have_content_type = strstr(request, "\r\nContent-Type:") != NULL;
@@ -222,7 +220,7 @@ TEST(httpd_parse_simple_get) {
 }
 
 TEST(httpd_parse_security_headers_and_rejects_duplicates) {
-    const char *raw = "POST /rpc HTTP/1.1\r\n"
+    const char *raw = "POST /api/index HTTP/1.1\r\n"
                       "Host: 127.0.0.1:9749\r\n"
                       "Content-Type: application/json\r\n"
                       "Origin: http://127.0.0.1:9749\r\n"
@@ -248,7 +246,7 @@ TEST(httpd_parse_security_headers_and_rejects_duplicates) {
 }
 
 TEST(httpd_parse_post_with_body_offset) {
-    const char *raw = "POST /rpc HTTP/1.1\r\n"
+    const char *raw = "POST /api/index HTTP/1.1\r\n"
                       "Content-Length: 7\r\n"
                       "Content-Type: application/json\r\n"
                       "\r\n"
@@ -258,7 +256,7 @@ TEST(httpd_parse_post_with_body_offset) {
     int rc = cbm_http_parse_head(raw, strlen(raw), &req, &body_off, &clen);
     ASSERT_EQ(rc, 0);
     ASSERT_STR_EQ(req.method, "POST");
-    ASSERT_STR_EQ(req.path, "/rpc");
+    ASSERT_STR_EQ(req.path, "/api/index");
     ASSERT_STR_EQ(req.query, "");
     ASSERT_EQ((int)clen, 7);
     ASSERT_STR_EQ(raw + body_off, "{\"a\":1}");
@@ -285,7 +283,7 @@ TEST(httpd_parse_rejects_bare_lf) {
 }
 
 TEST(httpd_parse_rejects_chunked) {
-    const char *raw = "POST /rpc HTTP/1.1\r\n"
+    const char *raw = "POST /api/index HTTP/1.1\r\n"
                       "Transfer-Encoding: chunked\r\n"
                       "\r\n";
     cbm_http_req_t req;
@@ -296,7 +294,7 @@ TEST(httpd_parse_rejects_chunked) {
 
 TEST(httpd_parse_rejects_oversized_content_length) {
     char raw[256];
-    snprintf(raw, sizeof(raw), "POST /rpc HTTP/1.1\r\nContent-Length: %d\r\n\r\n",
+    snprintf(raw, sizeof(raw), "POST /api/index HTTP/1.1\r\nContent-Length: %d\r\n\r\n",
              CBM_HTTP_MAX_BODY + 1);
     cbm_http_req_t req;
     size_t body_off = 0, clen = 0;
@@ -305,12 +303,12 @@ TEST(httpd_parse_rejects_oversized_content_length) {
 }
 
 TEST(httpd_parse_rejects_garbage_content_length) {
-    const char *raw = "POST /rpc HTTP/1.1\r\nContent-Length: abc\r\n\r\n";
+    const char *raw = "POST /api/index HTTP/1.1\r\nContent-Length: abc\r\n\r\n";
     cbm_http_req_t req;
     size_t body_off = 0, clen = 0;
     ASSERT_EQ(cbm_http_parse_head(raw, strlen(raw), &req, &body_off, &clen), 400);
 
-    const char *neg = "POST /rpc HTTP/1.1\r\nContent-Length: -5\r\n\r\n";
+    const char *neg = "POST /api/index HTTP/1.1\r\nContent-Length: -5\r\n\r\n";
     ASSERT_EQ(cbm_http_parse_head(neg, strlen(neg), &req, &body_off, &clen), 400);
     PASS();
 }
@@ -407,8 +405,8 @@ TEST(httpd_path_match_matrix) {
     /* exact */
     ASSERT_TRUE(cbm_http_path_match("/", "/"));
     ASSERT_FALSE(cbm_http_path_match("/x", "/"));
-    ASSERT_TRUE(cbm_http_path_match("/rpc", "/rpc"));
-    ASSERT_FALSE(cbm_http_path_match("/rpc2", "/rpc"));
+    ASSERT_TRUE(cbm_http_path_match("/api/index", "/api/index"));
+    ASSERT_FALSE(cbm_http_path_match("/api/index2", "/api/index"));
     /* trailing-* prefix */
     ASSERT_TRUE(cbm_http_path_match("/api/layout", "/api/layout*"));
     ASSERT_TRUE(cbm_http_path_match("/assets/index-abc.js", "/assets/*"));
@@ -1069,7 +1067,7 @@ TEST(ui_server_same_origin_request_is_allowed) {
     int port = cbm_http_server_port(ts.srv);
     char req[512];
     snprintf(req, sizeof(req),
-             "OPTIONS /rpc HTTP/1.1\r\n"
+             "OPTIONS /api/index HTTP/1.1\r\n"
              "Host: 127.0.0.1:%d\r\n"
              "Origin: http://127.0.0.1:%d\r\n\r\n",
              port, port);
@@ -1092,7 +1090,7 @@ TEST(ui_server_rejects_foreign_and_null_origins) {
     char resp[4096];
     char req[768];
     snprintf(req, sizeof(req),
-             "OPTIONS /rpc HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+             "OPTIONS /api/index HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
              "Origin: http://evil.example.com\r\n\r\n",
              port);
     int n = th_http_raw(port, req, resp, sizeof(resp));
@@ -1131,13 +1129,12 @@ TEST(ui_server_mutations_require_json_content_type) {
     th_server_t ts;
     ASSERT_EQ(th_server_start(&ts), 0);
     int port = cbm_http_server_port(ts.srv);
-    const char *body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\","
-                       "\"params\":{\"name\":\"list_projects\",\"arguments\":{}}}";
+    const char *body = "{}";
     char req[1024];
     char resp[8192];
 
     snprintf(req, sizeof(req),
-             "POST /rpc HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+             "POST /api/index HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
              "Content-Type: text/plain\r\n"
              "Content-Length: %zu\r\n\r\n%s",
              port, strlen(body), body);
@@ -1146,7 +1143,7 @@ TEST(ui_server_mutations_require_json_content_type) {
     ASSERT_EQ(th_status(resp), 415);
 
     snprintf(req, sizeof(req),
-             "POST /rpc HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+             "POST /api/index HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
              "Content-Length: %zu\r\n\r\n%s",
              port, strlen(body), body);
     n = th_http_raw(port, req, resp, sizeof(resp));
@@ -1154,72 +1151,13 @@ TEST(ui_server_mutations_require_json_content_type) {
     ASSERT_EQ(th_status(resp), 415);
 
     snprintf(req, sizeof(req),
-             "POST /rpc HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+             "POST /api/index HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
              "Content-Type: application/json; charset=utf-8\r\n"
              "Content-Length: %zu\r\n\r\n%s",
              port, strlen(body), body);
     n = th_http_raw(port, req, resp, sizeof(resp));
     ASSERT_GT(n, 0);
-    ASSERT_EQ(th_status(resp), 200);
-
-    th_server_stop(&ts);
-    PASS();
-}
-
-TEST(ui_server_rpc_allows_only_ui_read_tools) {
-    th_server_t ts;
-    ASSERT_EQ(th_server_start(&ts), 0);
-    const char *body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\","
-                       "\"params\":{\"name\":\"list_projects\",\"arguments\":{}}}";
-    char req[1024];
-    snprintf(req, sizeof(req),
-             "POST /rpc HTTP/1.1\r\n"
-             "Content-Type: application/json\r\n"
-             "Content-Length: %d\r\n\r\n%s",
-             (int)strlen(body), body);
-    char resp[8192];
-    int n = th_http(cbm_http_server_port(ts.srv), req, resp, sizeof(resp));
-    ASSERT_GT(n, 0);
-    ASSERT_EQ(th_status(resp), 200);
-    ASSERT_NOT_NULL(strstr(resp, "\"jsonrpc\""));
-
-    static const char *blocked_tools[] = {"delete_project", "manage_adr", "ingest_traces",
-                                          "index_repository"};
-    for (size_t i = 0; i < sizeof(blocked_tools) / sizeof(blocked_tools[0]); i++) {
-        char blocked_body[512];
-        snprintf(blocked_body, sizeof(blocked_body),
-                 "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\","
-                 "\"params\":{\"name\":\"%s\",\"arguments\":{}}}",
-                 blocked_tools[i]);
-        snprintf(req, sizeof(req),
-                 "POST /rpc HTTP/1.1\r\nContent-Type: application/json\r\n"
-                 "Content-Length: %zu\r\n\r\n%s",
-                 strlen(blocked_body), blocked_body);
-        n = th_http(cbm_http_server_port(ts.srv), req, resp, sizeof(resp));
-        ASSERT_GT(n, 0);
-        ASSERT_EQ(th_status(resp), 403);
-    }
-
-    const char *initialize = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"initialize\","
-                             "\"params\":{}}";
-    snprintf(req, sizeof(req),
-             "POST /rpc HTTP/1.1\r\nContent-Type: application/json\r\n"
-             "Content-Length: %zu\r\n\r\n%s",
-             strlen(initialize), initialize);
-    n = th_http(cbm_http_server_port(ts.srv), req, resp, sizeof(resp));
-    ASSERT_GT(n, 0);
-    ASSERT_EQ(th_status(resp), 403);
-
-    const char *ambiguous = "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\","
-                            "\"params\":{\"name\":\"list_projects\",\"name\":\"delete_project\","
-                            "\"arguments\":{}}}";
-    snprintf(req, sizeof(req),
-             "POST /rpc HTTP/1.1\r\nContent-Type: application/json\r\n"
-             "Content-Length: %zu\r\n\r\n%s",
-             strlen(ambiguous), ambiguous);
-    n = th_http(cbm_http_server_port(ts.srv), req, resp, sizeof(resp));
-    ASSERT_GT(n, 0);
-    ASSERT_EQ(th_status(resp), 403);
+    ASSERT_EQ(th_status(resp), 400);
 
     th_server_stop(&ts);
     PASS();
@@ -1229,7 +1167,7 @@ TEST(ui_server_oversized_body_rejected) {
     th_server_t ts;
     ASSERT_EQ(th_server_start(&ts), 0);
     char req[256];
-    snprintf(req, sizeof(req), "POST /rpc HTTP/1.1\r\nContent-Length: %d\r\n\r\n",
+    snprintf(req, sizeof(req), "POST /api/index HTTP/1.1\r\nContent-Length: %d\r\n\r\n",
              CBM_HTTP_MAX_BODY + 1);
     char resp[4096];
     int n = th_http(cbm_http_server_port(ts.srv), req, resp, sizeof(resp));
@@ -1970,27 +1908,18 @@ static int th_http_deadline(int port, const char *request, char *resp, size_t re
     return n;
 }
 
-/* #798 was a single-threaded-server wedge: list_projects never returned and the
- * whole UI stopped answering. Assert the running server answers list_projects
- * within a hard deadline while it holds live listening sockets. The client
- * receive-timeout is the watchdog: a wedge → no 200 → FAIL, never a CI hang. */
-TEST(ui_server_list_projects_responds_under_watchdog) {
+/* #798 was a single-threaded-server wedge. Assert the running server answers a
+ * supported neutral API read within a hard deadline while it holds live sockets. */
+TEST(ui_server_index_status_responds_under_watchdog) {
     th_server_t ts;
     ASSERT_EQ(th_server_start(&ts), 0);
-    const char *body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\","
-                       "\"params\":{\"name\":\"list_projects\",\"arguments\":{}}}";
-    char req[512];
-    snprintf(req, sizeof(req),
-             "POST /rpc HTTP/1.1\r\n"
-             "Content-Type: application/json\r\n"
-             "Content-Length: %d\r\n\r\n%s",
-             (int)strlen(body), body);
     char resp[8192];
-    int n = th_http_deadline(cbm_http_server_port(ts.srv), req, resp, sizeof(resp), 15000);
+    int n = th_http_deadline(cbm_http_server_port(ts.srv),
+                             "GET /api/index-status HTTP/1.1\r\n\r\n",
+                             resp, sizeof(resp), 15000);
     th_server_stop(&ts);
-    ASSERT_GT(n, 0); /* a response arrived before the watchdog fired */
+    ASSERT_GT(n, 0);
     ASSERT_EQ(th_status(resp), 200);
-    ASSERT_NOT_NULL(strstr(resp, "\"jsonrpc\""));
     PASS();
 }
 
@@ -2381,8 +2310,7 @@ SUITE(httpd) {
     RUN_TEST(ui_server_same_origin_request_is_allowed);
     RUN_TEST(ui_server_rejects_foreign_and_null_origins);
     RUN_TEST(ui_server_mutations_require_json_content_type);
-    RUN_TEST(ui_server_rpc_allows_only_ui_read_tools);
-    RUN_TEST(ui_server_oversized_body_rejected);
+        RUN_TEST(ui_server_oversized_body_rejected);
     RUN_TEST(ui_server_encoded_slash_not_routed);
     RUN_TEST(ui_server_nul_in_target_rejected);
     RUN_TEST(ui_server_browse_traversal_probe);
@@ -2408,6 +2336,6 @@ SUITE(httpd) {
     RUN_TEST(httpd_nonreading_large_response_hits_send_deadline_without_interrupt);
     RUN_TEST(ui_server_stop_interrupts_partial_request_within_one_second);
     /* #798 follow-up: full UI-mode hang repro under live sockets */
-    RUN_TEST(ui_server_list_projects_responds_under_watchdog);
+    RUN_TEST(ui_server_index_status_responds_under_watchdog);
     RUN_TEST(git_context_resolve_no_hang_under_live_ui_sockets);
 }

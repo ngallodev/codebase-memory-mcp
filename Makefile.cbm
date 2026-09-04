@@ -502,7 +502,7 @@ PROJECT_HDRS = $(wildcard src/*.h src/*/*.h $(CBM_DIR)/*.h $(CBM_DIR)/lsp/*.h te
 # ── Test sources ─────────────────────────────────────────────────
 
 TEST_FOUNDATION_SRCS = \
-    tests/test_main.c \
+    tests/foundation_main.c \
     tests/test_arena.c \
     tests/test_hash_table.c \
     tests/test_dyn_array.c \
@@ -512,11 +512,13 @@ TEST_FOUNDATION_SRCS = \
     tests/test_workspace.c \
     tests/test_platform.c \
     tests/test_diagnostics.c \
-    tests/test_complexity.c \
     tests/test_dump_verify.c \
     tests/test_subprocess.c \
     tests/test_private_file_lock.c \
     tests/test_lock_registry.c
+
+TEST_FOUNDATION_CORE_SRCS = $(filter-out src/foundation/json_args.c,$(FOUNDATION_SRCS))
+TEST_FOUNDATION_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.test.o,$(TEST_FOUNDATION_SRCS) $(TEST_FOUNDATION_CORE_SRCS) internal/cbm/vendored/ts_runtime/src/alloc.c)
 
 TEST_EXTRACTION_SRCS = \
     tests/test_extraction.c \
@@ -761,8 +763,8 @@ PROD_SOURCE_DEPS = $(PROD_SOURCE_OBJS:.o=.d)
 
 # ── Foundation-only test (fast, no extraction) ───────────────────
 
-$(BUILD_DIR)/test-foundation: $(TEST_FOUNDATION_SRCS) $(FOUNDATION_SRCS) $(PROJECT_HDRS) | $(BUILD_DIR)
-	$(CC) $(CFLAGS_TEST) -o $@ $(TEST_FOUNDATION_SRCS) $(FOUNDATION_SRCS) $(LDFLAGS_TEST)
+$(BUILD_DIR)/test-foundation: $(TEST_FOUNDATION_OBJS) $(MIMALLOC_OBJ_TEST) $(PROJECT_HDRS) | $(BUILD_DIR)
+	$(CC) $(CFLAGS_TEST) -o $@ $(TEST_FOUNDATION_OBJS) $(MIMALLOC_OBJ_TEST) $(LDFLAGS_TEST)
 
 test-foundation: $(BUILD_DIR)/test-foundation
 	cd $(CURDIR) && $(BUILD_DIR)/test-foundation

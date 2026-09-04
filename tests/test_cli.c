@@ -2,9 +2,8 @@
  * test_cli.c — Tests for CLI subcommands: install, uninstall, update, version.
  *
  * Port of Go test files:
- *   - cmd/codebase-memory-mcp/cli_test.go (11 tests)
- *   - cmd/codebase-memory-mcp/install_test.go (24 tests)
- *   - cmd/codebase-memory-mcp/update_test.go (5 tests)
+ * Historical tests originated in the pre-CLI implementation; retained cases now
+ * protect supported CLI, install/update, compatibility-cleanup, and recovery behavior.
  *   - internal/selfupdate/selfupdate_test.go (7 tests)
  *
  * Total: 47 Go tests → 47 C tests
@@ -14,7 +13,7 @@
 #include "test_framework.h"
 #include "operations/tool_catalog.h"
 #include "test_helpers.h"
-#include <cli/agent_profiles.h>
+#include <cli/legacy_agent_profiles.h>
 #include <cli/activation_transaction.h>
 #include <cli/cli.h>
 #include <cli/progress_sink.h>
@@ -62,17 +61,6 @@ TEST(cli_progress_visibility_policy) {
     ASSERT_TRUE(cbm_cli_progress_enabled(true, false));
     ASSERT_TRUE(cbm_cli_progress_enabled(false, true));
     ASSERT_FALSE(cbm_cli_progress_enabled(false, false));
-    PASS();
-}
-
-TEST(cli_raw_mcp_result_preserves_tool_error_status) {
-    ASSERT_TRUE(cbm_cli_mcp_result_is_error("{\"content\":[],\"isError\":true}"));
-    ASSERT_FALSE(cbm_cli_mcp_result_is_error("{\"content\":[],\"isError\":false}"));
-    ASSERT_FALSE(
-        cbm_cli_mcp_result_is_error("{\"content\":[{\"text\":\"\\\"isError\\\":true\"}]}"));
-    ASSERT_FALSE(cbm_cli_mcp_result_is_error("{\"isError\":\"true\"}"));
-    ASSERT_FALSE(cbm_cli_mcp_result_is_error("not-json"));
-    ASSERT_FALSE(cbm_cli_mcp_result_is_error(NULL));
     PASS();
 }
 
@@ -2534,7 +2522,7 @@ TEST(cli_openclaw_compaction_preserves_user_owned_section) {
     cbm_install_agent_configs(tmpdir, "/usr/local/bin/codebase-memory-mcp", false, false);
     char *installed = read_test_file_alloc(config_path);
     bool installed_owned =
-        installed && strstr(installed, "Codebase Knowledge Graph (codebase-memory-mcp)");
+        installed && strstr(installed, "Codebase Knowledge Graph (codebase-memory-cli)");
     bool retained_existing =
         installed && strstr(installed, "Codebase Memory") && strstr(installed, "User Notes");
     free(installed);
@@ -2545,7 +2533,8 @@ TEST(cli_openclaw_compaction_preserves_user_owned_section) {
     bool preserved_user =
         uninstalled && strstr(uninstalled, "Codebase Memory") && strstr(uninstalled, "User Notes");
     bool removed_owned =
-        uninstalled && !strstr(uninstalled, "Codebase Knowledge Graph (codebase-memory-mcp)");
+        uninstalled && !strstr(uninstalled, "Codebase Knowledge Graph (codebase-memory-cli)") &&
+        !strstr(uninstalled, "Codebase Knowledge Graph (codebase-memory-mcp)");
     free(uninstalled);
 
     const size_t cache_env_index = sizeof(env_names) / sizeof(env_names[0]) - 1;
@@ -4038,7 +4027,7 @@ TEST(cli_agent_reinstall_preserves_foreign_policy_entries) {
             preserved = preserved && data && strstr(data, "/opt/user-tool") &&
                         strstr(data, "\"enabled\":false") &&
                         strstr(data, "\"userField\":\"openclaw\"") &&
-                        strstr(data, "Codebase Knowledge Graph (codebase-memory-mcp)");
+                        strstr(data, "Codebase Knowledge Graph (codebase-memory-cli)");
         } else {
             preserved = preserved && data && strcmp(data, originals[i]) == 0;
         }
@@ -4246,7 +4235,7 @@ TEST(cli_existing_agents_install_durable_child_context) {
     snprintf(path, sizeof(path), "%s/.openclaw/workspace/TOOLS.md", tmpdir);
     files_ok = files_ok && test_file_contains_all(path, durable, 4);
     const char *const compaction[] = {"postCompactionSections",
-                                      "Codebase Knowledge Graph (codebase-memory-mcp)"};
+                                      "Codebase Knowledge Graph (codebase-memory-cli)"};
     snprintf(path, sizeof(path), "%s/.openclaw/openclaw.json", tmpdir);
     files_ok = files_ok && test_file_contains_all(path, compaction, 2);
     snprintf(path, sizeof(path), "%s/.kiro/steering/codebase-memory.md", tmpdir);
@@ -4266,358 +4255,6 @@ TEST(cli_existing_agents_install_durable_child_context) {
     test_rmdir_r(tmpdir);
     if (!plan_ok || !files_ok)
         FAIL("stable agents must install documented durable context for sessions and children");
-    PASS();
-}
-
-TEST(cli_durable_profiles_follow_current_vendor_paths) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-vendor-profiles-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    const char *const env_names[] = {
-        "HOME",
-        "PATH",
-        "CLAUDE_CONFIG_DIR",
-        "CODEX_HOME",
-        "QWEN_HOME",
-        "COPILOT_HOME",
-        "CLINE_DATA_DIR",
-        "KIRO_HOME",
-        "VIBE_HOME",
-        "GROK_HOME",
-        "OPENCODE_CONFIG",
-        /* Linux path resolvers prefer $XDG_CONFIG_HOME over $HOME/.config;
-         * CI runners export it, so an isolated-process run resolved OUTSIDE
-         * the fixture home (green only via env leaked from earlier suites). */
-        "XDG_CONFIG_HOME",
-    };
-    char *saved_env[sizeof(env_names) / sizeof(env_names[0])];
-    for (size_t i = 0U; i < sizeof(env_names) / sizeof(env_names[0]); i++) {
-        saved_env[i] = save_test_env(env_names[i]);
-        cbm_unsetenv(env_names[i]);
-    }
-
-    char codex_home[512];
-    char qwen_home[512];
-    char copilot_home[512];
-    char cline_data_dir[512];
-    char kiro_home[512];
-    char vibe_home[512];
-    char grok_home[512];
-    snprintf(codex_home, sizeof(codex_home), "%s/vendor-codex", tmpdir);
-    snprintf(qwen_home, sizeof(qwen_home), "%s/vendor-qwen", tmpdir);
-    snprintf(copilot_home, sizeof(copilot_home), "%s/vendor-copilot", tmpdir);
-    snprintf(cline_data_dir, sizeof(cline_data_dir), "%s/vendor-cline-data", tmpdir);
-    snprintf(kiro_home, sizeof(kiro_home), "%s/vendor-kiro", tmpdir);
-    snprintf(vibe_home, sizeof(vibe_home), "%s/vendor-vibe", tmpdir);
-    snprintf(grok_home, sizeof(grok_home), "%s/vendor-grok", tmpdir);
-    test_mkdirp(codex_home);
-    test_mkdirp(qwen_home);
-    test_mkdirp(copilot_home);
-    test_mkdirp(cline_data_dir);
-    test_mkdirp(kiro_home);
-    test_mkdirp(vibe_home);
-    test_mkdirp(grok_home);
-
-    const char *const dirs[] = {
-        ".claude",
-        ".cursor",
-        ".config/opencode",
-        ".factory",
-        ".cline",
-        ".config/kilo",
-#ifdef __APPLE__
-        "Library/Application Support/Zed",
-#elif defined(_WIN32)
-        "AppData/Roaming/Zed",
-#else
-        ".config/zed",
-#endif
-    };
-    char path[768];
-    for (size_t i = 0U; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
-        snprintf(path, sizeof(path), "%s/%s", tmpdir, dirs[i]);
-        test_mkdirp(path);
-    }
-    snprintf(path, sizeof(path), "%s/mcp-config.json", copilot_home);
-    write_test_file(path, "{}\n");
-
-    cbm_setenv("HOME", tmpdir, 1);
-    cbm_setenv("PATH", tmpdir, 1);
-    cbm_setenv("CODEX_HOME", codex_home, 1);
-    cbm_setenv("QWEN_HOME", qwen_home, 1);
-    cbm_setenv("COPILOT_HOME", copilot_home, 1);
-    cbm_setenv("CLINE_DATA_DIR", cline_data_dir, 1);
-    cbm_setenv("KIRO_HOME", kiro_home, 1);
-    cbm_setenv("VIBE_HOME", vibe_home, 1);
-    cbm_setenv("GROK_HOME", grok_home, 1);
-
-    char qwen_settings[640];
-    snprintf(qwen_settings, sizeof(qwen_settings), "%s/settings.json", qwen_home);
-    write_test_file(qwen_settings, "{\"disableAllHooks\":true}\n");
-
-    char *plan = cbm_build_install_plan_json(tmpdir, "/opt/codebase-memory-mcp");
-    bool receipt_kinds = plan && strstr(plan, "\"skill_files_planned\"") &&
-                         strstr(plan, "\"agent_files_planned\"") &&
-                         strstr(plan, "\"prompt_files_planned\"") &&
-                         strstr(plan, "\"instruction_files_planned\"");
-    const char *const planned[] = {
-        "/.claude/agents/codebase-memory.md",
-        "/vendor-codex/skills/codebase-memory/SKILL.md",
-        "/vendor-codex/agents/codebase-memory.toml",
-        "/.cursor/skills/codebase-memory/SKILL.md",
-        "/.cursor/agents/codebase-memory.md",
-        "/.config/opencode/skills/codebase-memory/SKILL.md",
-        "/.config/opencode/agents/codebase-memory.md",
-        "/vendor-qwen/skills/codebase-memory/SKILL.md",
-        "/vendor-qwen/agents/codebase-memory.md",
-        "/vendor-copilot/skills/codebase-memory/SKILL.md",
-        "/vendor-copilot/agents/codebase-memory.agent.md",
-        "/.cline/mcp.json",
-        "/vendor-cline-data/settings/cline_mcp_settings.json",
-        "/.cline/rules/codebase-memory-mcp.md",
-        "/.cline/skills/codebase-memory/SKILL.md",
-        "/vendor-kiro/skills/codebase-memory/SKILL.md",
-        "/vendor-kiro/agents/codebase-memory.json",
-        "/vendor-vibe/skills/codebase-memory/SKILL.md",
-        "/vendor-vibe/agents/codebase-memory.toml",
-        "/vendor-vibe/prompts/codebase-memory.md",
-        "/vendor-grok/skills/codebase-memory/SKILL.md",
-        "/vendor-grok/agents/codebase-memory.md",
-        "/vendor-grok/agents/codebase-memory-scout.md",
-        "/vendor-grok/agents/codebase-memory-auditor.md",
-        "/.config/kilo/agents/codebase-memory.md",
-        "/.factory/skills/codebase-memory/SKILL.md",
-        "/.factory/droids/codebase-memory.md",
-        "/.agents/skills/codebase-memory/SKILL.md",
-    };
-    bool paths_planned = plan != NULL;
-    for (size_t i = 0U; paths_planned && i < sizeof(planned) / sizeof(planned[0]); i++) {
-        paths_planned = strstr(plan, planned[i]) != NULL;
-    }
-    bool plan_safe = plan && !strstr(plan, "approvedTools") && !strstr(plan, "autoApprove") &&
-                     !strstr(plan, "enable_instructions") && !strstr(plan, "yolo") &&
-                     !strstr(plan, "experimental");
-    free(plan);
-
-    int install_rc = cbm_install_agent_configs(tmpdir, "/opt/codebase-memory-mcp", false, false);
-    const char *const graph_terms[] = {"codebase-memory", "search_graph", "trace_path"};
-    bool files_ok = install_rc == 0;
-
-    snprintf(path, sizeof(path), "%s/.claude/agents/codebase-memory.md", tmpdir);
-    const char *const claude_terms[] = {"name: codebase-memory",
-                                        "mcpServers: [codebase-memory-mcp]",
-                                        "mcp__codebase-memory-mcp__search_graph",
-                                        "mcp__codebase-memory-mcp__check_index_coverage",
-                                        "permissionMode: plan",
-                                        "skills: [codebase-memory]",
-                                        "search_graph"};
-    files_ok = files_ok && test_file_contains_all(path, claude_terms, 7U);
-
-    snprintf(path, sizeof(path), "%s/agents/codebase-memory.toml", codex_home);
-    const char *const codex_terms[] = {"name = \"codebase-memory\"",
-                                       "description = ",
-                                       "developer_instructions = ",
-                                       "sandbox_mode = \"read-only\"",
-                                       "[mcp_servers.codebase-memory-mcp]",
-                                       "command = \"/opt/codebase-memory-mcp\"",
-                                       "args = [\"--tool-profile=analysis\"]",
-                                       "check_index_coverage"};
-    files_ok = files_ok && test_file_contains_all(path, codex_terms, 8U);
-    char *profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile && !strstr(profile, "model =") &&
-               !strstr(profile, "index_repository") && !strstr(profile, "delete_project") &&
-               !strstr(profile, "manage_adr") && !strstr(profile, "ingest_traces");
-    free(profile);
-
-    snprintf(path, sizeof(path), "%s/.cursor/agents/codebase-memory.md", tmpdir);
-    const char *const cursor_terms[] = {"name: codebase-memory", "model: inherit", "readonly: true",
-                                        "parent agent", "search_graph"};
-    files_ok = files_ok && test_file_contains_all(path, cursor_terms, 5);
-    profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile &&
-               !strstr(profile, "Use codebase-memory-mcp for read-only structural discovery");
-    free(profile);
-
-    snprintf(path, sizeof(path), "%s/.config/opencode/agents/codebase-memory.md", tmpdir);
-    const char *const opencode_terms[] = {"description:",
-                                          "mode: subagent",
-                                          "\"*\": deny",
-                                          "read: allow",
-                                          "codebase-memory-mcp_search_graph\": allow",
-                                          "check_index_coverage"};
-    files_ok = files_ok && test_file_contains_all(path, opencode_terms, 6U);
-
-    snprintf(path, sizeof(path), "%s/agents/codebase-memory.md", qwen_home);
-    const char *const qwen_terms[] = {"name: codebase-memory",
-                                      "model: inherit",
-                                      "approvalMode: plan",
-                                      "tools:",
-                                      "read_file",
-                                      "mcp__codebase-memory-mcp__search_graph",
-                                      "mcp__codebase-memory-mcp__check_index_coverage",
-                                      "search_graph"};
-    files_ok = files_ok && test_file_contains_all(path, qwen_terms, 8U);
-    profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile && !strstr(profile, "permissionMode:") &&
-               !strstr(profile, "mcp__codebase-memory__");
-    free(profile);
-    profile = read_test_file_alloc(qwen_settings);
-    files_ok = files_ok && profile && strstr(profile, "\"disableAllHooks\":true") &&
-               strstr(profile, "SessionStart") && strstr(profile, "SubagentStart");
-    free(profile);
-
-    snprintf(path, sizeof(path), "%s/agents/codebase-memory.agent.md", copilot_home);
-    const char *const copilot_terms[] = {"name: codebase-memory", "description:", "search_graph",
-                                         "codebase-memory-mcp/check_index_coverage"};
-    files_ok = files_ok && test_file_contains_all(path, copilot_terms, 4U);
-    profile = read_test_file_alloc(path);
-    files_ok =
-        files_ok && profile && !strstr(profile, "mcp-servers:") && !strstr(profile, "permissions:");
-    free(profile);
-
-    snprintf(path, sizeof(path), "%s/agents/codebase-memory.json", kiro_home);
-    const char *const kiro_terms[] = {"\"name\": \"codebase-memory\"",
-                                      "\"tools\"",
-                                      "\"read\"",
-                                      "\"@codebase-memory-mcp/search_graph\"",
-                                      "\"includeMcpJson\": false",
-                                      "\"mcpServers\"",
-                                      "/opt/codebase-memory-mcp",
-                                      "check_index_coverage",
-                                      "--tool-profile",
-                                      "analysis",
-                                      "search_graph"};
-    files_ok = files_ok && test_file_contains_all(path, kiro_terms, 11U);
-    profile = read_test_file_alloc(path);
-    yyjson_doc *kiro_doc = profile ? yyjson_read(profile, strlen(profile), 0) : NULL;
-    yyjson_val *kiro_root = kiro_doc ? yyjson_doc_get_root(kiro_doc) : NULL;
-    yyjson_val *kiro_tools = kiro_root ? yyjson_obj_get(kiro_root, "tools") : NULL;
-    yyjson_val *kiro_read =
-        kiro_tools && yyjson_is_arr(kiro_tools) ? yyjson_arr_get(kiro_tools, 0U) : NULL;
-    yyjson_val *kiro_server_tool =
-        kiro_tools && yyjson_is_arr(kiro_tools) ? yyjson_arr_get(kiro_tools, 3U) : NULL;
-    yyjson_val *include_mcp = kiro_root ? yyjson_obj_get(kiro_root, "includeMcpJson") : NULL;
-    yyjson_val *kiro_servers = kiro_root ? yyjson_obj_get(kiro_root, "mcpServers") : NULL;
-    yyjson_val *kiro_server =
-        kiro_servers ? yyjson_obj_get(kiro_servers, "codebase-memory-mcp") : NULL;
-    yyjson_val *kiro_command = kiro_server ? yyjson_obj_get(kiro_server, "command") : NULL;
-    yyjson_val *kiro_args = kiro_server ? yyjson_obj_get(kiro_server, "args") : NULL;
-    yyjson_val *kiro_profile_flag =
-        kiro_args && yyjson_is_arr(kiro_args) ? yyjson_arr_get(kiro_args, 0U) : NULL;
-    yyjson_val *kiro_profile_name =
-        kiro_args && yyjson_is_arr(kiro_args) ? yyjson_arr_get(kiro_args, 1U) : NULL;
-    files_ok = files_ok && profile && kiro_root && yyjson_is_obj(kiro_root) && kiro_tools &&
-               yyjson_arr_size(kiro_tools) == 14U && kiro_read && yyjson_is_str(kiro_read) &&
-               strcmp(yyjson_get_str(kiro_read), "read") == 0 && include_mcp &&
-               yyjson_is_bool(include_mcp) && !yyjson_get_bool(include_mcp) && kiro_server_tool &&
-               yyjson_is_str(kiro_server_tool) &&
-               strcmp(yyjson_get_str(kiro_server_tool), "@codebase-memory-mcp/search_graph") == 0 &&
-               kiro_servers && yyjson_is_obj(kiro_servers) && kiro_server &&
-               yyjson_is_obj(kiro_server) && kiro_command && yyjson_is_str(kiro_command) &&
-               strcmp(yyjson_get_str(kiro_command), "/opt/codebase-memory-mcp") == 0 && kiro_args &&
-               yyjson_is_arr(kiro_args) && yyjson_arr_size(kiro_args) == 2U && kiro_profile_flag &&
-               yyjson_is_str(kiro_profile_flag) &&
-               strcmp(yyjson_get_str(kiro_profile_flag), "--tool-profile") == 0 &&
-               kiro_profile_name && yyjson_is_str(kiro_profile_name) &&
-               strcmp(yyjson_get_str(kiro_profile_name), "analysis") == 0 &&
-               !yyjson_obj_get(kiro_root, "allowedTools");
-    yyjson_doc_free(kiro_doc);
-    free(profile);
-
-    const char *const skill_files[] = {
-        "/skills/codebase-memory/SKILL.md",
-        "/.cursor/skills/codebase-memory/SKILL.md",
-        "/.config/opencode/skills/codebase-memory/SKILL.md",
-        "/.factory/skills/codebase-memory/SKILL.md",
-        "/.agents/skills/codebase-memory/SKILL.md",
-    };
-    const char *const skill_roots[] = {codex_home, tmpdir, tmpdir, tmpdir, tmpdir};
-    for (size_t i = 0U; files_ok && i < sizeof(skill_files) / sizeof(skill_files[0]); i++) {
-        snprintf(path, sizeof(path), "%s%s", skill_roots[i], skill_files[i]);
-        files_ok = test_file_contains_all(path, graph_terms, 3);
-    }
-    snprintf(path, sizeof(path), "%s/skills/codebase-memory/SKILL.md", qwen_home);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3);
-    snprintf(path, sizeof(path), "%s/skills/codebase-memory/SKILL.md", copilot_home);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3);
-    snprintf(path, sizeof(path), "%s/.cline/skills/codebase-memory/SKILL.md", tmpdir);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3);
-    snprintf(path, sizeof(path), "%s/.cline/mcp.json", tmpdir);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 1);
-    snprintf(path, sizeof(path), "%s/settings/cline_mcp_settings.json", cline_data_dir);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 1);
-    snprintf(path, sizeof(path), "%s/skills/codebase-memory/SKILL.md", kiro_home);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3);
-    snprintf(path, sizeof(path), "%s/skills/codebase-memory/SKILL.md", vibe_home);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3);
-
-    snprintf(path, sizeof(path), "%s/.config/kilo/agents/codebase-memory.md", tmpdir);
-    const char *const kilo_agent_terms[] = {"mode: subagent",
-                                            "\"*\": deny",
-                                            "\"codebase-memory-mcp_search_graph\": allow",
-                                            "\"codebase-memory-mcp_get_code_snippet\": allow",
-                                            "\"codebase-memory-mcp_check_index_coverage\": allow",
-                                            "Tier 2"};
-    files_ok = files_ok && test_file_contains_all(path, kilo_agent_terms, 6U);
-    profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile && !strstr(profile, "\n  bash:") &&
-               !strstr(profile, "\n  edit:") && !strstr(profile, "codebase-memory-mcp_*") &&
-               !strstr(profile, "delete_project") && !strstr(profile, "manage_adr");
-    free(profile);
-
-    snprintf(path, sizeof(path), "%s/agents/codebase-memory.toml", vibe_home);
-    const char *const vibe_agent_terms[] = {"agent_type = \"subagent\"",
-                                            "safety = \"safe\"",
-                                            "system_prompt_id = \"codebase-memory\"",
-                                            "\"codebase-memory-mcp_search_graph\"",
-                                            "\"codebase-memory-mcp_get_code_snippet\"",
-                                            "\"codebase-memory-mcp_check_index_coverage\""};
-    files_ok = files_ok && test_file_contains_all(path, vibe_agent_terms, 6U);
-    profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile && !strstr(profile, "codebase-memory-mcp_*") &&
-               !strstr(profile, "delete_project") && !strstr(profile, "manage_adr");
-    free(profile);
-    snprintf(path, sizeof(path), "%s/prompts/codebase-memory.md", vibe_home);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3U);
-    snprintf(path, sizeof(path), "%s/skills/codebase-memory/SKILL.md", grok_home);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3);
-    snprintf(path, sizeof(path), "%s/agents/codebase-memory.md", grok_home);
-    const char *const grok_agent_terms[] = {
-        "name: codebase-memory\n",
-        "tools: read_file, grep, list_dir, search_tool, use_tool",
-        "mcpInheritance:\n  named:\n    - codebase-memory-mcp",
-        "codebase-memory-mcp__search_graph",
-        "codebase-memory-mcp__check_index_coverage",
-        "Tier 2"};
-    files_ok = files_ok && test_file_contains_all(path, grok_agent_terms, 6U);
-    profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile && !strstr(profile, "codebase-memory-mcp__*") &&
-               !strstr(profile, "delete_project") && !strstr(profile, "manage_adr");
-    free(profile);
-
-    snprintf(path, sizeof(path), "%s/.factory/droids/codebase-memory.md", tmpdir);
-    const char *const factory_agent_terms[] = {"name: codebase-memory",
-                                               "model: inherit",
-                                               "tools: [\"Read\", \"LS\", \"Grep\", \"Glob\"",
-                                               "mcp__codebase-memory-mcp__search_graph",
-                                               "search_graph",
-                                               "check_index_coverage"};
-    files_ok = files_ok && test_file_contains_all(path, factory_agent_terms, 6U);
-    profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile && !strstr(profile, "mcpServers");
-    free(profile);
-
-    for (size_t i = 0U; i < sizeof(env_names) / sizeof(env_names[0]); i++) {
-        restore_test_env(env_names[i], saved_env[i]);
-    }
-    test_rmdir_r(tmpdir);
-    if (!receipt_kinds || !paths_planned || !plan_safe || !files_ok) {
-        fprintf(stderr, "durable profile diag receipt=%d paths=%d safe=%d files=%d\n",
-                receipt_kinds, paths_planned, plan_safe, files_ok);
-        FAIL("stable durable profiles must follow current vendor paths and safe schemas");
-    }
     PASS();
 }
 
@@ -4978,179 +4615,6 @@ TEST(cli_tiered_codex_profiles_migrate_preserve_and_uninstall) {
     PASS();
 }
 
-TEST(cli_tiered_vibe_installs_matching_agent_prompt_sets) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-tiered-vibe-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char vibe_home[512];
-    snprintf(vibe_home, sizeof(vibe_home), "%s/vibe", tmpdir);
-    test_mkdirp(vibe_home);
-    char *saved_home = save_test_env("HOME");
-    char *saved_path = save_test_env("PATH");
-    char *saved_vibe = save_test_env("VIBE_HOME");
-    cbm_setenv("HOME", tmpdir, 1);
-    cbm_setenv("PATH", tmpdir, 1);
-    cbm_setenv("VIBE_HOME", vibe_home, 1);
-
-    const char *const slugs[] = {
-        "codebase-memory-scout",
-        "codebase-memory",
-        "codebase-memory-auditor",
-    };
-    const char *const tier_markers[] = {"Tier 1", "Tier 2", "Tier 3"};
-    char agent_paths[3][640];
-    char prompt_paths[3][640];
-    char *plan = cbm_build_install_plan_json(tmpdir, "/opt/codebase-memory-mcp");
-    bool plan_ok = plan && strstr(plan, "\"prompt_files_planned\"");
-    for (size_t i = 0U; i < 3U; i++) {
-        snprintf(agent_paths[i], sizeof(agent_paths[i]), "%s/agents/%s.toml", vibe_home, slugs[i]);
-        snprintf(prompt_paths[i], sizeof(prompt_paths[i]), "%s/prompts/%s.md", vibe_home, slugs[i]);
-        plan_ok = plan_ok && strstr(plan, agent_paths[i]) && strstr(plan, prompt_paths[i]);
-    }
-    free(plan);
-
-    int install_rc = cbm_install_agent_configs(tmpdir, "/opt/codebase-memory-mcp", false, false);
-    bool installed = install_rc == 0;
-    for (size_t i = 0U; installed && i < 3U; i++) {
-        char prompt_id[192];
-        snprintf(prompt_id, sizeof(prompt_id), "system_prompt_id = \"%s\"", slugs[i]);
-        char *agent = read_test_file_alloc(agent_paths[i]);
-        char *prompt = read_test_file_alloc(prompt_paths[i]);
-        installed = agent && prompt && strstr(agent, prompt_id) &&
-                    strstr(agent, "check_index_coverage") && strstr(prompt, tier_markers[i]) &&
-                    strstr(prompt, "check_index_coverage") && !strstr(agent, "index_repository") &&
-                    !strstr(agent, "delete_project") && !strstr(agent, "manage_adr") &&
-                    !strstr(agent, "ingest_traces");
-        free(agent);
-        free(prompt);
-    }
-
-    char *argv[] = {"uninstall", "--yes"};
-    int uninstall_rc = cli_test_cmd_uninstall(2, argv);
-    struct stat state;
-    bool removed = uninstall_rc == 0;
-    for (size_t i = 0U; removed && i < 3U; i++) {
-        removed = stat(agent_paths[i], &state) != 0 && stat(prompt_paths[i], &state) != 0;
-    }
-
-    restore_test_env("HOME", saved_home);
-    restore_test_env("PATH", saved_path);
-    restore_test_env("VIBE_HOME", saved_vibe);
-    test_rmdir_r(tmpdir);
-    if (!plan_ok || !installed || !removed)
-        FAIL("Vibe must install and remove matching Scout, Verify, and Auditor agent/prompt pairs");
-    PASS();
-}
-
-/* Grok Build: config.toml table, owned rules file, skill, three graph agents
- * with named-server inheritance; hooks withheld (its passive events discard
- * stdout); uninstall removes exactly the owned state. */
-TEST(cli_tiered_grok_installs_profiles_and_withholds_hooks) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-tiered-grok-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char grok_home[512];
-    snprintf(grok_home, sizeof(grok_home), "%s/grok", tmpdir);
-    test_mkdirp(grok_home);
-    char *saved_home = save_test_env("HOME");
-    char *saved_path = save_test_env("PATH");
-    char *saved_grok = save_test_env("GROK_HOME");
-    cbm_setenv("HOME", tmpdir, 1);
-    cbm_setenv("PATH", tmpdir, 1);
-    cbm_setenv("GROK_HOME", grok_home, 1);
-
-    char config_path[640];
-    char rules_path[640];
-    char skill_path[640];
-    char hooks_dir[640];
-    snprintf(config_path, sizeof(config_path), "%s/config.toml", grok_home);
-    snprintf(rules_path, sizeof(rules_path), "%s/rules/codebase-memory.md", grok_home);
-    snprintf(skill_path, sizeof(skill_path), "%s/skills/codebase-memory/SKILL.md", grok_home);
-    snprintf(hooks_dir, sizeof(hooks_dir), "%s/hooks", grok_home);
-    /* A pre-existing user table must survive both install and uninstall. */
-    write_test_file(config_path, "[cli]\ninstaller = \"internal\"\n");
-
-    const char *const slugs[] = {
-        "codebase-memory-scout",
-        "codebase-memory",
-        "codebase-memory-auditor",
-    };
-    const char *const tier_markers[] = {"Tier 1", "Tier 2", "Tier 3"};
-    char agent_paths[3][640];
-    for (size_t i = 0U; i < 3U; i++) {
-        snprintf(agent_paths[i], sizeof(agent_paths[i]), "%s/agents/%s.md", grok_home, slugs[i]);
-    }
-
-    int install_rc = cbm_install_agent_configs(tmpdir, "/opt/codebase-memory-mcp", false, false);
-    bool installed = install_rc == 0;
-    const char *const mcp_terms[] = {"[mcp_servers.codebase-memory-mcp]",
-                                     "command = \"/opt/codebase-memory-mcp\"", "args = []",
-                                     "installer = \"internal\""};
-    installed = installed && test_file_contains_all(config_path, mcp_terms, 4U);
-    const char *const rules_terms[] = {"search_graph", "trace_path", "check_index_coverage"};
-    installed = installed && test_file_contains_all(rules_path, rules_terms, 3U);
-    const char *const skill_terms[] = {"name: codebase-memory", "search_graph"};
-    installed = installed && test_file_contains_all(skill_path, skill_terms, 2U);
-    for (size_t i = 0U; installed && i < 3U; i++) {
-        char name_line[128];
-        snprintf(name_line, sizeof(name_line), "name: %s\n", slugs[i]);
-        char *agent = read_test_file_alloc(agent_paths[i]);
-        installed = agent && strstr(agent, name_line) && strstr(agent, tier_markers[i]) &&
-                    strstr(agent, "tools: read_file, grep, list_dir, search_tool, use_tool") &&
-                    strstr(agent, "mcpInheritance:\n  named:\n    - codebase-memory-mcp") &&
-                    strstr(agent, "codebase-memory-mcp__check_index_coverage") &&
-                    !strstr(agent, "index_repository") && !strstr(agent, "delete_project") &&
-                    !strstr(agent, "manage_adr") && !strstr(agent, "ingest_traces");
-        free(agent);
-    }
-    struct stat state;
-    bool hooks_withheld = stat(hooks_dir, &state) != 0;
-    char *config = read_test_file_alloc(config_path);
-    size_t tables = 0U;
-    for (const char *at = config; at && (at = strstr(at, "[mcp_servers.codebase-memory-mcp]"));
-         at++) {
-        tables++;
-    }
-    bool single_table = tables == 1U;
-    free(config);
-
-    char *argv[] = {"uninstall", "--yes"};
-    int uninstall_rc = cli_test_cmd_uninstall(2, argv);
-    bool removed = uninstall_rc == 0;
-    for (size_t i = 0U; removed && i < 3U; i++) {
-        removed = stat(agent_paths[i], &state) != 0;
-    }
-    removed = removed && stat(skill_path, &state) != 0;
-    char *after = read_test_file_alloc(config_path);
-    removed = removed && after && !strstr(after, "codebase-memory-mcp") &&
-              strstr(after, "installer = \"internal\"");
-    free(after);
-    char *rules_after = read_test_file_alloc(rules_path);
-    removed = removed && (!rules_after || !strstr(rules_after, "search_graph"));
-    free(rules_after);
-
-    restore_test_env("HOME", saved_home);
-    restore_test_env("PATH", saved_path);
-    restore_test_env("GROK_HOME", saved_grok);
-    test_rmdir_r(tmpdir);
-    if (!installed)
-        FAIL("Grok Build must install config.toml table, rules, skill, and three graph agents");
-    if (!hooks_withheld)
-        FAIL("Grok Build must not receive hooks (passive events discard stdout)");
-    if (!single_table)
-        FAIL("Grok Build install must write exactly one MCP table");
-    if (!removed)
-        FAIL("Grok Build uninstall must remove exactly the owned state");
-    PASS();
-}
-
-/* A same-name table that is not ours (for example a remote url entry) must be
- * left byte-identical: a second [mcp_servers.codebase-memory-mcp] header would
- * make Grok reject the whole config.toml. */
 TEST(cli_grok_mcp_preserves_foreign_table) {
     char tmpdir[256];
     snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-grok-foreign-XXXXXX");
@@ -8581,112 +8045,6 @@ TEST(cli_lifecycle_hooks_preserve_foreign_substring_commands) {
     PASS();
 }
 
-TEST(cli_read_only_agents_do_not_receive_mutating_mcp_server) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-readonly-agent-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char qoder_dir[512];
-    char junie_dir[512];
-    char kiro_dir[512];
-    snprintf(qoder_dir, sizeof(qoder_dir), "%s/.qoder", tmpdir);
-    snprintf(junie_dir, sizeof(junie_dir), "%s/.junie", tmpdir);
-    snprintf(kiro_dir, sizeof(kiro_dir), "%s/.kiro", tmpdir);
-    test_mkdirp(qoder_dir);
-    test_mkdirp(junie_dir);
-    test_mkdirp(kiro_dir);
-
-    char *saved_home = save_test_env("HOME");
-    char *saved_path = save_test_env("PATH");
-    char *saved_kiro = save_test_env("KIRO_HOME");
-    cbm_setenv("HOME", tmpdir, 1);
-    cbm_setenv("PATH", tmpdir, 1);
-    cbm_unsetenv("KIRO_HOME");
-    int rc = cbm_install_agent_configs(tmpdir, "/opt/codebase-memory-mcp", false, false);
-
-    char qoder_agent[640];
-    char junie_agent[640];
-    char kiro_agent[640];
-    snprintf(qoder_agent, sizeof(qoder_agent), "%s/agents/codebase-memory.md", qoder_dir);
-    snprintf(junie_agent, sizeof(junie_agent), "%s/agents/codebase-memory.md", junie_dir);
-    snprintf(kiro_agent, sizeof(kiro_agent), "%s/agents/codebase-memory.json", kiro_dir);
-    char *qoder = read_test_file_alloc(qoder_agent);
-    char *junie = read_test_file_alloc(junie_agent);
-    char *kiro = read_test_file_alloc(kiro_agent);
-    bool qoder_confined = qoder && strstr(qoder, "mcpServers:") &&
-                          strstr(qoder, "- codebase-memory-mcp") &&
-                          strstr(qoder, "mcp__codebase-memory-mcp__search_graph") &&
-                          strstr(qoder, "check_index_coverage") && !strstr(qoder, "Bash") &&
-                          !strstr(qoder, "Write") && !strstr(qoder, "Edit");
-    bool junie_confined = junie && strstr(junie, "mcpServers: [\"codebase-memory-analysis\"]") &&
-                          strstr(junie, "hard-enforces the analysis tool profile") &&
-                          strstr(junie, "tools: [\"Read\", \"Grep\", \"Glob\"]") &&
-                          strstr(junie, "check_index_coverage") && !strstr(junie, "Bash") &&
-                          !strstr(junie, "Write") && !strstr(junie, "Edit");
-    bool kiro_confined =
-        kiro && strstr(kiro, "\"mcpServers\"") && strstr(kiro, "\"includeMcpJson\": false") &&
-        strstr(kiro, "@codebase-memory-mcp/search_graph") && strstr(kiro, "--tool-profile") &&
-        strstr(kiro, "analysis") && strstr(kiro, "check_index_coverage") &&
-        !strstr(kiro, "\"@codebase-memory-mcp\"") && !strstr(kiro, "delete_project") &&
-        !strstr(kiro, "manage_adr") && !strstr(kiro, "index_repository") &&
-        !strstr(kiro, "ingest_traces");
-    bool confined = qoder_confined && junie_confined && kiro_confined;
-    free(qoder);
-    free(junie);
-    free(kiro);
-
-    restore_test_env("HOME", saved_home);
-    restore_test_env("PATH", saved_path);
-    restore_test_env("KIRO_HOME", saved_kiro);
-    test_rmdir_r(tmpdir);
-    if (rc != 0 || !confined)
-        FAIL("Kiro, Junie, and Qoder graph agents must remain least privilege");
-    PASS();
-}
-
-TEST(cli_junie_foreign_analysis_alias_falls_back_to_parent_handoff) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-junie-alias-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char junie_dir[512];
-    char mcp_dir[640];
-    char config_path[768];
-    char agent_path[768];
-    snprintf(junie_dir, sizeof(junie_dir), "%s/.junie", tmpdir);
-    snprintf(mcp_dir, sizeof(mcp_dir), "%s/mcp", junie_dir);
-    snprintf(config_path, sizeof(config_path), "%s/mcp.json", mcp_dir);
-    snprintf(agent_path, sizeof(agent_path), "%s/agents/codebase-memory.md", junie_dir);
-    test_mkdirp(mcp_dir);
-    const char *foreign =
-        "{\"mcpServers\":{\"codebase-memory-analysis\":{\"command\":\"/opt/user-tool\","
-        "\"args\":[\"--private\"]}},\"theme\":\"dark\"}\n";
-    write_test_file(config_path, foreign);
-
-    char *saved_home = save_test_env("HOME");
-    char *saved_path = save_test_env("PATH");
-    cbm_setenv("HOME", tmpdir, 1);
-    cbm_setenv("PATH", tmpdir, 1);
-    int rc = cbm_install_agent_configs(tmpdir, "/opt/codebase-memory-mcp", false, false);
-    char *config = read_test_file_alloc(config_path);
-    char *agent = read_test_file_alloc(agent_path);
-    bool safe = rc != 0 && config && strcmp(config, foreign) == 0 && agent &&
-                strstr(agent, "parent agent must supply") && strstr(agent, "coverage evidence") &&
-                !strstr(agent, "mcpServers") && !strstr(agent, "codebase-memory-analysis");
-    free(config);
-    free(agent);
-
-    restore_test_env("HOME", saved_home);
-    restore_test_env("PATH", saved_path);
-    test_rmdir_r(tmpdir);
-    if (!safe)
-        FAIL("foreign Junie analysis aliases must be preserved and force parent handoff");
-    PASS();
-}
-
-
 TEST(cli_installer_rejects_symlinked_agent_roots) {
 #ifdef _WIN32
     SKIP_PLATFORM("POSIX symlink parent-chain contract");
@@ -10375,17 +9733,17 @@ TEST(cli_remove_instructions) {
 TEST(cli_agent_instructions_content) {
     const char *instr = cbm_get_agent_instructions();
     ASSERT_NOT_NULL(instr);
-    ASSERT(strstr(instr, "search_graph") != NULL);
-    ASSERT(strstr(instr, "trace_path") != NULL);
-    ASSERT(strstr(instr, "get_code_snippet") != NULL);
-    ASSERT(strstr(instr, "Scout (Tier 1)") != NULL);
-    ASSERT(strstr(instr, "Verify (Tier 2, default)") != NULL);
-    ASSERT(strstr(instr, "Auditor (Tier 3)") != NULL);
-    ASSERT(strstr(instr, "check_index_coverage") != NULL);
-    ASSERT(strstr(instr, "missed-coverage range") != NULL);
-    ASSERT(strstr(instr, "must not call or claim MCP access") != NULL);
-    ASSERT(strstr(instr, "# Codebase Memory\n") != NULL);
-    ASSERT(strstr(instr, "## Codebase Knowledge Graph (codebase-memory-mcp)\n") != NULL);
+    ASSERT(strstr(instr, "codebase-memory-cli search QUERY") != NULL);
+    ASSERT(strstr(instr, "codebase-memory-cli trace SYMBOL --direction both") != NULL);
+    ASSERT(strstr(instr, "codebase-memory-cli snippet SYMBOL") != NULL);
+    ASSERT(strstr(instr, "codebase-memory-cli coverage PATH") != NULL);
+    ASSERT(strstr(instr, "Scout:") != NULL);
+    ASSERT(strstr(instr, "Verify (default):") != NULL);
+    ASSERT(strstr(instr, "Auditor:") != NULL);
+    ASSERT(strstr(instr, "--json") != NULL);
+    ASSERT(strstr(instr, "Do not assume a child inherits CLI access") != NULL);
+    ASSERT(strstr(instr, "codebase-memory-mcp") == NULL);
+    ASSERT(strstr(instr, "search_graph") == NULL);
     PASS();
 }
 
@@ -12283,7 +11641,6 @@ TEST(cli_update_only_names_an_installer_that_exists_issue1632) {
 SUITE(cli) {
     RUN_TEST(cli_update_only_names_an_installer_that_exists_issue1632);
     RUN_TEST(cli_progress_visibility_policy);
-    RUN_TEST(cli_raw_mcp_result_preserves_tool_error_status);
     RUN_TEST(cli_maintenance_cancellation_forces_failure_status);
     RUN_TEST(cli_progress_sink_accepts_worker_json_logs);
     RUN_TEST(cli_progress_sink_serializes_concurrent_callbacks);
@@ -12358,7 +11715,7 @@ SUITE(cli) {
     RUN_TEST(cli_skill_files_content);
     RUN_TEST(cli_codex_instructions);
 
-    /* Editor MCP: Cursor/Windsurf/Gemini (5 tests — install_test.go) */
+    /* Legacy editor-config ownership/cleanup contracts. */
 #ifndef _WIN32
 #endif
     RUN_TEST(cli_editor_mcp_rejects_unsafe_windows_probe_namespaces);
@@ -12369,9 +11726,7 @@ SUITE(cli) {
     RUN_TEST(cli_openclaw_profile_uses_profile_state_and_default_workspace);
     RUN_TEST(cli_openclaw_uninstall_removes_compaction_when_workspace_is_ambiguous);
 
-    /* VS Code MCP (2 tests — install_test.go) */
-
-    /* Zed MCP (3 tests — install_test.go) */
+    /* Legacy VS Code/Zed cleanup behavior is covered by ownership-aware lifecycle tests. */
 
     /* PATH management (3 tests) */
     RUN_TEST(cli_ensure_path_append);
@@ -12432,13 +11787,10 @@ SUITE(cli) {
     RUN_TEST(cli_install_preserves_hook_entries_when_scripts_unowned_issue1387);
 #endif
     RUN_TEST(cli_existing_agents_install_durable_child_context);
-    RUN_TEST(cli_durable_profiles_follow_current_vendor_paths);
     RUN_TEST(cli_cline_data_dir_only_redirects_data_state);
     RUN_TEST(cli_warp_installs_shared_skill_without_mcp_or_permissions);
     RUN_TEST(cli_owned_durable_profiles_preserve_user_files);
     RUN_TEST(cli_tiered_codex_profiles_migrate_preserve_and_uninstall);
-    RUN_TEST(cli_tiered_vibe_installs_matching_agent_prompt_sets);
-    RUN_TEST(cli_tiered_grok_installs_profiles_and_withholds_hooks);
     RUN_TEST(cli_grok_mcp_preserves_foreign_table);
     RUN_TEST(cli_junie_current_durable_context_contract);
     RUN_TEST(cli_rovo_installs_documented_global_memory);
@@ -12499,8 +11851,6 @@ SUITE(cli) {
     RUN_TEST(cli_copilot_uninstall_preserves_canonical_shaped_foreign_manifest);
     RUN_TEST(cli_vscode_only_installs_copilot_durable_context);
     RUN_TEST(cli_lifecycle_hooks_preserve_foreign_substring_commands);
-    RUN_TEST(cli_read_only_agents_do_not_receive_mutating_mcp_server);
-    RUN_TEST(cli_junie_foreign_analysis_alias_falls_back_to_parent_handoff);
     RUN_TEST(cli_installer_rejects_symlinked_agent_roots);
     RUN_TEST(cli_claude_hook_scripts_shell_quote_binary_path);
     RUN_TEST(cli_claude_hook_commands_shell_quote_custom_config_dir);
@@ -12548,13 +11898,7 @@ SUITE(cli) {
     RUN_TEST(cli_detect_agents_finds_junie_issue651);
     RUN_TEST(cli_detect_agents_none_found);
 
-    /* Codex MCP config upsert (3 tests — group B) */
-
-    /* Zed MCP format fix (1 test — group B) */
-
-    /* OpenCode MCP config upsert (2 tests — group B) */
-
-    /* Antigravity MCP config upsert (2 tests — group B) */
+    /* Historical client-config mutation is retained only where cleanup ownership is tested. */
 
     /* Instructions file upsert (6 tests — group C) */
     RUN_TEST(cli_aider_instructions_are_cli_form_issue1032);

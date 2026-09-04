@@ -1,6 +1,6 @@
 # Runtime Assurance and Concurrency Verification Plan
 
-Status: planned reliability track for the CLI-first migration.
+Status: retained technical assurance reference. Release sequencing is superseded by `docs/RELEASE_QUALIFICATION_PLAN.md`.
 
 ## Purpose
 

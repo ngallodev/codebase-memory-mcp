@@ -5,7 +5,7 @@
  * All functions accept explicit paths for testability.
  */
 #include "cli/agent_clients.h"
-#include "cli/agent_profiles.h"
+#include "cli/legacy_agent_profiles.h"
 #include "cli/cli.h"
 #include "cli/activation_transaction.h"
 #include "cli/config_json_like.h"
@@ -140,17 +140,6 @@ static void (*cbm_sqlite_transient_fn(void))(void *) {
 /* Decompression buffer cap (500 MB) */
 #define DECOMPRESS_MAX_BYTES ((size_t)500 * CLI_BUF_1K * CBM_SZ_1K)
 
-bool cbm_cli_mcp_result_is_error(const char *result) {
-    if (!result) {
-        return false;
-    }
-    yyjson_doc *document = yyjson_read(result, strlen(result), 0);
-    yyjson_val *root = document ? yyjson_doc_get_root(document) : NULL;
-    yyjson_val *error = yyjson_is_obj(root) ? yyjson_obj_get(root, "isError") : NULL;
-    bool is_error = yyjson_is_bool(error) && yyjson_get_bool(error);
-    yyjson_doc_free(document);
-    return is_error;
-}
 
 int cbm_cli_exit_status_after_maintenance(int exit_status, bool maintenance_cancelled) {
     return maintenance_cancelled && exit_status == EXIT_SUCCESS ? EXIT_FAILURE : exit_status;
@@ -2024,6 +2013,8 @@ int cbm_remove_openclaw_mcp_owned(const char *binary_path, const char *config_pa
 }
 
 static const char cbm_openclaw_compaction_section[] =
+    "Codebase Knowledge Graph (codebase-memory-cli)";
+static const char cbm_openclaw_legacy_compaction_section[] =
     "Codebase Knowledge Graph (codebase-memory-mcp)";
 
 static int cbm_upsert_openclaw_compaction(const char *config_path) {
@@ -2036,10 +2027,13 @@ static int cbm_upsert_openclaw_compaction(const char *config_path) {
 
 static int cbm_remove_openclaw_compaction(const char *config_path) {
     static const char *const path[] = {"agents", "defaults", "compaction"};
-    return cbm_json_like_remove_string_at_path(config_path, path, 3U, "postCompactionSections",
-                                               cbm_openclaw_compaction_section) == 0
-               ? CLI_OK
-               : CLI_ERR;
+    int current = cbm_json_like_remove_string_at_path(config_path, path, 3U,
+                                                      "postCompactionSections",
+                                                      cbm_openclaw_compaction_section);
+    int legacy = cbm_json_like_remove_string_at_path(config_path, path, 3U,
+                                                     "postCompactionSections",
+                                                     cbm_openclaw_legacy_compaction_section);
+    return current == 0 && legacy == 0 ? CLI_OK : CLI_ERR;
 }
 
 /* ── VS Code MCP (servers key with type:stdio) ────────────────── */
@@ -6372,7 +6366,7 @@ typedef struct {
 } config_key_def_t;
 
 static const config_key_def_t CONFIG_KEYS[] = {
-    {CBM_CONFIG_AUTO_INDEX, "false", "Enable auto-indexing on MCP session start"},
+    {CBM_CONFIG_AUTO_INDEX, "false", "Enable auto-indexing when an eligible daemon session establishes repository context"},
     {CBM_CONFIG_AUTO_INDEX_LIMIT, "50000", "Max files for auto-indexing new projects"},
     {CBM_CONFIG_AUTO_WATCH, "true", "Register background git watcher on session connect"},
     {CBM_CONFIG_WATCHER_ENABLED, "true",
@@ -7229,7 +7223,7 @@ static void install_claude_code_config(const char *home, const char *binary_path
         record_agent_config_error(false, "Claude Code", "legacy_mcp_cleanup", legacy_mcp_path);
     }
 
-    printf("  integration: CLI skill + hooks (MCP registration not installed)\n");
+    printf("  integration: CLI skill + hooks\n");
 
     char settings_path[CLI_BUF_1K];
     snprintf(settings_path, sizeof(settings_path), "%s/settings.json", config_dir);
@@ -8037,7 +8031,7 @@ static void install_gemini_config(const char *home, const char *binary_path, boo
 #else
     printf("  hooks: BeforeTool + AfterTool read_file + SessionStart\n");
 #endif
-    printf("  subagents: MCP-bound tier profiles not installed; use the CLI-first skill\n");
+    printf("  subagents: use the CLI-first skill\n");
 }
 
 static void install_cli_agent_configs(const cbm_detected_agents_t *agents, const char *home,
@@ -8378,7 +8372,7 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
         bool direct_profiles_ready = install_generic_agent_config("Junie", NULL, dry_run);
         install_agent_skill("Junie", skills_dir, force, dry_run);
         if (!direct_profiles_ready && !g_install_plan) {
-            printf("  subagents: direct MCP withheld; installed parent-handoff profiles\n");
+            printf("  subagents: installed parent-handoff profiles\n");
         }
     }
 }
@@ -9275,7 +9269,7 @@ int cbm_cmd_install(int argc, char **argv) {
                    "                                   [--dir PATH] [--skip-config] [--skip-binary]\n"
                    "                                   [--clients[=LIST]] [--reset-indexes]\n\n"
                    "Installs the codebase-memory-cli executable plus CLI-first skills, instructions,\n"
-                   "and compatible hooks. New installs do not create MCP registrations.\n");
+                   "and compatible hooks.\n");
             return CLI_OK;
         } else if (strcmp(argv[i], "--dry-run") == 0) {
             dry_run = true;
@@ -11734,7 +11728,7 @@ int cbm_cmd_update(int argc, char **argv) {
     }
 
     printf("\nAll project indexes were cleared. They will be rebuilt\n");
-    printf("automatically when you next use the MCP server.\n");
+    printf("as repositories are indexed again.\n");
     printf("\nUpdate complete. Please restart your coding-agent sessions to "
            "properly take this into account.\n");
     return 0;

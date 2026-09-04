@@ -1888,7 +1888,7 @@ TEST(daemon_runtime_image_rejection_reaches_client_issue1383) {
 /* #1539: a peer whose image cannot be EXAMINED is not a peer that failed a
  * check — it is a peer we could not look at. Every `npx codebase-memory-mcp`
  * invocation lands here (ephemeral cache path, unfingerprintable), and the old
- * gate rejected all of them: the MCP client saw a 30 s wait and zero bytes.
+ * gate rejected all of them: the client saw a 30 s wait and zero bytes.
  * The HELLO exchange that already succeeded proves version, build fingerprint
  * and ABI compatibility, so admission is the honest outcome. */
 TEST(daemon_runtime_unverifiable_image_is_admitted_issue1539) {
@@ -3661,11 +3661,11 @@ TEST(daemon_runtime_disconnect_cancels_blocked_non_index_child_and_preserves_oth
               : NULL;
     bool contexts_set =
         first && second &&
-        cbm_daemon_application_client_set_context(first, root, root, CBM_TOOL_PROFILE_ALL, NULL,
-                                                  NULL, RUNTIME_TEST_TIMEOUT_MS) ==
+        cbm_daemon_application_client_set_context(first, root, root, NULL, NULL,
+                                                  RUNTIME_TEST_TIMEOUT_MS) ==
             CBM_DAEMON_RUNTIME_APPLICATION_OK &&
-        cbm_daemon_application_client_set_context(second, root, root, CBM_TOOL_PROFILE_ALL,
-                                                  NULL, NULL, RUNTIME_TEST_TIMEOUT_MS) ==
+        cbm_daemon_application_client_set_context(second, root, root, NULL, NULL,
+                                                  RUNTIME_TEST_TIMEOUT_MS) ==
             CBM_DAEMON_RUNTIME_APPLICATION_OK;
     bool second_usable_before =
         contexts_set && runtime_real_application_ingest_probe(second) &&

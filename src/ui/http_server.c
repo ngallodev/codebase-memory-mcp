@@ -5,8 +5,6 @@
  * the routes and their handlers:
  *   GET /             → embedded index.html
  *   GET /assets/...   → embedded JS/CSS
- *   POST /rpc         → compatibility JSON-RPC mapped to neutral operations
- *   OPTIONS /rpc      → CORS preflight (for vite dev on :5173)
  *   GET/POST /api/... → UI support endpoints (layout, index, browse, …)
  *   *                 → 404
  *
@@ -752,8 +750,8 @@ static void handle_browse(cbm_http_conn_t *c, const cbm_http_req_t *req) {
 
     /* The browser UI may send Windows backslash separators (e.g.
      * "D:\projects\demo"). Normalize to forward slashes before the cbm_is_dir
-     * gate, exactly as the MCP repo_path handler and cbm_project_name_from_path
-     * already do — otherwise a real D:/ directory is rejected (#548). */
+     * gate, matching canonical project-path resolution — otherwise a real D:/
+     * directory is rejected (#548). */
     cbm_normalize_path_sep(path);
 
     if (!cbm_is_dir(path)) {
@@ -1160,11 +1158,10 @@ static void handle_index_start(cbm_http_server_t *server, cbm_http_conn_t *c,
         return;
     }
 
-    /* Same workspace boundary the MCP indexing tool applies, through the same
-     * function. This route used to check only that the path was a directory, so
-     * it accepted roots the MCP path refused — an operator's boundary held on one
-     * entry point and not the other. Canonicalize first: the policy is defined
-     * over resolved paths, and a symlink would otherwise launder the verdict. */
+    /* Apply the same workspace boundary as the neutral index operation. This
+     * route used to check only that the path was a directory, so policy differed
+     * by entry point. Canonicalize first: the policy is defined over resolved
+     * paths, and a symlink would otherwise launder the verdict. */
     char canonical_root[4096];
     char boundary_err[1024];
     if (!cbm_canonical_path(rpath, canonical_root, sizeof(canonical_root))) {
@@ -1727,156 +1724,6 @@ static void handle_layout(cbm_http_conn_t *c, const cbm_http_req_t *req) {
     }
 }
 
-/* ── Handle JSON-RPC request ──────────────────────────────────── */
-
-static yyjson_val *json_unique_member(yyjson_val *object, const char *name) {
-    if (!yyjson_is_obj(object))
-        return NULL;
-    yyjson_val *found = NULL;
-    size_t index, maximum;
-    yyjson_val *key, *value;
-    yyjson_obj_foreach(object, index, maximum, key, value) {
-        if (strcmp(yyjson_get_str(key), name) == 0) {
-            if (found)
-                return NULL;
-            found = value;
-        }
-    }
-    return found;
-}
-
-static bool rpc_is_allowed_for_ui(const char *body, size_t body_len) {
-    yyjson_doc *document = yyjson_read(body, body_len, 0);
-    if (!document)
-        return false;
-    yyjson_val *root = yyjson_doc_get_root(document);
-    yyjson_val *method = json_unique_member(root, "method");
-    yyjson_val *params = json_unique_member(root, "params");
-    yyjson_val *name = json_unique_member(params, "name");
-    const char *method_text = yyjson_is_str(method) ? yyjson_get_str(method) : NULL;
-    const char *name_text = yyjson_is_str(name) ? yyjson_get_str(name) : NULL;
-    bool allowed =
-        method_text && strcmp(method_text, "tools/call") == 0 && name_text &&
-        (strcmp(name_text, "list_projects") == 0 || strcmp(name_text, "get_code_snippet") == 0);
-    yyjson_doc_free(document);
-    return allowed;
-}
-
-static cbm_store_t *http_operation_store_resolve(void *context, const char *project,
-                                                 bool mutation_already_held,
-                                                 bool nonblocking_recovery,
-                                                 cbm_operation_store_recovery_status_t *status) {
-    return cbm_store_host_resolve((cbm_store_host_t *)context, project, mutation_already_held,
-                                  nonblocking_recovery, status);
-}
-
-static void http_operation_store_invalidate(void *context) {
-    cbm_store_host_invalidate((cbm_store_host_t *)context);
-}
-
-static char *http_operation_store_error(void *context, const char *project) {
-    (void)context;
-    return cbm_store_host_error(project);
-}
-
-static char *http_rpc_response(yyjson_val *id, const cbm_operation_result_t *operation_result) {
-    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
-    yyjson_mut_val *root = doc ? yyjson_mut_obj(doc) : NULL;
-    if (!doc || !root) {
-        if (doc) yyjson_mut_doc_free(doc);
-        return NULL;
-    }
-    yyjson_mut_doc_set_root(doc, root);
-    yyjson_mut_obj_add_str(doc, root, "jsonrpc", "2.0");
-    if (id) {
-        yyjson_mut_val *id_copy = yyjson_val_mut_copy(doc, id);
-        if (id_copy) yyjson_mut_obj_add_val(doc, root, "id", id_copy);
-        else yyjson_mut_obj_add_null(doc, root, "id");
-    } else {
-        yyjson_mut_obj_add_null(doc, root, "id");
-    }
-
-    yyjson_mut_val *result = yyjson_mut_obj(doc);
-    yyjson_mut_val *content = yyjson_mut_arr(doc);
-    yyjson_mut_val *item = yyjson_mut_obj(doc);
-    yyjson_mut_obj_add_str(doc, item, "type", "text");
-    yyjson_mut_obj_add_strcpy(doc, item, "text",
-                              operation_result && operation_result->payload
-                                  ? operation_result->payload
-                                  : "");
-    yyjson_mut_arr_add_val(content, item);
-    yyjson_mut_obj_add_val(doc, result, "content", content);
-    yyjson_mut_obj_add_bool(doc, result, "isError",
-                            operation_result ? operation_result->is_error : true);
-
-    if (operation_result && operation_result->payload) {
-        yyjson_doc *payload_doc = yyjson_read(operation_result->payload,
-                                              strlen(operation_result->payload), 0);
-        yyjson_val *payload_root = payload_doc ? yyjson_doc_get_root(payload_doc) : NULL;
-        if (yyjson_is_obj(payload_root)) {
-            yyjson_mut_val *structured = yyjson_val_mut_copy(doc, payload_root);
-            if (structured) yyjson_mut_obj_add_val(doc, result, "structuredContent", structured);
-        } else if (operation_result->is_error) {
-            yyjson_mut_val *structured = yyjson_mut_obj(doc);
-            yyjson_mut_obj_add_strcpy(doc, structured, "error", operation_result->payload);
-            yyjson_mut_obj_add_val(doc, result, "structuredContent", structured);
-        }
-        if (payload_doc) yyjson_doc_free(payload_doc);
-    }
-    yyjson_mut_obj_add_val(doc, root, "result", result);
-    char *response = yyjson_mut_write(doc, 0, NULL);
-    yyjson_mut_doc_free(doc);
-    return response;
-}
-
-static void handle_rpc(cbm_http_server_t *srv, cbm_http_conn_t *c, const cbm_http_req_t *req) {
-    if (!srv || req->body_len == 0 || req->body_len > MAX_BODY_SIZE || !req->body) {
-        cbm_http_replyf(c, 400, g_cors_json,
-                        "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,"
-                        "\"message\":\"invalid request size\"},\"id\":null}");
-        return;
-    }
-    if (!rpc_is_allowed_for_ui(req->body, req->body_len)) {
-        cbm_http_replyf(c, 403, g_cors_json,
-                        "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32601,"
-                        "\"message\":\"UI RPC method is not allowed\"},\"id\":null}");
-        return;
-    }
-
-    yyjson_doc *request_doc = yyjson_read(req->body, req->body_len, 0);
-    yyjson_val *root = request_doc ? yyjson_doc_get_root(request_doc) : NULL;
-    yyjson_val *id = yyjson_is_obj(root) ? yyjson_obj_get(root, "id") : NULL;
-    yyjson_val *params = yyjson_is_obj(root) ? yyjson_obj_get(root, "params") : NULL;
-    yyjson_val *name = yyjson_is_obj(params) ? yyjson_obj_get(params, "name") : NULL;
-    yyjson_val *arguments = yyjson_is_obj(params) ? yyjson_obj_get(params, "arguments") : NULL;
-    const char *tool_name = yyjson_is_str(name) ? yyjson_get_str(name) : NULL;
-    const cbm_operation_descriptor_t *operation = cbm_operation_find(tool_name);
-    char *args_json = arguments ? yyjson_val_write(arguments, 0, NULL) : strdup("{}");
-
-    cbm_operation_result_t result = {0};
-    if (!operation || !args_json) {
-        result = cbm_operation_result_copy("UI RPC request could not be prepared", true);
-    } else {
-        cbm_operation_runtime_t runtime = {0};
-        runtime.store_resolve = http_operation_store_resolve;
-        runtime.store_invalidate = http_operation_store_invalidate;
-        runtime.store_error = http_operation_store_error;
-        runtime.store_context = srv->store_host;
-        cbm_operation_context_t context = {.runtime = &runtime};
-        result = cbm_operation_execute(&context, operation->id, args_json);
-    }
-
-    char *response = http_rpc_response(id, &result);
-    if (response) cbm_http_replyf(c, 200, g_cors_json, "%s", response);
-    else cbm_http_replyf(c, 500, g_cors_json,
-                         "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,"
-                         "\"message\":\"internal error\"},\"id\":null}");
-    free(response);
-    cbm_operation_result_dispose(&result);
-    free(args_json);
-    if (request_doc) yyjson_doc_free(request_doc);
-}
-
 /* ── Request dispatch ─────────────────────────────────────────── */
 
 /* True when the Host header names the loopback interface and exact port the
@@ -1894,7 +1741,7 @@ static bool host_is_this_server(const char *host, int port) {
 }
 
 static bool route_is_protected(const char *path) {
-    return strcmp(path, "/api") == 0 || strncmp(path, "/api/", 5) == 0 || strcmp(path, "/rpc") == 0;
+    return strcmp(path, "/api") == 0 || strncmp(path, "/api/", 5) == 0;
 }
 
 static bool content_type_is_json(const char *content_type) {
@@ -2028,12 +1875,6 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
      * authenticated application and HTTP server instances. */
     if (is_get && strcmp(req->path, "/__cbm/ui-readiness") == 0) {
         handle_ui_readiness(srv, c, req);
-        return;
-    }
-
-    /* POST /rpc → JSON-RPC dispatch (reuses existing MCP tools) */
-    if (is_post && cbm_http_path_match(req->path, "/rpc")) {
-        handle_rpc(srv, c, req);
         return;
     }
 

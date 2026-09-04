@@ -1,7 +1,7 @@
-/* test_agent_profiles.c — Canonical Scout/Verify/Audit renderer contracts. */
+/* test_legacy_agent_profiles.c — Historical profile byte contracts used by ownership-aware cleanup. */
 #include "test_framework.h"
 
-#include <cli/agent_profiles.h>
+#include <cli/legacy_agent_profiles.h>
 #include <yyjson/yyjson.h>
 
 #include <stdlib.h>
@@ -360,7 +360,7 @@ TEST(agent_profiles_omp_direct_has_prefixed_tools_and_handoff_excludes_mcp) {
     PASS();
 }
 
-SUITE(agent_profiles) {
+SUITE(legacy_agent_profiles) {
     RUN_TEST(agent_profiles_stable_tier_identity);
     RUN_TEST(agent_profiles_direct_dialects_are_coverage_aware_and_read_only);
     RUN_TEST(agent_profiles_tiers_encode_distinct_evidence_budgets);

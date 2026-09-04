@@ -2,8 +2,7 @@
  * http_server.h — Embedded HTTP server for the graph visualization UI.
  *
  * Binds to 127.0.0.1:<port> only (localhost).
- * Serves embedded frontend assets and proxies /rpc to a dedicated
- * neutral read-side store host.
+ * Serves embedded frontend assets and neutral /api support endpoints.
  *
  * Runs in a background pthread, same pattern as the watcher thread.
  */
@@ -68,8 +67,8 @@ void cbm_http_server_set_watcher(cbm_http_server_t *srv, struct cbm_watcher *wat
 void cbm_http_server_set_index_executor(cbm_http_server_t *srv, cbm_http_index_executor_fn executor,
                                         void *context);
 
-/* Route direct UI mutations and /rpc mutation tools through the daemon's
- * per-project coordination gate. Direct UI calls are non-blocking: begin=false
+/* Route direct UI mutations through the daemon's per-project coordination gate.
+ * Direct UI calls are non-blocking: begin=false
  * is returned to the browser as a retryable locked response. */
 void cbm_http_server_set_project_mutation_guard(cbm_http_server_t *srv,
                                                 cbm_http_project_mutation_begin_fn begin,

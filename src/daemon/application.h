@@ -13,7 +13,6 @@
 #include "daemon/runtime.h"
 #include "daemon/project_lock.h"
 #include "operations/index_supervisor.h"
-#include "operations/tool_profile.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -122,12 +121,12 @@ cbm_daemon_runtime_application_callbacks_t cbm_daemon_application_runtime_callba
     cbm_daemon_application_t *application);
 
 /* Thin-client request helpers. Every helper performs one bounded runtime
- * exchange. MCP notifications succeed with a NULL/zero response. Returned
+ * exchange. Successful no-payload requests return NULL/zero response. Returned
  * response bytes are malloc-owned and include one trailing NUL for text use;
  * response_length excludes that terminator. */
 cbm_daemon_runtime_application_status_t cbm_daemon_application_client_set_context(
     cbm_daemon_runtime_client_t *client, const char *session_root, const char *allowed_root,
-    cbm_tool_profile_t tool_profile, const char *hook_event, const char *hook_dialect,
+    const char *hook_event, const char *hook_dialect,
     uint32_t timeout_ms);
 
 /* Persist a masked UI configuration mutation in the daemon. A zero/unknown

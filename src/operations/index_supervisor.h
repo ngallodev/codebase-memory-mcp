@@ -9,7 +9,7 @@
  * survives and reports it instead of dying.
  *
  * This module owns only the spawn/reap MECHANISM and the worker-role state. The
- * MCP handler (mcp.c) owns the gate placement and the response building, so this
+ * neutral index operation owns gate placement and response building, so this
  * module has no dependency on the response format.
  *
  * fork+exec only (never fork-and-run-in-child): the server holds persistent
@@ -103,7 +103,7 @@ cbm_index_worker_argv_status_t cbm_index_worker_parse_process_argv(
 const char *cbm_index_worker_argv_status_message(cbm_index_worker_argv_status_t status);
 
 /* Host marking (#845): the supervisor gate is OPT-IN per process. Only the real
- * codebase-memory-mcp binary calls this (first thing in main(), before any
+ * codebase-memory-cli binary calls this (first thing in main(), before any
  * subcommand dispatch, so MCP server + CLI + HTTP paths are all covered).
  * EMBEDDERS of neutral operation execution (test binaries, future library users) never
  * call it, so they index in-process by default. Without this gate the supervisor

@@ -1,0 +1,109 @@
+name: Promote Qualified Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Existing DRAFT release tag qualified on luigi.home.arpa (vX.Y.Z or prerelease)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify-external-qualification:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate version input
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]] || exit 2
+      - name: Download exact release and external qualification evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p release
+          gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft' | grep -qx true
+          gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --dir release \
+            --pattern 'codebase-memory-cli-windows-amd64.zip' \
+            --pattern 'checksums.txt' \
+            --pattern 'qualification-manifest.json' \
+            --pattern 'qualification-summary.md'
+      - name: Verify external qualification binds exact release bytes
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python3 scripts/ci/verify-external-qualification.py \
+            --manifest release/qualification-manifest.json \
+            --summary release/qualification-summary.md \
+            --archive release/codebase-memory-cli-windows-amd64.zip \
+            --checksums release/checksums.txt \
+            --expected-tag "$VERSION"
+
+  publish-registries:
+    needs: [verify-external-qualification]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Sync packaging versions
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          V="${RELEASE_VERSION#v}"
+          jq --arg v "$V" '.version = $v' pkg/npm/package.json > pkg/npm/package.tmp
+          mv pkg/npm/package.tmp pkg/npm/package.json
+          sed -i "s/^version = \".*\"/version = \"$V\"/" pkg/pypi/pyproject.toml
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Publish to npm
+        working-directory: pkg/npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          V="${RELEASE_VERSION#v}"
+          if npm view "codebase-memory-cli@$V" version >/dev/null 2>&1; then
+            echo "npm already has codebase-memory-cli@$V — skipping"
+          elif [[ "$RELEASE_VERSION" == *-* ]]; then
+            npm publish --access public --provenance --tag next
+          else
+            npm publish --access public --provenance
+          fi
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Build and publish PyPI distribution
+        working-directory: pkg/pypi
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          python -m pip install --require-hashes -r requirements-publish.txt
+          python -m build
+          twine check dist/*
+          twine upload --non-interactive --skip-existing dist/*
+
+  publish-final:
+    needs: [verify-external-qualification, publish-registries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Un-draft exact qualified GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: gh release edit "$VERSION" --draft=false --repo "$GITHUB_REPOSITORY"

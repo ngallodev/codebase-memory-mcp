@@ -287,19 +287,20 @@ for service in ("smoke-windows:",):
     section = match.group("body") if match else ""
     require(
         "codebase-memory-mcp-launcher" not in section
-        and "codebase-memory-mcp.payload.exe" not in section.replace(
-            "test ! -e build/win-cross/codebase-memory-mcp.payload.exe", ""
+        and "codebase-memory-mcp.payload.exe" not in section
+        and "codebase-memory-cli.payload.exe" not in section.replace(
+            "test ! -e build/win-cross/codebase-memory-cli.payload.exe", ""
         ),
         f"docker-compose {service[:-1]} must build ONE Windows binary, not a launcher/payload pair",
     )
     require(
-        "test ! -e build/win-cross/codebase-memory-mcp.payload.exe" in section,
+        "test ! -e build/win-cross/codebase-memory-cli.payload.exe" in section,
         f"docker-compose {service[:-1]} must assert no payload sibling is produced",
     )
 require(
-    "wine64 ./build/win-cross/codebase-memory-mcp.exe --version" in compose
-    and "wine64 cmd /c build/win-cross/codebase-memory-mcp.exe --version" in compose,
-    "docker-compose Windows cross-smoke must execute the single binary through Wine and through a "
+    "wine64 ./build/win-cross/codebase-memory-cli.exe --version" in compose
+    and "wine64 cmd /c build/win-cross/codebase-memory-cli.exe --version" in compose,
+    "docker-compose Windows cross-smoke must execute the single CLI binary through Wine and through a "
     "Wine Windows parent",
 )
 require(
@@ -343,21 +344,29 @@ require(
 )
 smoke_test = read("scripts/smoke-test.sh")
 require(
-    "MSYS2_ARG_CONV_EXCL='*'" in smoke_test
-    and 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File' in smoke_test
-    and "& $args[1]" not in smoke_test,
-    "Windows Phase 13 must execute install.ps1 directly with native paths",
+    '"$ROOT/scripts/smoke-invariants.sh" "$BINARY"' in smoke_test,
+    "canonical smoke must run CLI invariants against the supplied release binary",
 )
-# A count cannot tell "we still have four curls" from "every curl is safe" — it
-# passed while a loopback UI probe carried no --noproxy at all, which is the
-# exact failure this rule exists to prevent (an ambient http_proxy makes a
-# 127.0.0.1 request leave the machine). Assert the property on every invocation
-# instead, so adding or removing a curl cannot silently satisfy the rule.
+require(
+    'DOWNLOAD_URL="${SMOKE_DOWNLOAD_URL:-${CBM_DOWNLOAD_URL:-}}"' in smoke_test
+    and 'bash "$ROOT/install.sh" --dir "$INSTALL_ROOT" --skip-config' in smoke_test
+    and '"$ROOT/scripts/smoke-invariants.sh" "$INSTALLED"' in smoke_test,
+    "canonical Unix smoke must round-trip the release installer and re-run invariants against the installed binary",
+)
+require(
+    "install.ps1" in vm_smoke and 'powershell.exe' in vm_smoke.lower(),
+    "native Windows release smoke must exercise install.ps1 through PowerShell",
+)
+# Loopback fixture requests must not inherit an ambient proxy. The canonical
+# smoke entry itself no longer performs curl probes; enforce this property on
+# any curl invocation that remains in the release-smoke scripts.
 unproxied_curls = [
-    line.strip()
-    for line in smoke_test.splitlines()
-    # An invocation starts a command: line start, or after ; & | ( or `if`/`then`
-    # etc. Mentions inside echo/comment strings are not invocations.
+    (relative, line.strip())
+    for relative, source in (
+        ("scripts/smoke-test.sh", smoke_test),
+        ("test-infrastructure/vm/vm-smoke.sh", vm_smoke),
+    )
+    for line in source.splitlines()
     if re.search(r"(?:^|[;&|(]|\b(?:if|then|else|do|not)\s)\s*curl\s", line)
     and not line.lstrip().startswith("#")
     and not re.search(r"echo\s", line.split("curl")[0])
@@ -365,40 +374,14 @@ unproxied_curls = [
 ]
 require(
     not unproxied_curls,
-    "every curl in the smoke fixture must bypass ambient proxies (--noproxy '*'): "
-    + "; ".join(unproxied_curls[:3]),
+    "every curl in the smoke fixtures must bypass ambient proxies (--noproxy '*'): "
+    + "; ".join(f"{rel}: {line}" for rel, line in unproxied_curls[:3]),
 )
 require(
-    "/tmp/cbm-curl12a.err" not in smoke_test
-    and 'CURL12_ERR="$DL_DIR/curl12a.err"' in smoke_test,
-    "curl diagnostics must stay inside the per-smoke download directory",
-)
-require(
-    "CBM_TEST_WINDOWS_USER_PATH_RUN_ID=invalid" in smoke_test
-    and "invalid Windows PATH smoke seam fell back" in smoke_test,
-    "Windows release smoke must prove malformed PATH-test gating fails closed",
-)
-# There is no in-process update left to refresh the MCP command, so Phase 14
-# cannot assert a refresh. The refresh itself still happens -- the install
-# script re-runs `install` -- and is covered by Phase 8 (agent config install
-# E2E) and Phase 13 (install script E2E). Phase 14 must say so rather than
-# quietly dropping the step.
-require(
-    "config refresh covered by install" in smoke_test,
-    "Phase 14 must name where the config-refresh coverage moved to",
-)
-# The retired-image driver existed to exercise an in-process replacement that no
-# platform performs any more: `update` prints the shipped install script's
-# command and touches nothing. Phase 14 now drives from the installed binary
-# everywhere, and 14a asserts the binary is byte-identical afterwards.
-require(
-    'UPDATE_DRIVER="$UPDATE_HOME/.local/bin/codebase-memory-mcp"' in smoke_test
-    and 'STALE_CMD="$UPDATE_DRIVER"' in smoke_test,
-    "Phase 14 must drive update from the installed binary on every platform",
-)
-require(
-    "update replaced the binary in-process" in smoke_test,
-    "Phase 14 must assert update leaves the binary byte-identical",
+    "windows-user-path-guard.ps1" in vm_smoke
+    and "-Mode prepare" in vm_smoke
+    and "-Mode verify" in vm_smoke,
+    "native Windows release smoke must retain fail-closed isolated PATH verification",
 )
 
 for changed_path in (

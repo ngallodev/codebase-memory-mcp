@@ -1,0 +1,100 @@
+{
+  "schema": "codebase-memory-cli/benchmark-corpus/v1",
+  "generation": "windows-corpus-1",
+  "host": "luigi.home.arpa",
+  "repositories": [
+    {
+      "id": "codebase-memory-cli",
+      "name": "codebase-memory-cli",
+      "remote": "https://github.com/DeusData/codebase-memory-mcp.git",
+      "commit": "TO_BE_PINNED_FROM_FROZEN_CHECKOUT",
+      "clean_required": true,
+      "category": "self-hosting-multilanguage",
+      "local_path": "TO_BE_SET_ON_LUIGI",
+      "operations": [
+        "index",
+        "search",
+        "architecture",
+        "snippet",
+        "outline",
+        "changes",
+        "status"
+      ]
+    },
+    {
+      "id": "specgen-aw",
+      "name": "specgen-aw",
+      "remote": "https://github.com/ngallodev-software/specgen-aw.git",
+      "commit": "TO_BE_PINNED_FROM_FROZEN_CHECKOUT",
+      "clean_required": true,
+      "category": "realistic-application",
+      "local_path": "TO_BE_SET_ON_LUIGI",
+      "operations": [
+        "index",
+        "search",
+        "architecture",
+        "snippet",
+        "outline",
+        "changes",
+        "status",
+        "cross_repo"
+      ]
+    },
+    {
+      "id": "agent-workflow",
+      "name": "agent-workflow",
+      "remote": "https://github.com/ngallodev-software/agent-workflow.git",
+      "commit": "TO_BE_PINNED_FROM_FROZEN_CHECKOUT",
+      "clean_required": true,
+      "category": "realistic-companion-application",
+      "local_path": "TO_BE_SET_ON_LUIGI",
+      "operations": [
+        "index",
+        "search",
+        "architecture",
+        "snippet",
+        "outline",
+        "changes",
+        "status",
+        "cross_repo"
+      ]
+    },
+    {
+      "id": "agent-workflow-spec-contracts",
+      "name": "agent-workflow-spec-contracts",
+      "remote": "https://github.com/ngallodev-software/agent-workflow-spec-contracts.git",
+      "commit": "TO_BE_PINNED_FROM_FROZEN_CHECKOUT",
+      "clean_required": true,
+      "category": "shared-contract-dependency",
+      "local_path": "TO_BE_SET_ON_LUIGI",
+      "operations": [
+        "index",
+        "search",
+        "architecture",
+        "snippet",
+        "outline",
+        "changes",
+        "status",
+        "cross_repo"
+      ]
+    },
+    {
+      "id": "herdr",
+      "name": "herdr",
+      "remote": "https://github.com/herdrdev/herdr.git",
+      "commit": "TO_BE_PINNED_FROM_FROZEN_CHECKOUT",
+      "clean_required": true,
+      "category": "large-open-source-scale-language-coverage",
+      "local_path": "TO_BE_SET_ON_LUIGI",
+      "operations": [
+        "index",
+        "search",
+        "architecture",
+        "snippet",
+        "outline",
+        "changes",
+        "status"
+      ]
+    }
+  ]
+}

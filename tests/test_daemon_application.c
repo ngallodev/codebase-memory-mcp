@@ -18,7 +18,6 @@
 #include "foundation/workspace.h"
 #include "operations/index_admission.h"
 #include "operations/json_args.h"
-#include "operations/tool_profile.h"
 #include "pipeline/pipeline.h"
 #include "store/store.h"
 #include "ui/config.h"
@@ -167,14 +166,13 @@ static cbm_daemon_runtime_application_status_t app_test_request(
 }
 
 static bool app_test_context_request_options(const char *root, const char *allowed,
-                                             cbm_tool_profile_t tool_profile,
                                              const char *hook_event, const char *hook_dialect,
                                              uint8_t **request_out, uint32_t *length_out) {
     size_t root_length = strlen(root);
     size_t allowed_length = allowed ? strlen(allowed) : 0;
     size_t event_length = hook_event ? strlen(hook_event) : 0;
     size_t dialect_length = hook_dialect ? strlen(hook_dialect) : 0;
-    size_t total = 19U + root_length + allowed_length + event_length + dialect_length;
+    size_t total = 18U + root_length + allowed_length + event_length + dialect_length;
     if (root_length == 0 || root_length > UINT32_MAX || allowed_length > UINT32_MAX ||
         event_length > UINT32_MAX || dialect_length > UINT32_MAX || total > UINT32_MAX) {
         return false;
@@ -193,24 +191,23 @@ static bool app_test_context_request_options(const char *root, const char *allow
     request[7] = (uint8_t)(allowed_length >> 16);
     request[8] = (uint8_t)(allowed_length >> 8);
     request[9] = (uint8_t)allowed_length;
-    request[10] = (uint8_t)tool_profile;
-    request[11] = (uint8_t)(event_length >> 24);
-    request[12] = (uint8_t)(event_length >> 16);
-    request[13] = (uint8_t)(event_length >> 8);
-    request[14] = (uint8_t)event_length;
-    request[15] = (uint8_t)(dialect_length >> 24);
-    request[16] = (uint8_t)(dialect_length >> 16);
-    request[17] = (uint8_t)(dialect_length >> 8);
-    request[18] = (uint8_t)dialect_length;
-    memcpy(request + 19, root, root_length);
+    request[10] = (uint8_t)(event_length >> 24);
+    request[11] = (uint8_t)(event_length >> 16);
+    request[12] = (uint8_t)(event_length >> 8);
+    request[13] = (uint8_t)event_length;
+    request[14] = (uint8_t)(dialect_length >> 24);
+    request[15] = (uint8_t)(dialect_length >> 16);
+    request[16] = (uint8_t)(dialect_length >> 8);
+    request[17] = (uint8_t)dialect_length;
+    memcpy(request + 18, root, root_length);
     if (allowed_length > 0) {
-        memcpy(request + 19 + root_length, allowed, allowed_length);
+        memcpy(request + 18 + root_length, allowed, allowed_length);
     }
     if (event_length > 0) {
-        memcpy(request + 19 + root_length + allowed_length, hook_event, event_length);
+        memcpy(request + 18 + root_length + allowed_length, hook_event, event_length);
     }
     if (dialect_length > 0) {
-        memcpy(request + 19 + root_length + allowed_length + event_length, hook_dialect,
+        memcpy(request + 18 + root_length + allowed_length + event_length, hook_dialect,
                dialect_length);
     }
     *request_out = request;
@@ -220,8 +217,7 @@ static bool app_test_context_request_options(const char *root, const char *allow
 
 static bool app_test_context_request(const char *root, const char *allowed, uint8_t **request_out,
                                      uint32_t *length_out) {
-    return app_test_context_request_options(root, allowed, CBM_TOOL_PROFILE_ALL, NULL, NULL,
-                                            request_out, length_out);
+    return app_test_context_request_options(root, allowed, NULL, NULL, request_out, length_out);
 }
 
 static bool app_test_text_request(cbm_daemon_application_request_kind_t kind, const char *text,
@@ -665,17 +661,15 @@ TEST(daemon_application_requires_immutable_explicit_context) {
     char root[APP_TEST_PATH_CAP];
     snprintf(root, sizeof(root), "%s/cbm-app-context-XXXXXX", cbm_tmpdir());
     bool root_ok = cbm_mkdtemp(root) != NULL;
-    uint8_t *mcp = NULL;
-    uint32_t mcp_length = 0;
+    uint8_t *operation = NULL;
+    uint32_t operation_length = 0;
     uint8_t *context = NULL;
     uint32_t context_length = 0;
     uint8_t *response = NULL;
     uint32_t response_length = 0;
-    bool mcp_ok = app_test_text_request((cbm_daemon_application_request_kind_t)2,
-                                        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}", &mcp,
-                                        &mcp_length);
+    bool operation_ok = app_test_tool_request("projects", "{}", &operation, &operation_length);
     cbm_daemon_runtime_application_status_t before =
-        app_test_request(&callbacks, session, mcp, mcp_length, &response, &response_length);
+        app_test_request(&callbacks, session, operation, operation_length, &response, &response_length);
     free(response);
     response = NULL;
     bool context_ok = root_ok && app_test_context_request(root, root, &context, &context_length);
@@ -692,71 +686,25 @@ TEST(daemon_application_requires_immutable_explicit_context) {
     free(response);
     response = NULL;
     cbm_daemon_runtime_application_status_t after =
-        app_test_request(&callbacks, session, mcp, mcp_length, &response, &response_length);
-    bool ping_response =
-        response && response_length > 0 && strstr((const char *)response, "\"result\":{}") != NULL;
+        app_test_request(&callbacks, session, operation, operation_length, &response, &response_length);
+    bool operation_response = response && response_length > 1 && response[0] == 0;
 
     callbacks.session_close(callbacks.context, session);
     (void)cbm_daemon_application_shutdown(application, APP_TEST_TIMEOUT_MS);
     cbm_daemon_application_free(application);
-    free(mcp);
+    free(operation);
     free(context);
     free(response);
     (void)cbm_rmdir(root);
 
     ASSERT_TRUE(application != NULL);
     ASSERT_TRUE(session != NULL);
-    ASSERT_TRUE(mcp_ok);
+    ASSERT_TRUE(operation_ok);
     ASSERT_EQ(before, CBM_DAEMON_RUNTIME_APPLICATION_REJECTED);
     ASSERT_EQ(first, CBM_DAEMON_RUNTIME_APPLICATION_OK);
     ASSERT_EQ(repeated, CBM_DAEMON_RUNTIME_APPLICATION_REJECTED);
     ASSERT_EQ(after, CBM_DAEMON_RUNTIME_APPLICATION_OK);
-    ASSERT_TRUE(ping_response);
-    PASS();
-}
-
-TEST(daemon_application_mcp_notification_has_no_response) {
-    cbm_daemon_application_t *application = cbm_daemon_application_new(NULL);
-    cbm_daemon_runtime_application_callbacks_t callbacks =
-        cbm_daemon_application_runtime_callbacks(application);
-    cbm_daemon_runtime_application_session_t *session = app_test_open(&callbacks, 2);
-    char root[APP_TEST_PATH_CAP];
-    snprintf(root, sizeof(root), "%s/cbm-app-notify-XXXXXX", cbm_tmpdir());
-    bool root_ok = cbm_mkdtemp(root) != NULL;
-    uint8_t *context = NULL;
-    uint32_t context_length = 0;
-    uint8_t *notification = NULL;
-    uint32_t notification_length = 0;
-    uint8_t *response = (uint8_t *)(uintptr_t)1;
-    uint32_t response_length = UINT32_MAX;
-    bool encoded =
-        root_ok && app_test_context_request(root, NULL, &context, &context_length) &&
-        app_test_text_request((cbm_daemon_application_request_kind_t)2,
-                              "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}",
-                              &notification, &notification_length);
-    cbm_daemon_runtime_application_status_t context_status =
-        encoded ? app_test_request(&callbacks, session, context, context_length, &response,
-                                   &response_length)
-                : CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
-    free(response);
-    response = (uint8_t *)(uintptr_t)1;
-    response_length = UINT32_MAX;
-    cbm_daemon_runtime_application_status_t notification_status =
-        encoded ? app_test_request(&callbacks, session, notification, notification_length,
-                                   &response, &response_length)
-                : CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
-
-    callbacks.session_close(callbacks.context, session);
-    cbm_daemon_application_free(application);
-    free(context);
-    free(notification);
-    (void)cbm_rmdir(root);
-
-    ASSERT_TRUE(encoded);
-    ASSERT_EQ(context_status, CBM_DAEMON_RUNTIME_APPLICATION_OK);
-    ASSERT_EQ(notification_status, CBM_DAEMON_RUNTIME_APPLICATION_OK);
-    ASSERT_TRUE(response == NULL);
-    ASSERT_EQ(response_length, 0);
+    ASSERT_TRUE(operation_response);
     PASS();
 }
 
@@ -794,133 +742,9 @@ static int app_test_git(const char *root, const char *operation, const char *arg
     return cbm_subprocess_run(&options, &result) == 0 && result.outcome == CBM_PROC_CLEAN ? 0 : -1;
 }
 
-/* Rebase guard: restricted MCP profiles are a property of one authenticated
- * daemon session. Before profile propagation, the daemon silently created a
- * full-surface MCP server, subscribed that session to the shared watcher, and
- * still accepted raw UI mutations. */
-TEST(daemon_application_restricted_profile_owns_no_background_surfaces) {
-    const char *old_cache = getenv("CBM_CACHE_DIR");
-    bool had_cache = old_cache != NULL;
-    char *saved_cache = old_cache ? cbm_strdup(old_cache) : NULL;
-    char root[APP_TEST_PATH_CAP];
-    char cache[APP_TEST_PATH_CAP];
-    (void)snprintf(root, sizeof(root), "%s/cbm-app-profile-root-XXXXXX", cbm_tmpdir());
-    (void)snprintf(cache, sizeof(cache), "%s/cbm-app-profile-cache-XXXXXX", cbm_tmpdir());
-    bool dirs_ok = cbm_mkdtemp(root) != NULL && cbm_mkdtemp(cache) != NULL;
-    bool env_ok =
-        dirs_ok && (!had_cache || saved_cache) && cbm_setenv("CBM_CACHE_DIR", cache, 1) == 0;
-    cbm_ui_config_t initial_ui = {.ui_enabled = false, .ui_port = 9749};
-    bool ui_ready = env_ok && cbm_ui_config_save(&initial_ui);
-    char *project = dirs_ok ? cbm_project_name_from_path(root) : NULL;
-    char db_path[APP_TEST_PATH_CAP] = {0};
-    if (project) {
-        (void)snprintf(db_path, sizeof(db_path), "%s/%s.db", cache, project);
-    }
-    bool db_ok = project && app_test_create_empty_file(db_path);
-    cbm_store_t *store = cbm_store_open_memory();
-    cbm_watcher_t *watcher = cbm_watcher_new(store, app_test_index_noop, NULL);
-    cbm_daemon_application_config_t config = {.watcher = watcher};
-    cbm_daemon_application_t *application = cbm_daemon_application_new(&config);
-    cbm_daemon_runtime_application_callbacks_t callbacks =
-        cbm_daemon_application_runtime_callbacks(application);
-    cbm_daemon_runtime_application_session_t *session = app_test_open(&callbacks, 304);
-
-    uint8_t *context = NULL;
-    uint32_t context_length = 0;
-    uint8_t *initialize = NULL;
-    uint32_t initialize_length = 0;
-    uint8_t *index_call = NULL;
-    uint32_t index_call_length = 0;
-    bool encoded =
-        db_ok && session &&
-        app_test_context_request_options(root, root, CBM_TOOL_PROFILE_SCOUT, NULL, NULL,
-                                         &context, &context_length) &&
-        app_test_text_request(
-            (cbm_daemon_application_request_kind_t)2,
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}", &initialize,
-            &initialize_length) &&
-        app_test_text_request((cbm_daemon_application_request_kind_t)2,
-                              "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\","
-                              "\"params\":{\"name\":\"index_repository\",\"arguments\":{}}}",
-                              &index_call, &index_call_length);
-    uint8_t *response = NULL;
-    uint32_t response_length = 0;
-    cbm_daemon_runtime_application_status_t context_status =
-        encoded ? app_test_request(&callbacks, session, context, context_length, &response,
-                                   &response_length)
-                : CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
-    free(response);
-    response = NULL;
-    cbm_daemon_runtime_application_status_t initialize_status =
-        context_status == CBM_DAEMON_RUNTIME_APPLICATION_OK
-            ? app_test_request(&callbacks, session, initialize, initialize_length, &response,
-                               &response_length)
-            : CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
-    bool scout_surface = response && strstr((const char *)response, "scout tool profile") &&
-                         !strstr((const char *)response, "index_repository");
-    free(response);
-    response = NULL;
-    cbm_daemon_runtime_application_status_t index_status =
-        initialize_status == CBM_DAEMON_RUNTIME_APPLICATION_OK
-            ? app_test_request(&callbacks, session, index_call, index_call_length, &response,
-                               &response_length)
-            : CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
-    bool index_refused =
-        response && strstr((const char *)response, "not available in the scout tool profile");
-    free(response);
-    response = NULL;
-    cbm_daemon_runtime_application_status_t ui_status = app_test_ui_config_request(
-        &callbacks, session, CBM_DAEMON_APPLICATION_UI_CONFIG_ENABLED, 1, 0, 7);
-    int watch_count = watcher ? cbm_watcher_watch_count(watcher) : -1;
-    size_t active_jobs = application ? cbm_daemon_application_active_jobs(application) : SIZE_MAX;
-    cbm_ui_config_t final_ui = {0};
-    cbm_ui_config_load(&final_ui);
-
-    if (session) {
-        callbacks.session_close(callbacks.context, session);
-    }
-    bool stopped = application && cbm_daemon_application_shutdown(application, APP_TEST_TIMEOUT_MS);
-    cbm_daemon_application_free(application);
-    if (watcher) {
-        cbm_watcher_stop(watcher);
-        cbm_watcher_free(watcher);
-    }
-    cbm_store_close(store);
-    free(context);
-    free(initialize);
-    free(index_call);
-    free(project);
-    (void)cbm_unlink(db_path);
-    (void)cbm_rmdir(root);
-    if (had_cache) {
-        (void)cbm_setenv("CBM_CACHE_DIR", saved_cache, 1);
-    } else {
-        (void)cbm_unsetenv("CBM_CACHE_DIR");
-    }
-    free(saved_cache);
-    (void)th_rmtree(cache);
-
-    ASSERT_TRUE(dirs_ok);
-    ASSERT_TRUE(env_ok);
-    ASSERT_TRUE(ui_ready);
-    ASSERT_TRUE(db_ok);
-    ASSERT_TRUE(encoded);
-    ASSERT_EQ(context_status, CBM_DAEMON_RUNTIME_APPLICATION_OK);
-    ASSERT_EQ(initialize_status, CBM_DAEMON_RUNTIME_APPLICATION_OK);
-    ASSERT_TRUE(scout_surface);
-    ASSERT_EQ(index_status, CBM_DAEMON_RUNTIME_APPLICATION_OK);
-    ASSERT_TRUE(index_refused);
-    ASSERT_EQ(ui_status, CBM_DAEMON_RUNTIME_APPLICATION_REJECTED);
-    ASSERT_EQ(watch_count, 0);
-    ASSERT_EQ(active_jobs, 0);
-    ASSERT_FALSE(final_ui.ui_enabled);
-    ASSERT_TRUE(stopped);
-    PASS();
-}
-
-/* The thin hook process parses CLI metadata, but the daemon owns the MCP
- * session and therefore must retain that metadata with the session context.
- * Copilot deliberately omits the event from stdin, making this non-vacuous. */
+/* The thin hook process parses CLI metadata, while the daemon retains that
+ * metadata with the neutral session context. Copilot deliberately omits the
+ * event from stdin, making this non-vacuous. */
 TEST(daemon_application_hook_context_preserves_event_and_dialect) {
     char root[APP_TEST_PATH_CAP];
     (void)snprintf(root, sizeof(root), "%s/cbm-app-hook-context-XXXXXX", cbm_tmpdir());
@@ -937,8 +761,7 @@ TEST(daemon_application_hook_context_preserves_event_and_dialect) {
     uint32_t hook_length = 0;
     bool encoded =
         root_ok && session &&
-        app_test_context_request_options(root, root, CBM_TOOL_PROFILE_ALL, "SessionStart",
-                                         "copilot", &context, &context_length) &&
+        app_test_context_request_options(root, root, "SessionStart", "copilot", &context, &context_length) &&
         app_test_text_request(CBM_DAEMON_APPLICATION_REQUEST_HOOK_AUGMENT, input, &hook,
                               &hook_length);
     uint8_t *response = NULL;
@@ -1013,9 +836,7 @@ TEST(daemon_application_reference_counts_one_shared_watch) {
     uint32_t response_length = 0;
     bool encoded = dirs_ok && db_ok &&
                    app_test_context_request(root, root, &context, &context_length) &&
-                   app_test_text_request((cbm_daemon_application_request_kind_t)2,
-                                         "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"ping\"}",
-                                         &ping, &ping_length);
+                   app_test_tool_request("projects", "{}", &ping, &ping_length);
     bool requests_ok = encoded;
     cbm_daemon_runtime_application_session_t *sessions[2] = {first_session, second_session};
     for (size_t i = 0; requests_ok && i < 2; i++) {
@@ -1110,9 +931,7 @@ TEST(daemon_application_free_releases_live_watch_once) {
     uint32_t response_length = 0;
     bool encoded = dirs_ok && env_ok && db_ok && session &&
                    app_test_context_request(root, root, &context, &context_length) &&
-                   app_test_text_request((cbm_daemon_application_request_kind_t)2,
-                                         "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"ping\"}",
-                                         &ping, &ping_length);
+                   app_test_tool_request("projects", "{}", &ping, &ping_length);
     bool requested =
         encoded && app_test_request(&callbacks, session, context, context_length, &response,
                                     &response_length) == CBM_DAEMON_RUNTIME_APPLICATION_OK;
@@ -1221,9 +1040,7 @@ TEST(daemon_application_prune_clears_logical_watch_for_reregistration) {
     uint32_t response_length = 0;
     bool encoded = dirs_ok && env_ok && files_ok && store && watcher && application && first &&
                    app_test_context_request(root, root, &context, &context_length) &&
-                   app_test_text_request((cbm_daemon_application_request_kind_t)2,
-                                         "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"ping\"}",
-                                         &ping, &ping_length);
+                   app_test_tool_request("projects", "{}", &ping, &ping_length);
     bool first_registered =
         encoded && app_test_request(&callbacks, first, context, context_length, &response,
                                     &response_length) == CBM_DAEMON_RUNTIME_APPLICATION_OK;
@@ -1683,9 +1500,7 @@ static bool app_watch_race_fixture_init(app_watch_race_fixture_t *fixture,
         env_ok && dirs_ok && db_ok && fixture->store && fixture->watcher && fixture->application &&
         fixture->session &&
         app_test_context_request(fixture->root, fixture->root, &context, &context_length) &&
-        app_test_text_request((cbm_daemon_application_request_kind_t)2,
-                              "{\"jsonrpc\":\"2.0\",\"id\":19,\"method\":\"ping\"}", &ping,
-                              &ping_length);
+        app_test_tool_request("projects", "{}", &ping, &ping_length);
     bool initialized = encoded && app_test_request(&fixture->callbacks, fixture->session, context,
                                                    context_length, &response, &response_length) ==
                                       CBM_DAEMON_RUNTIME_APPLICATION_OK;
@@ -1873,41 +1688,25 @@ static cbm_daemon_application_update_ops_t app_fake_update_ops(app_fake_update_c
     };
 }
 
-static bool app_test_initialize_profile(const cbm_daemon_runtime_application_callbacks_t *callbacks,
-                                        cbm_daemon_runtime_application_session_t *session,
-                                        const char *root, cbm_tool_profile_t profile,
-                                        const char *hook_event, const char *hook_dialect) {
+static bool app_test_initialize_session(
+    const cbm_daemon_runtime_application_callbacks_t *callbacks,
+    cbm_daemon_runtime_application_session_t *session, const char *root,
+    const char *hook_event, const char *hook_dialect) {
     uint8_t *context = NULL;
     uint32_t context_length = 0;
-    uint8_t *initialize = NULL;
-    uint32_t initialize_length = 0;
-    bool encoded =
-        session &&
-        app_test_context_request_options(root, root, profile, hook_event, hook_dialect, &context,
-                                         &context_length) &&
-        app_test_text_request((cbm_daemon_application_request_kind_t)2,
-                              "{\"jsonrpc\":\"2.0\",\"id\":4100,\"method\":\"initialize\","
-                              "\"params\":{}}",
-                              &initialize, &initialize_length);
+    bool encoded = session &&
+                   app_test_context_request_options(root, root, hook_event, hook_dialect,
+                                                    &context, &context_length);
     uint8_t *response = NULL;
     uint32_t response_length = 0;
-    cbm_daemon_runtime_application_status_t context_status =
+    cbm_daemon_runtime_application_status_t status =
         encoded ? app_test_request(callbacks, session, context, context_length, &response,
                                    &response_length)
                 : CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
-    free(response);
-    response = NULL;
-    response_length = 0;
-    cbm_daemon_runtime_application_status_t initialize_status =
-        context_status == CBM_DAEMON_RUNTIME_APPLICATION_OK
-            ? app_test_request(callbacks, session, initialize, initialize_length, &response,
-                               &response_length)
-            : CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
-    bool initialized = initialize_status == CBM_DAEMON_RUNTIME_APPLICATION_OK && response &&
-                       strstr((char *)response, "\"result\"");
+    bool initialized = status == CBM_DAEMON_RUNTIME_APPLICATION_OK && response == NULL &&
+                       response_length == 0;
     free(response);
     free(context);
-    free(initialize);
     return initialized;
 }
 
@@ -1915,20 +1714,34 @@ static cbm_daemon_runtime_application_status_t app_test_list_projects(
     const cbm_daemon_runtime_application_callbacks_t *callbacks,
     cbm_daemon_runtime_application_session_t *session, uint64_t id, uint8_t **response_out,
     uint32_t *response_length_out) {
-    char message[256];
-    (void)snprintf(message, sizeof(message),
-                   "{\"jsonrpc\":\"2.0\",\"id\":%llu,\"method\":\"tools/call\","
-                   "\"params\":{\"name\":\"list_projects\",\"arguments\":{}}}",
-                   (unsigned long long)id);
+    (void)id;
     uint8_t *request = NULL;
     uint32_t request_length = 0;
-    if (!app_test_text_request((cbm_daemon_application_request_kind_t)2, message, &request,
-                               &request_length)) {
+    if (!app_test_tool_request("projects", "{}", &request, &request_length)) {
         return CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
     }
-    cbm_daemon_runtime_application_status_t status = app_test_request(
-        callbacks, session, request, request_length, response_out, response_length_out);
+    uint8_t *wire = NULL;
+    uint32_t wire_length = 0;
+    cbm_daemon_runtime_application_status_t status =
+        app_test_request(callbacks, session, request, request_length, &wire, &wire_length);
     free(request);
+    *response_out = NULL;
+    *response_length_out = 0;
+    if (status != CBM_DAEMON_RUNTIME_APPLICATION_OK || !wire || wire_length < 1) {
+        free(wire);
+        return status;
+    }
+    uint32_t payload_length = wire_length - 1U;
+    uint8_t *payload = malloc((size_t)payload_length + 1U);
+    if (!payload) {
+        free(wire);
+        return CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
+    }
+    memcpy(payload, wire + 1, payload_length);
+    payload[payload_length] = 0;
+    free(wire);
+    *response_out = payload;
+    *response_length_out = payload_length;
     return status;
 }
 
@@ -1953,8 +1766,8 @@ static bool app_wait_for_update_notice(const cbm_daemon_runtime_application_call
     return false;
 }
 
-/* Regression contract: initialize is the ownership boundary for daemon background
- * indexing. Only normal full MCP sessions participate; identical roots share
+/* Regression contract: neutral context establishment is the ownership boundary for daemon background
+ * indexing. Hook sessions do not participate; identical roots share
  * one physical worker but retain one subscription per live session. */
 TEST(daemon_application_initialize_coalesces_auto_index_for_full_sessions) {
     app_env_backup_t cache_environment;
@@ -2001,23 +1814,20 @@ TEST(daemon_application_initialize_coalesces_auto_index_for_full_sessions) {
     }
 
     int bg_baseline = cbm_daemon_application_background_initializes_for_test();
-    bool scout_initialized = app_test_initialize_profile(&callbacks, sessions[2], root,
-                                                         CBM_TOOL_PROFILE_SCOUT, NULL, NULL);
-    bool hook_initialized = app_test_initialize_profile(
-        &callbacks, sessions[3], root, CBM_TOOL_PROFILE_ALL, "SessionStart", "copilot");
+    bool hook_only_initialized = app_test_initialize_session(&callbacks, sessions[2], root, "SessionStart", "copilot");
+    bool hook_initialized = app_test_initialize_session(
+        &callbacks, sessions[3], root, "SessionStart", "copilot");
     bool admissions_evaluated = app_wait_for_background_initializes(bg_baseline + 2);
     bool restricted_started_nothing =
         admissions_evaluated && atomic_load(&fake.starts) == 0 && application && project &&
         cbm_daemon_application_job_subscribers(application, project) == 0 &&
         atomic_load(&update.starts) == 0;
 
-    bool first_initialized = app_test_initialize_profile(&callbacks, sessions[0], root,
-                                                         CBM_TOOL_PROFILE_ALL, NULL, NULL);
+    bool first_initialized = app_test_initialize_session(&callbacks, sessions[0], root, NULL, NULL);
     bool first_owned = first_initialized && project &&
                        app_wait_for_subscribers(application, project, 1) &&
                        app_wait_for_atomic_int(&fake.starts, 1);
-    bool second_initialized = app_test_initialize_profile(&callbacks, sessions[1], root,
-                                                          CBM_TOOL_PROFILE_ALL, NULL, NULL);
+    bool second_initialized = app_test_initialize_session(&callbacks, sessions[1], root, NULL, NULL);
     bool coalesced = first_owned && second_initialized && project &&
                      app_wait_for_subscribers(application, project, 2) &&
                      cbm_daemon_application_active_jobs(application) == 1 &&
@@ -2072,7 +1882,7 @@ TEST(daemon_application_initialize_coalesces_auto_index_for_full_sessions) {
     ASSERT_TRUE(cache_set);
     ASSERT_TRUE(config_ready);
     ASSERT_TRUE(canonical);
-    ASSERT_TRUE(scout_initialized);
+    ASSERT_TRUE(hook_only_initialized);
     ASSERT_TRUE(hook_initialized);
     ASSERT_TRUE(restricted_started_nothing);
     ASSERT_TRUE(first_initialized);
@@ -2153,15 +1963,14 @@ TEST(daemon_application_sensitive_root_blocks_auto_index_but_preserves_controls)
         application ? app_test_open(&callbacks, 4032) : NULL;
 
     int background_baseline = cbm_daemon_application_background_initializes_for_test();
-    bool sensitive_initialized = app_test_initialize_profile(
-        &callbacks, sensitive_session, sensitive, CBM_TOOL_PROFILE_ALL, NULL, NULL);
+    bool sensitive_initialized = app_test_initialize_session(
+        &callbacks, sensitive_session, sensitive, NULL, NULL);
     bool sensitive_evaluated = app_wait_for_background_initializes(background_baseline + 1);
     bool sensitive_blocked = sensitive_initialized && sensitive_evaluated &&
                              atomic_load(&fake.starts) == 0 &&
                              cbm_daemon_application_active_jobs(application) == 0;
 
-    bool ordinary_initialized = app_test_initialize_profile(&callbacks, ordinary_session, ordinary,
-                                                            CBM_TOOL_PROFILE_ALL, NULL, NULL);
+    bool ordinary_initialized = app_test_initialize_session(&callbacks, ordinary_session, ordinary, NULL, NULL);
     bool ordinary_admitted = ordinary_initialized && app_wait_for_atomic_int(&fake.starts, 1) &&
                              cbm_daemon_application_active_jobs(application) == 1;
     if (ordinary_session) {
@@ -2177,8 +1986,7 @@ TEST(daemon_application_sensitive_root_blocks_auto_index_but_preserves_controls)
     bool approved = ordinary_reaped && cbm_workspace_grant_add(cache, sensitive, sensitive, true,
                                                                grant_error, sizeof(grant_error));
     bool approved_initialized =
-        approved && app_test_initialize_profile(&callbacks, approved_session, sensitive,
-                                                CBM_TOOL_PROFILE_ALL, NULL, NULL);
+        approved && app_test_initialize_session(&callbacks, approved_session, sensitive, NULL, NULL);
     bool approved_admitted = approved_initialized && app_wait_for_atomic_int(&fake.starts, 2) &&
                              cbm_daemon_application_active_jobs(application) == 1;
 
@@ -2287,11 +2095,10 @@ TEST(daemon_application_sensitive_root_blocks_watch_but_preserves_controls) {
     cbm_daemon_runtime_application_session_t *approved_session =
         application ? app_test_open(&callbacks, 4035) : NULL;
 
-    bool sensitive_initialized = app_test_initialize_profile(
-        &callbacks, sensitive_session, sensitive, CBM_TOOL_PROFILE_ALL, NULL, NULL);
+    bool sensitive_initialized = app_test_initialize_session(
+        &callbacks, sensitive_session, sensitive, NULL, NULL);
     bool sensitive_blocked = sensitive_initialized && cbm_watcher_watch_count(watcher) == 0;
-    bool ordinary_initialized = app_test_initialize_profile(&callbacks, ordinary_session, ordinary,
-                                                            CBM_TOOL_PROFILE_ALL, NULL, NULL);
+    bool ordinary_initialized = app_test_initialize_session(&callbacks, ordinary_session, ordinary, NULL, NULL);
     bool ordinary_watched = ordinary_initialized && cbm_watcher_watch_count(watcher) == 1;
     if (ordinary_session) {
         callbacks.session_close(callbacks.context, ordinary_session);
@@ -2303,8 +2110,7 @@ TEST(daemon_application_sensitive_root_blocks_watch_but_preserves_controls) {
     bool approved = ordinary_released && cbm_workspace_grant_add(cache, sensitive, sensitive, true,
                                                                  grant_error, sizeof(grant_error));
     bool approved_initialized =
-        approved && app_test_initialize_profile(&callbacks, approved_session, sensitive,
-                                                CBM_TOOL_PROFILE_ALL, NULL, NULL);
+        approved && app_test_initialize_session(&callbacks, approved_session, sensitive, NULL, NULL);
     bool approved_watched = approved_initialized && cbm_watcher_watch_count(watcher) == 1;
 
     if (sensitive_session) {
@@ -2396,8 +2202,7 @@ TEST(daemon_application_auto_index_honors_tracked_file_limit) {
     cbm_daemon_runtime_application_session_t *session =
         application ? app_test_open(&callbacks, 4190) : NULL;
     int bg_baseline = cbm_daemon_application_background_initializes_for_test();
-    bool initialized = app_test_initialize_profile(&callbacks, session, root,
-                                                   CBM_TOOL_PROFILE_ALL, NULL, NULL);
+    bool initialized = app_test_initialize_session(&callbacks, session, root, NULL, NULL);
     bool admission_evaluated = app_wait_for_background_initializes(bg_baseline + 1);
     bool limit_prevented_admission = initialized && admission_evaluated &&
                                      atomic_load(&fake.starts) == 0 &&
@@ -2535,8 +2340,7 @@ TEST(daemon_application_auto_index_retries_transient_busy_admission) {
         application ? app_test_open(&callbacks, 4191) : NULL;
     int bg_baseline = cbm_daemon_application_background_initializes_for_test();
     bool initialized =
-        occupied_admitted && app_test_initialize_profile(&callbacks, session, auto_root,
-                                                         CBM_TOOL_PROFILE_ALL, NULL, NULL);
+        occupied_admitted && app_test_initialize_session(&callbacks, session, auto_root, NULL, NULL);
     bool admission_evaluated = app_wait_for_background_initializes(bg_baseline + 1);
     bool initially_deferred = initialized && admission_evaluated && atomic_load(&fake.starts) == 1;
 
@@ -2586,7 +2390,7 @@ TEST(daemon_application_auto_index_retries_transient_busy_admission) {
 }
 
 /* Regression contract: the daemon owns one update generation, not one update thread
- * per MCP server. Its completed result is replayed exactly once to every
+ * per daemon generation. Its completed result is replayed exactly once to every
  * eligible full session, including a session initialized after completion. */
 TEST(daemon_application_update_generation_notifies_initial_and_late_sessions_once) {
     app_fake_update_context_t update;
@@ -2601,8 +2405,7 @@ TEST(daemon_application_update_generation_notifies_initial_and_late_sessions_onc
         cbm_daemon_application_runtime_callbacks(application);
     cbm_daemon_runtime_application_session_t *initial =
         application ? app_test_open(&callbacks, 4211) : NULL;
-    bool initial_initialized = app_test_initialize_profile(&callbacks, initial, root,
-                                                           CBM_TOOL_PROFILE_ALL, NULL, NULL);
+    bool initial_initialized = app_test_initialize_session(&callbacks, initial, root, NULL, NULL);
 
     uint64_t request_id = 42000;
     uint8_t *initial_notice = NULL;
@@ -2622,7 +2425,7 @@ TEST(daemon_application_update_generation_notifies_initial_and_late_sessions_onc
         application ? app_test_open(&callbacks, 4212) : NULL;
     bool late_initialized =
         initial_notified &&
-        app_test_initialize_profile(&callbacks, late, root, CBM_TOOL_PROFILE_ALL, NULL, NULL);
+        app_test_initialize_session(&callbacks, late, root, NULL, NULL);
     uint8_t *late_notice = NULL;
     bool late_notified =
         late_initialized && app_wait_for_update_notice(&callbacks, late, &request_id, &late_notice);
@@ -2682,8 +2485,7 @@ TEST(daemon_application_update_generation_retries_worker_start_failure) {
         cbm_daemon_application_runtime_callbacks(application);
     cbm_daemon_runtime_application_session_t *session =
         application ? app_test_open(&callbacks, 4261) : NULL;
-    bool initialized = app_test_initialize_profile(&callbacks, session, root,
-                                                   CBM_TOOL_PROFILE_ALL, NULL, NULL);
+    bool initialized = app_test_initialize_session(&callbacks, session, root, NULL, NULL);
     bool failed_generation_started = initialized && app_wait_for_atomic_int(&update.starts, 1);
     uint64_t request_id = 42610;
     uint8_t *notice = NULL;
@@ -2723,13 +2525,12 @@ TEST(daemon_application_update_generation_retries_cancelled_check) {
         cbm_daemon_application_runtime_callbacks(application);
     cbm_daemon_runtime_application_session_t *first =
         application ? app_test_open(&callbacks, 4271) : NULL;
-    cbm_daemon_runtime_application_session_t *scout =
+    cbm_daemon_runtime_application_session_t *hook_only =
         application ? app_test_open(&callbacks, 4272) : NULL;
-    bool scout_initialized = app_test_initialize_profile(&callbacks, scout, root,
-                                                         CBM_TOOL_PROFILE_SCOUT, NULL, NULL);
+    bool hook_only_initialized = app_test_initialize_session(&callbacks, hook_only, root, NULL, NULL);
     bool first_initialized =
-        scout_initialized &&
-        app_test_initialize_profile(&callbacks, first, root, CBM_TOOL_PROFILE_ALL, NULL, NULL);
+        hook_only_initialized &&
+        app_test_initialize_session(&callbacks, first, root, NULL, NULL);
     bool first_started = first_initialized && app_wait_for_atomic_int(&update.starts, 1);
     if (first) {
         callbacks.session_cancel(callbacks.context, first);
@@ -2744,7 +2545,7 @@ TEST(daemon_application_update_generation_retries_cancelled_check) {
         application ? app_test_open(&callbacks, 4273) : NULL;
     bool retry_initialized =
         first_cancelled &&
-        app_test_initialize_profile(&callbacks, retry, root, CBM_TOOL_PROFILE_ALL, NULL, NULL);
+        app_test_initialize_session(&callbacks, retry, root, NULL, NULL);
     uint64_t request_id = 42710;
     uint8_t *notice = NULL;
     bool retry_notified =
@@ -2754,9 +2555,9 @@ TEST(daemon_application_update_generation_retries_cancelled_check) {
         callbacks.session_cancel(callbacks.context, retry);
         callbacks.session_close(callbacks.context, retry);
     }
-    if (scout) {
-        callbacks.session_cancel(callbacks.context, scout);
-        callbacks.session_close(callbacks.context, scout);
+    if (hook_only) {
+        callbacks.session_cancel(callbacks.context, hook_only);
+        callbacks.session_close(callbacks.context, hook_only);
     }
     bool stopped = application && cbm_daemon_application_shutdown(application, APP_TEST_TIMEOUT_MS);
     cbm_daemon_application_free(application);
@@ -2764,7 +2565,7 @@ TEST(daemon_application_update_generation_retries_cancelled_check) {
     (void)th_rmtree(root);
 
     ASSERT_TRUE(root_ok);
-    ASSERT_TRUE(scout_initialized);
+    ASSERT_TRUE(hook_only_initialized);
     ASSERT_TRUE(first_initialized);
     ASSERT_TRUE(first_started);
     ASSERT_TRUE(first_cancelled);
@@ -2810,8 +2611,7 @@ TEST(daemon_application_final_disconnect_cancels_and_joins_update_generation) {
         cbm_daemon_application_runtime_callbacks(application);
     cbm_daemon_runtime_application_session_t *session =
         application ? app_test_open(&callbacks, 4311) : NULL;
-    bool initialized = app_test_initialize_profile(&callbacks, session, root,
-                                                   CBM_TOOL_PROFILE_ALL, NULL, NULL);
+    bool initialized = app_test_initialize_session(&callbacks, session, root, NULL, NULL);
     bool generation_started = initialized && app_wait_for_atomic_int(&update.starts, 1);
 
     app_final_disconnect_thread_t disconnect = {
@@ -3406,9 +3206,7 @@ TEST(daemon_application_request_cancel_preserves_persistent_watch_and_session) {
     uint32_t ping_length = 0;
     bool encoded = fixture_ready &&
                    app_test_tool_request("index_repository", args, &tool, &tool_length) &&
-                   app_test_text_request((cbm_daemon_application_request_kind_t)2,
-                                         "{\"jsonrpc\":\"2.0\",\"id\":3021,\"method\":\"ping\"}",
-                                         &ping, &ping_length);
+                   app_test_tool_request("projects", "{}", &ping, &ping_length);
     app_request_thread_t request = {
         .callbacks = fixture.callbacks,
         .session = fixture.session,
@@ -3595,9 +3393,7 @@ TEST(daemon_application_cancel_drops_watch_before_inflight_request_returns) {
     uint32_t response_length = 0;
     bool setup = env_ok && db_ok && store && watcher && application && session &&
                  app_test_context_request(root, root, &context, &context_length) &&
-                 app_test_text_request((cbm_daemon_application_request_kind_t)2,
-                                       "{\"jsonrpc\":\"2.0\",\"id\":17,\"method\":\"ping\"}", &ping,
-                                       &ping_length) &&
+                 app_test_tool_request("projects", "{}", &ping, &ping_length) &&
                  app_test_tool_request("index_repository", args, &tool, &tool_length);
     if (setup) {
         setup = app_test_request(&callbacks, session, context, context_length, &response,
@@ -3795,9 +3591,7 @@ TEST(daemon_application_watcher_job_follows_exact_live_watch_owners) {
     bool encoded =
         fixture_ready && second && unrelated &&
         app_test_context_request(fixture.root, fixture.root, &context, &context_length) &&
-        app_test_text_request((cbm_daemon_application_request_kind_t)2,
-                              "{\"jsonrpc\":\"2.0\",\"id\":20,\"method\":\"ping\"}", &ping,
-                              &ping_length);
+        app_test_tool_request("projects", "{}", &ping, &ping_length);
     bool second_watching =
         encoded && app_test_request(&fixture.callbacks, second, context, context_length, &response,
                                     &response_length) == CBM_DAEMON_RUNTIME_APPLICATION_OK;
@@ -3917,9 +3711,7 @@ TEST(daemon_application_late_watcher_session_owns_active_watcher_job) {
     uint32_t response_length = 0;
     bool encoded =
         late && app_test_context_request(fixture.root, fixture.root, &context, &context_length) &&
-        app_test_text_request((cbm_daemon_application_request_kind_t)2,
-                              "{\"jsonrpc\":\"2.0\",\"id\":47,\"method\":\"ping\"}", &ping,
-                              &ping_length);
+        app_test_tool_request("projects", "{}", &ping, &ping_length);
     bool late_watching =
         encoded && app_test_request(&fixture.callbacks, late, context, context_length, &response,
                                     &response_length) == CBM_DAEMON_RUNTIME_APPLICATION_OK;
@@ -5272,79 +5064,6 @@ TEST(daemon_application_rejects_clean_exit_when_process_tree_is_not_contained) {
     PASS();
 }
 
-#if 0 /* retired MCP/JSON-RPC frontend test; production MCP is unlinked */
-/* #1375: a reply too large to frame must become a JSON-RPC ERROR, not a
- * transport failure.
- *
- * Why this matters more than it looks: the frontend worker cannot tell a
- * rejected oversized frame from a dead socket, and for a dead socket it
- * deliberately _Exit()s the process (closing the kernel IPC handle is the only
- * portable way to cancel daemon session ownership from a thread blocked in
- * stdio). So passing an oversized reply DOWN to the transport killed the whole
- * server — every tool gone for the rest of the session, exit=1, empty stderr.
- * The substitution therefore has to happen here, at the layer that still holds
- * the request id.
- *
- * Reproduced end-to-end before fixing, on a 20k-node fixture: LIMIT 10000 ->
- * 8,529,990 bytes ok; LIMIT 20000 -> SERVER DIED exit=1. After: the same query
- * returns this error and a follow-up query on the SAME session succeeds. */
-TEST(daemon_application_oversized_reply_is_a_jsonrpc_error_not_a_death) {
-    cbm_jsonrpc_request_t request = {0};
-    request.has_id = true;
-    request.id = 42;
-
-    /* A reply that FITS must pass through byte-identical — the guard must not
-     * touch the overwhelming majority of replies. */
-    char *small = strdup("{\"jsonrpc\":\"2.0\",\"id\":42,\"result\":{}}");
-    ASSERT_NOT_NULL(small);
-    char *kept = cbm_daemon_application_framable_response_for_test(small, &request);
-    ASSERT_TRUE(kept == small); /* same pointer: untouched */
-    ASSERT_STR_EQ(kept, "{\"jsonrpc\":\"2.0\",\"id\":42,\"result\":{}}");
-    free(kept);
-
-    /* A reply that CANNOT be framed must come back as a JSON-RPC error instead.
-     * Passing it on is what killed the server: the frontend worker cannot tell a
-     * rejected oversized frame from a dead socket, and for a dead socket it
-     * deliberately _Exit()s the process — so every tool on that server was gone
-     * for the rest of the session, with exit=1 and an empty stderr (#1375).
-     * Reproduced end-to-end on a 20k-node fixture before fixing: LIMIT 10000 ->
-     * 8,529,990 bytes ok, LIMIT 20000 -> SERVER DIED. After: the same query
-     * returns this error and a follow-up query on the SAME session succeeds. */
-    size_t oversized = (size_t)CBM_DAEMON_RUNTIME_APPLICATION_PAYLOAD_MAX + 1U;
-    char *big = malloc(oversized + 1U);
-    ASSERT_NOT_NULL(big);
-    memset(big, 'x', oversized);
-    big[oversized] = '\0';
-
-    char *replaced = cbm_daemon_application_framable_response_for_test(big, &request);
-    ASSERT_NOT_NULL(replaced);
-    ASSERT_TRUE(replaced != big); /* substituted, not passed through */
-
-    /* The replacement must itself fit, or it reproduces the bug it replaces. */
-    ASSERT_TRUE(strlen(replaced) <= (size_t)CBM_DAEMON_RUNTIME_APPLICATION_PAYLOAD_MAX);
-    /* ...and carry the caller's id, or the client cannot match reply to request. */
-    ASSERT_NOT_NULL(strstr(replaced, "\"error\""));
-    ASSERT_NOT_NULL(strstr(replaced, "\"id\":42"));
-    ASSERT_NOT_NULL(strstr(replaced, "-32603"));
-    /* ...and say what happened and what to do: the failure it replaces was a
-     * SILENT exit, so an opaque "internal error" would be no improvement. */
-    ASSERT_NOT_NULL(strstr(replaced, "response too large"));
-    ASSERT_NOT_NULL(strstr(replaced, "LIMIT"));
-    free(replaced);
-
-    /* An unparseable message has no id to echo, but must still yield an error
-     * rather than NULL — NULL is turned back into a hard failure by the caller. */
-    char *big2 = malloc(oversized + 1U);
-    ASSERT_NOT_NULL(big2);
-    memset(big2, 'y', oversized);
-    big2[oversized] = '\0';
-    char *anonymous = cbm_daemon_application_framable_response_for_test(big2, NULL);
-    ASSERT_NOT_NULL(anonymous);
-    ASSERT_NOT_NULL(strstr(anonymous, "\"error\""));
-    free(anonymous);
-    PASS();
-}
-#endif
 
 SUITE(daemon_application) {
     RUN_TEST(daemon_application_new_session_does_not_retain_initial_store);
@@ -5353,9 +5072,7 @@ SUITE(daemon_application) {
     RUN_TEST(daemon_application_ui_config_updates_are_masked_and_serialized);
     RUN_TEST(daemon_application_ui_config_rejects_noncanonical_frames);
     RUN_TEST(daemon_application_ui_readiness_proof_is_generation_bound_before_context);
-    RUN_TEST(daemon_application_restricted_profile_owns_no_background_surfaces);
     RUN_TEST(daemon_application_hook_context_preserves_event_and_dialect);
-    RUN_TEST(daemon_application_mcp_notification_has_no_response);
     RUN_TEST(daemon_application_reference_counts_one_shared_watch);
     RUN_TEST(daemon_application_free_releases_live_watch_once);
     RUN_TEST(daemon_application_prune_clears_logical_watch_for_reregistration);

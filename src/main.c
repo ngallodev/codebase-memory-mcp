@@ -2,17 +2,15 @@
  * main.c — Entry point for codebase-memory-cli.
  *
  * Modes:
- *   (default)       Print CLI help; no MCP stdio server is started
+ *   (default)       Print CLI help
  *   cli <tool> <json>  Run a single tool call and print result
  *   --version       Print version and exit
  *   --help          Print usage and exit
  *   --ui=true/false Enable/disable HTTP UI server (persisted)
  *   --port=N        Set HTTP UI port (persisted, default 9749)
- *   --tool-profile=analysis|scout  Expose a restricted agent tool surface
  *
- * Canonical read commands execute directly through protocol-neutral operations.
- * Indexing and remaining legacy compatibility paths may still use the daemon
- * while their business logic is extracted in later slices.
+ * Canonical commands execute through neutral operations and the coordination daemon
+ * where lifecycle, concurrency, or mutation ownership requires it.
  */
 #ifdef _WIN32
 /* winsock2 must precede every project header that can transitively include
@@ -30,7 +28,6 @@
 #include "daemon/project_lock.h"
 #include "daemon/version_cohort.h"
 #include "foundation/json_args.h"
-#include "operations/tool_profile.h"
 #include "operations/result_wire.h"
 #include "operations/operation.h"
 #include "operations/reliability_events.h"
@@ -88,6 +85,7 @@ enum {
 #include <yyjson/yyjson.h>
 
 #include <errno.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1049,7 +1047,6 @@ static void print_help(void) {
     printf("  Progress and diagnostics are written to stderr.\n");
     printf("\nCompatibility:\n");
     printf("  codebase-memory-cli cli <tool> ... remains temporarily available for migration/parity.\n");
-    printf("  The MCP stdio server is no longer a supported/default product entry point.\n");
 }
 
 /* ── Main ───────────────────────────────────────────────────────── */
@@ -1484,6 +1481,17 @@ static int main_run_doctor(int argc, char **argv) {
     cbm_reliability_summary_t reliability = {0};
     (void)cbm_reliability_read_summary(cache_present ? cache : NULL, 0, &reliability);
 
+    bool watcher_enabled = true;
+    if (cache_present) {
+        cbm_config_t *runtime_config = cbm_config_open(cache);
+        if (runtime_config) {
+            watcher_enabled = cbm_config_watcher_enabled(runtime_config);
+            cbm_config_close(runtime_config);
+        }
+    }
+    cbm_ui_config_t ui_config;
+    cbm_ui_config_load(&ui_config);
+
     cbm_daemon_build_identity_t identity = {0};
     main_build_identity_status_t identity_status =
         cache_present ? main_build_identity(&identity) : MAIN_BUILD_IDENTITY_CACHE_RESOLVE;
@@ -1514,9 +1522,10 @@ static int main_run_doctor(int argc, char **argv) {
         yyjson_mut_val *cache_obj = doc ? yyjson_mut_obj(doc) : NULL;
         yyjson_mut_val *daemon = doc ? yyjson_mut_obj(doc) : NULL;
         yyjson_mut_val *store = doc ? yyjson_mut_obj(doc) : NULL;
+        yyjson_mut_val *config = doc ? yyjson_mut_obj(doc) : NULL;
         yyjson_mut_val *events = doc ? yyjson_mut_obj(doc) : NULL;
         yyjson_mut_val *event_counts = doc ? yyjson_mut_obj(doc) : NULL;
-        if (!doc || !root || !build || !cache_obj || !daemon || !store || !events ||
+        if (!doc || !root || !build || !cache_obj || !daemon || !store || !config || !events ||
             !event_counts) {
             if (doc) yyjson_mut_doc_free(doc);
             (void)fprintf(stderr, "error: doctor result allocation failed\\n");
@@ -1550,6 +1559,10 @@ static int main_run_doctor(int argc, char **argv) {
         yyjson_mut_obj_add_uint(doc, store, "transient", stores.transient);
         yyjson_mut_obj_add_uint(doc, store, "corrupt", stores.corrupt);
         yyjson_mut_obj_add_val(doc, root, "store", store);
+        yyjson_mut_obj_add_bool(doc, config, "watcher_enabled", watcher_enabled);
+        yyjson_mut_obj_add_bool(doc, config, "ui_enabled", ui_config.ui_enabled);
+        yyjson_mut_obj_add_int(doc, config, "ui_port", ui_config.ui_port);
+        yyjson_mut_obj_add_val(doc, root, "config", config);
         yyjson_mut_obj_add_uint(doc, events, "files_scanned", reliability.files_scanned);
         yyjson_mut_obj_add_uint(doc, events, "records", reliability.records);
         yyjson_mut_obj_add_uint(doc, events, "malformed_records", reliability.malformed_records);
@@ -1580,6 +1593,8 @@ static int main_run_doctor(int argc, char **argv) {
         } else {
             printf("  daemon: not reachable (optional for direct reads)\\n");
         }
+        printf("  config: watcher=%s, ui=%s, ui_port=%d\n", watcher_enabled ? "enabled" : "disabled",
+               ui_config.ui_enabled ? "enabled" : "disabled", ui_config.ui_port);
         printf("  store:  %zu database(s), %zu readable, %zu unreadable",
                stores.discovered, stores.readable, stores.unreadable);
         if (deep) {
@@ -1587,6 +1602,19 @@ static int main_run_doctor(int argc, char **argv) {
                    stores.healthy, stores.transient, stores.corrupt);
         }
         printf("\\n");
+        if (reliability.records > 0 || reliability.malformed_records > 0) {
+            printf("  events: %zu record(s) across %zu file(s)%s", reliability.records,
+                   reliability.files_scanned, reliability.truncated ? " (bounded scan)" : "");
+            if (reliability.malformed_records > 0) {
+                printf(", %zu malformed", reliability.malformed_records);
+            }
+            printf("\\n");
+            for (int event = 0; event < CBM_RELIABILITY_EVENT_COUNT; ++event) {
+                if (reliability.counts[event] == 0) continue;
+                printf("          %s=%" PRIu64 "\\n", cbm_reliability_event_name(event),
+                       reliability.counts[event]);
+            }
+        }
         if (!deep) {
             printf("  hint:   use 'codebase-memory-cli doctor --deep' for explicit integrity verification\\n");
         }
@@ -1748,16 +1776,16 @@ static bool main_session_context(const char *preferred_root, char root_out[MAIN_
 }
 
 static bool main_set_client_context(cbm_daemon_runtime_client_t *client, const char *preferred_root,
-                                    cbm_tool_profile_t tool_profile, const char *hook_event,
-                                    const char *hook_dialect, uint32_t timeout_ms) {
+                                    const char *hook_event, const char *hook_dialect,
+                                    uint32_t timeout_ms) {
     char root[MAIN_PATH_CAP];
     char allowed[MAIN_PATH_CAP];
     const char *allowed_ptr = NULL;
     if (!main_session_context(preferred_root, root, allowed, &allowed_ptr)) {
         return false;
     }
-    return cbm_daemon_application_client_set_context(client, root, allowed_ptr, tool_profile,
-                                                     hook_event, hook_dialect, timeout_ms) ==
+    return cbm_daemon_application_client_set_context(client, root, allowed_ptr, hook_event,
+                                                     hook_dialect, timeout_ms) ==
            CBM_DAEMON_RUNTIME_APPLICATION_OK;
 }
 
@@ -1895,8 +1923,7 @@ static char *main_local_cli_daemon_execute(const char *tool_name, const char *ar
     uint32_t response_length = 0;
     bool context_ok =
         main_session_context(NULL, session_root, allowed_root, &allowed_root_ptr) &&
-        main_set_client_context(bootstrap.client, session_root, CBM_TOOL_PROFILE_ALL, NULL,
-                                NULL, MAIN_CONNECT_TIMEOUT_MS);
+        main_set_client_context(bootstrap.client, session_root, NULL, NULL, MAIN_CONNECT_TIMEOUT_MS);
     bool operation_error = false;
     if (context_ok &&
         cbm_daemon_application_client_operation_result(
@@ -2016,8 +2043,7 @@ static int main_run_hook_frontend(cbm_daemon_runtime_client_t *client, const cha
     }
     char *hook_cwd = main_hook_cwd(input);
     bool context_set =
-        main_set_client_context(client, hook_cwd, CBM_TOOL_PROFILE_ALL, hook_event,
-                                hook_dialect, MAIN_HOOK_CONNECT_TIMEOUT_MS);
+        main_set_client_context(client, hook_cwd, hook_event, hook_dialect, MAIN_HOOK_CONNECT_TIMEOUT_MS);
     free(hook_cwd);
     if (!context_set) {
         free(input);
@@ -2677,8 +2703,7 @@ static int main_run_daemon_ctl(int argc, char **argv, const cbm_daemon_ipc_endpo
         ui_port = requested_port > 0 ? requested_port : ui_config.ui_port;
         uint8_t update_mask = 0x03U; /* enabled + port */
         bool context_set =
-            main_set_client_context(start_result.client, ".", CBM_TOOL_PROFILE_ALL, NULL, NULL,
-                                    MAIN_CONNECT_TIMEOUT_MS);
+            main_set_client_context(start_result.client, ".", NULL, NULL, MAIN_CONNECT_TIMEOUT_MS);
         if (!context_set || cbm_daemon_application_client_set_ui_config(
                                 start_result.client, update_mask, true, ui_port,
                                 MAIN_CONNECT_TIMEOUT_MS) != CBM_DAEMON_RUNTIME_APPLICATION_OK) {

@@ -36,6 +36,11 @@ on:
         required: false
         type: boolean
         default: false
+      hold_for_external_qualification:
+        description: "Hold the verified GitHub release in draft for native-Windows external qualification before registry publication"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -398,7 +403,28 @@ jobs:
           RELEASE_SELECTION: ${{ runner.temp }}/release-selection.tsv
         run: bash scripts/ci/append-vt-notes.sh
 
-  # ── 8. Publish package wrappers (npm + PyPI) ──────────────────
+  # ── 8. External qualification hold ───────────────────────────
+  # Default release behavior stops here after CI verification. The exact draft
+  # bytes are then qualified on luigi.home.arpa. The promotion workflow validates
+  # attached qualification evidence before registries are published or the
+  # release is made public.
+  qualification-hold:
+    needs: [verify]
+    if: ${{ !cancelled() && !failure() && needs.verify.result == 'success' && inputs.hold_for_external_qualification }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Record external qualification handoff
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          echo "Release $VERSION is verified and remains DRAFT."
+          echo "Qualify the exact GitHub release bytes on luigi.home.arpa."
+          echo "Attach qualification-manifest.json and qualification-summary.md to the draft."
+          echo "Then dispatch Promote Qualified Release for the same tag."
+
+  # ── 9. Publish package wrappers (npm + PyPI) ──────────────────
   # Wrappers in pkg/npm and pkg/pypi download the released binary at
   # install time, so they only need a version bump (already in the repo
   # at this point) — no per-release sha256 substitution.
@@ -407,7 +433,7 @@ jobs:
   # release stays in draft so we can re-run without a half-shipped state.
   publish-registries:
     needs: [verify]
-    if: ${{ !cancelled() && !failure() && needs.verify.result == 'success' }}
+    if: ${{ !cancelled() && !failure() && needs.verify.result == 'success' && !inputs.hold_for_external_qualification }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -497,7 +523,7 @@ jobs:
         # as done, not as a fatal collision.
         run: twine upload --non-interactive --skip-existing dist/*
 
-  # ── 9. Atomic un-draft (only after npm + PyPI succeed) ────────
+  # ── 10. Atomic un-draft (only after npm + PyPI succeed) ───────
   # The GitHub release stays in DRAFT until both registries publish.
   # If anything upstream fails, the draft can be deleted and the run
   # re-tried with replace=true — no half-shipped state visible to users.

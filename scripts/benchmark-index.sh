@@ -36,7 +36,7 @@ echo "$LOC" > "$OUT/loc.txt"
 # Index via CLI and capture timing
 START_MS=$(python3 -c "import time; print(int(time.time()*1000))")
 
-INDEX_JSON=$("$BINARY" cli index_repository "{\"repo_path\":\"$REPO\",\"mode\":\"full\"}" 2>/dev/null || echo '{"error":"index failed"}')
+INDEX_JSON=$("$BINARY" index "$REPO" --mode full --json 2>/dev/null || echo '{"error":"index failed"}')
 
 END_MS=$(python3 -c "import time; print(int(time.time()*1000))")
 ELAPSED=$((END_MS - START_MS))
@@ -58,11 +58,7 @@ print(d.get('edges',0))
 PROJECT=$(echo "$INDEX_JSON" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
-if 'content' in d:
-    inner=json.loads(d['content'][0]['text'])
-else:
-    inner=d
-print(inner.get('project',''))
+print(d.get('project',''))
 " 2>/dev/null || echo "")
 
 echo "$NODES" > "$OUT/nodes.txt"

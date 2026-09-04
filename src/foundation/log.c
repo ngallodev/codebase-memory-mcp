@@ -354,21 +354,6 @@ static void copy_path_without_query(const char *path, char *out, size_t outsz) {
     out[n] = '\0';
 }
 
-void cbm_log_mcp_request(const char *method, const char *tool_name, bool is_error,
-                         int64_t duration_us) {
-    char duration_ms[CBM_SZ_32];
-    snprintf(duration_ms, sizeof(duration_ms), "%" PRId64, duration_us / 1000);
-    if (tool_name && tool_name[0] != '\0') {
-        cbm_log(is_error ? CBM_LOG_WARN : CBM_LOG_INFO, "mcp.request", "protocol", "jsonrpc",
-                "method", method ? method : "", "tool", tool_name, "status",
-                is_error ? "error" : "ok", "duration_ms", duration_ms, NULL);
-    } else {
-        cbm_log(is_error ? CBM_LOG_WARN : CBM_LOG_INFO, "mcp.request", "protocol", "jsonrpc",
-                "method", method ? method : "", "status", is_error ? "error" : "ok", "duration_ms",
-                duration_ms, NULL);
-    }
-}
-
 void cbm_log_http_request(const char *component, const char *method, const char *path, int status,
                           int64_t duration_ms, size_t request_bytes, size_t response_bytes) {
     char safe_path[CBM_SZ_1K];

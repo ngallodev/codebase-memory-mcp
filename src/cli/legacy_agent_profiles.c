@@ -1,11 +1,11 @@
 /*
- * agent_profiles.c — Canonical Scout/Verify/Audit profile renderer.
+ * legacy_agent_profiles.c — Exact historical agent-profile renderer for ownership-aware cleanup.
  *
  * Tier behavior and abstract read-only tool sets live here once. Dialect
  * renderers translate them to documented client syntax without granting any
  * graph mutation capability.
  */
-#include "cli/agent_profiles.h"
+#include "cli/legacy_agent_profiles.h"
 
 #include "cli/config_toml_edit.h"
 #include "yyjson/yyjson.h"
