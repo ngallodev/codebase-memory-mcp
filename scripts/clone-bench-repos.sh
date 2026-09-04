@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Clone benchmark repositories for MCP vs Explorer quality comparison.
+# Clone repositories used by the code-intelligence quality benchmark.
 # Uses shallow clones (--depth 1) to minimize disk usage.
 # Shared repos are cloned once and symlinked for secondary languages.
 

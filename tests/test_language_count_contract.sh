@@ -50,8 +50,7 @@ SURFACES=(
     README.md
     docs/index.html
     docs/llms.txt
-    pkg/npm/README.md
-    pkg/chocolatey/codebase-memory-mcp.nuspec
+    pkg/chocolatey/codebase-memory-cli.nuspec
     scripts/package-release.sh
 )
 

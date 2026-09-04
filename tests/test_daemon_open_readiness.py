@@ -17,7 +17,7 @@ Build the fixture with test seams so browser launching is recorded rather than
 performed and the two negative cases can use a short deterministic deadline:
 
     make -f Makefile.cbm cbm-with-ui TEST_SEAMS=1 BUILD_DIR=build/ui-open-test
-    python3 tests/test_daemon_open_readiness.py build/ui-open-test/codebase-memory-mcp
+    python3 tests/test_daemon_open_readiness.py build/ui-open-test/codebase-memory-cli
 
 Exit code: 0 == green, 1 == behavior regression, 2 == fixture/setup error.
 """

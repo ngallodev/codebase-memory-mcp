@@ -119,6 +119,10 @@ Rule during extraction: preserve behavior first, route all consumers to the neut
 
 No production or retained C behavioral-test source includes `mcp/mcp.h` or calls `cbm_mcp_server_*` / `cbm_mcp_handle_tool`. The obsolete protocol implementation is physically absent from the tree.
 
+- **COMPLETE (CP53):** runtime-isolation wiring for CLI security fuzz/network harnesses uses the shared private runtime/cache helper; the stale MCP-fixture fuzz harness is replaced by a CLI fixture that proves isolation and crash rejection.
+- **COMPLETE (CP53):** stale transition vocabulary was removed from active worker/hook/pipeline comments and the phantom `mcp` suite label was removed from the parallel test scheduler.
+- **COMPLETE (CP53):** obsolete `tests/DEPRECATED_MCP_TESTS.md` was deleted; its inventory no longer described the retained neutral test graph.
+
 ## 8. Release readiness
 
 ### Internal Windows validation build
@@ -178,4 +182,11 @@ No production or retained C behavioral-test source includes `mcp/mcp.h` or calls
 - **BLOCKED/EXTERNAL:** native Windows execution/validation evidence.
 
 - **COMPLETE (CP51):** `scripts/soak-test.sh` and `tests/repro/issue832_rss.py` no longer drive a retired MCP stdio/JSON-RPC frontend. Soak now keeps the supported permanent coordination daemon under diagnostics, exercises canonical CLI read/index operations, and kills the daemon itself during an active index to validate recovery. The #832 RSS repro samples the permanent daemon across canonical `index` cycles for in-process versus supervised isolation.
-- **REMAINING:** `tests/test_daemon_smoke.py` still contains a large mixed layer of valuable daemon lifecycle/cancellation/version-conflict assertions and retired MCP frontend-session semantics. Reconcile it as a dedicated bounded slice rather than mechanically translating protocol behavior.
+- **COMPLETE (CP52):** `tests/test_daemon_smoke.py` is now a CLI-first real-binary guard. It covers cold/warm CLI clients, permanent-daemon PID stability, daemon-backed indexing, crash recovery, and clean stop. Detailed cancellation, session isolation, rendezvous/version-conflict, and committed-client stop-refusal semantics remain in the neutral `tests/test_daemon_runtime.c` suite rather than being duplicated through a retired frontend protocol.
+
+### CP54 — Public documentation and release-contract reconciliation
+
+- **COMPLETE:** Active homepage and `llms.txt` product identity now describe `codebase-memory-cli` as a local CLI-first code-intelligence application rather than an MCP server. Historical repository/homepage URLs remain unchanged because the repository slug is compatibility/history, not runtime architecture.
+- **COMPLETE:** `docs/CONFIGURATION.md` distinguishes compatibility-sensitive persisted `codebase-memory-mcp` paths from the active CLI product and removes stale MCP-only request-path wording.
+- **COMPLETE:** version- and language-count contract surfaces now point at the renamed CLI package files; the vacuous npm language-count surface was removed from the contract because it no longer publishes a count.
+- **COMPLETE:** active test/workflow comments and usage examples touched by this slice no longer describe neutral indexing/runtime behavior as MCP behavior.

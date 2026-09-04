@@ -53,7 +53,7 @@ enum {
 };
 
 /* Module-local SQLITE_TRANSIENT wrapper to dodge performance-no-int-to-ptr.
- * Same pattern as store.c's BIND_TRANSIENT and mcp.c's MCP_SQLITE_TRANSIENT. */
+ * Same pattern as store.c's BIND_TRANSIENT SQLite destructor binding. */
 static sqlite3_destructor_type delta_sqlite_transient(void) {
     static const volatile intptr_t raw = -1;
     sqlite3_destructor_type dtor = NULL;

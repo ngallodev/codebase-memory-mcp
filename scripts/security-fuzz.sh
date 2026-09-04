@@ -5,10 +5,13 @@ set -euo pipefail
 # it must fail promptly without signals, hangs, or accidental protocol fallback.
 BINARY="${1:?usage: security-fuzz.sh <binary-path>}"
 [[ -x "$BINARY" ]] || { echo "FAIL: binary not executable: $BINARY" >&2; exit 2; }
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/cbm-cli-fuzz.XXXXXX")
-trap 'rm -rf "$TMP"' EXIT INT TERM
-export HOME="$TMP/home" XDG_CACHE_HOME="$TMP/cache"
-mkdir -p "$HOME" "$XDG_CACHE_HOME" "$TMP/repo"
+# shellcheck source=test-runtime.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test-runtime.sh"
+cbm_test_runtime_init
+TMP="$CBM_TEST_RUNTIME_ROOT"
+trap 'cbm_test_runtime_cleanup "$BINARY"' EXIT
+export HOME="$TMP/home" XDG_CACHE_HOME="$CBM_CACHE_DIR"
+mkdir -p "$HOME" "$TMP/repo"
 printf 'int main(void){return 0;}\n' > "$TMP/repo/main.c"
 "$BINARY" index "$TMP/repo" --json >/dev/null
 

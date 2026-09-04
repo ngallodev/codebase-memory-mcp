@@ -5,9 +5,9 @@
  * cap) must be SKIPPED-AND-REPORTED, never silently dropped, and it must NOT
  * take the rest of the repo down with it. This is the genuine guard for the
  * error-surfacing wiring (has_error / read / oversized → cbm_file_error_t →
- * MCP `skipped[]` + `skipped_count` + per-run logfile).
+ * canonical `skipped[]` + `skipped_count` + per-run logfile).
  *
- * These indexes run through the full production MCP `index_repository` flow.
+ * These indexes run through the full production neutral `index_repository` operation.
  * With only a handful of files the pipeline takes the SEQUENTIAL path
  * (pass_definitions.c), so this exercises the sequential recording branch on
  * every platform regardless of core count.
@@ -88,7 +88,7 @@ static char *ri_slurp(const char *path) {
     return buf;
 }
 
-/* Index the files already written under lp->tmpdir through the production MCP
+/* Index the files already written under lp->tmpdir through the production index operation
  * flow, capturing the raw response. Returns the opened graph store (NULL on
  * failure). Mirrors repro_harness.h's rh_open_indexed but keeps the response so
  * we can assert on skipped_count / skipped[] / logfile. */
@@ -161,7 +161,7 @@ TEST(index_oversized_file_reported) {
     cbm_unsetenv("CBM_INDEX_LOG");
 
     if (!resp) {
-        FAIL("no MCP response");
+        FAIL("no index operation response");
     }
     if (!store) {
         free(resp);
@@ -243,7 +243,7 @@ TEST(index_clean_run_no_logfile) {
     char *resp = NULL;
     cbm_store_t *store = ri_index_capture(&lp, &resp);
     if (!resp) {
-        FAIL("no MCP response");
+        FAIL("no index operation response");
     }
     if (!store) {
         free(resp);
@@ -319,7 +319,7 @@ TEST(index_parse_partial_reported) {
     cbm_unsetenv("CBM_INDEX_LOG");
 
     if (!resp) {
-        FAIL("no MCP response");
+        FAIL("no index operation response");
     }
     if (!store) {
         free(resp);
@@ -506,7 +506,7 @@ TEST(index_parse_partial_clears_on_fix) {
     char *resp = NULL;
     cbm_store_t *store = ri_index_capture(&lp, &resp);
     if (!resp) {
-        FAIL("no MCP response");
+        FAIL("no index operation response");
     }
     free(resp);
     if (!store) {
@@ -582,7 +582,7 @@ TEST(index_not_indexed_by_design_reported) {
     char *resp = NULL;
     cbm_store_t *store = ri_index_capture(&lp, &resp);
     if (!resp) {
-        FAIL("no MCP response");
+        FAIL("no index operation response");
     }
     if (!store) {
         free(resp);

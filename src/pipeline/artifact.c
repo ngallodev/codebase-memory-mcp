@@ -1451,7 +1451,7 @@ static int reconcile_restamp_rows(const char *repo_path, const char *cache_db_pa
          * uses): the two disagree on Windows and each side must match ITS OWN
          * consumer. A restamped row exists to be read by the incremental
          * classifier (pipeline_incremental.c classify_files) and by
-         * check_index_coverage (mcp.c coverage_path_freshness) — both stat()
+         * check_index_coverage operation freshness logic — both stat()
          * the file and encode whole seconds on Windows. Stamping a 100-ns
          * FILETIME value here would make every restamped row read as changed
          * there and reconcile would buy nothing. Do not unify these two call

@@ -161,7 +161,7 @@ shard_filter() {
         BEGIN {
             nh = split("store_arch daemon_runtime incremental cli extraction " \
                        "watcher daemon_ipc subprocess httpd py_lsp_stress " \
-                       "grammar_regression mcp daemon_frontend pipeline", h, " ")
+                       "grammar_regression daemon_frontend pipeline", h, " ")
         }
         { present[$0] = NR; lines[NR] = $0 }
         END {
@@ -205,7 +205,7 @@ shard_filter() {
 # that 40 sits >=2x from both the linear and quadratic signals, so inflating it
 # would move the test toward the very thing it exists to catch. Quiet is the
 # fix, and at ~22s the suite is cheap to run alone.
-SERIAL_SUITES="cli subprocess watcher incremental httpd ui index_resilience mcp \
+SERIAL_SUITES="cli subprocess watcher incremental httpd ui index_resilience \
     extraction \
     stack_overflow_a stack_overflow_b stack_overflow_c \
     index_supervisor daemon_application daemon_runtime daemon_frontend \
@@ -288,7 +288,7 @@ run_wave "$PAR_FILE" "$JOBS"
 # the FLEX group's small fixed overlap is load the measurement would absorb.
 # Strictly sequential is what makes its verdict a function of the code instead
 # of the scheduler.
-TAIL_EXCL="cli mcp index_supervisor daemon_application daemon_runtime \
+TAIL_EXCL="cli index_supervisor daemon_application daemon_runtime \
     daemon_frontend daemon_bootstrap daemon_ipc extraction"
 is_tail_excl() {
     case " $TAIL_EXCL " in *" $1 "*) return 0 ;; *) return 1 ;; esac

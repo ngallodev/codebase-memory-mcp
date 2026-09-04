@@ -198,7 +198,8 @@ endif
 # instead of the system libstdc++ (scripts/msan.sh overrides both vars).
 CXX_STDLIB ?= -lstdc++
 CXX_STDLIB_FLAGS ?=
-LDFLAGS = -lm $(CXX_STDLIB) -lpthread -lz $(WIN32_LIBS) $(STATIC_FLAGS) $(MIMALLOC_WRAP_FLAGS) $(ELF_HARDENING_FLAGS)
+LDFLAGS = -lm $(CXX_STDLIB) -lpthread -lz $(WIN32_LIBS) $(STATIC_FLAGS) \
+	$(MIMALLOC_WRAP_FLAGS) $(MIMALLOC_WRAP_FLAGS_POSIX) $(ELF_HARDENING_FLAGS)
 LDFLAGS_TEST = -lm $(CXX_STDLIB) -lpthread -lz $(SANITIZE) $(WIN32_LIBS) $(MIMALLOC_WRAP_FLAGS) $(ELF_HARDENING_FLAGS)
 LDFLAGS_TSAN = -lm $(CXX_STDLIB) -lpthread -lz $(TSAN_SANITIZE) $(WIN32_LIBS) $(MIMALLOC_WRAP_FLAGS) $(ELF_HARDENING_FLAGS)
 
@@ -206,6 +207,8 @@ LDFLAGS_TSAN = -lm $(CXX_STDLIB) -lpthread -lz $(TSAN_SANITIZE) $(WIN32_LIBS) $(
 
 FOUNDATION_SRCS = \
 	src/foundation/mem_override_win.c \
+	src/foundation/mem_override_posix.c \
+	src/foundation/mem_profile.c \
     src/foundation/arena.c \
     src/foundation/hash_table.c \
     src/foundation/str_intern.c \

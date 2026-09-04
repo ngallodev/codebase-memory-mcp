@@ -491,7 +491,7 @@ static bool cross_repo_add_missed_shadow(const cross_repo_fixture_t *fixture, co
  * "<name>::missed" shadow row in its own db. cr_store_has_exact_project
  * demanded count == 1 over ALL rows, so that second row made the project
  * unresolvable — as source AND as target — and the whole feature failed with
- * "not indexed" for a project that plainly was. mcp.c already solved exactly
+ * "not indexed" for a project that plainly was. the legacy frontend previously solved exactly
  * this shape for list_projects in #1044; this site never learned it.
  *
  * The control is the pair without shadow rows: the tests above already prove

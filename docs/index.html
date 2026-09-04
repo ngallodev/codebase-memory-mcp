@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>codebase-memory-mcp — Code Intelligence Knowledge Graph for AI Coding Agents</title>
-    <meta name="description" content="codebase-memory-mcp is an open-source MCP server that indexes any codebase into a persistent knowledge graph so AI coding agents answer structural questions with ~120x fewer tokens. 162 languages, Hybrid LSP type resolution, local semantic vector search, code-clone detection, sub-1ms queries, Linux kernel indexed in 3 minutes. Native executable with verified assets and no language runtime. One command configures 45 automatic/conditional client surfaces.">
-    <meta name="keywords" content="MCP server, code intelligence, knowledge graph, tree-sitter, Hybrid LSP, semantic code search, code embeddings, code clone detection, cross-repo analysis, data-flow analysis, Claude Code, Codex CLI, Gemini CLI, Cursor, Zed, code exploration, token reduction, call graph, dead code detection">
+    <title>codebase-memory-cli — Local Code Intelligence for AI Coding Agents</title>
+    <meta name="description" content="codebase-memory-cli is an open-source local code-intelligence CLI that indexes codebases into a persistent knowledge graph for fast structural search, tracing, source retrieval, coverage checks, and architecture queries. 162 languages, Hybrid LSP type resolution, local semantic vector search, code-clone detection, and a native runtime with deterministic machine-readable output.">
+    <meta name="keywords" content="code intelligence CLI, knowledge graph, tree-sitter, Hybrid LSP, semantic code search, code embeddings, code clone detection, cross-repo analysis, data-flow analysis, Claude Code, Codex CLI, Gemini CLI, Cursor, Zed, code exploration, token reduction, call graph, dead code detection">
     <meta name="author" content="DeusData">
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
     <meta name="theme-color" content="#0d1117">
 
     <!-- Open Graph -->
-    <meta property="og:title" content="codebase-memory-mcp — Code Intelligence Knowledge Graph for AI Coding Agents">
+    <meta property="og:title" content="codebase-memory-cli — Local Code Intelligence for AI Coding Agents">
     <meta property="og:description" content="Index any codebase into a persistent knowledge graph. AI agents answer structural questions with ~120x fewer tokens. 162 languages, Hybrid LSP, sub-1ms queries, native executable with verified assets.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://deusdata.github.io/codebase-memory-mcp/">
@@ -19,11 +19,11 @@
     <meta property="og:image:width" content="1538">
     <meta property="og:image:height" content="932">
     <meta property="og:image:alt" content="3D knowledge-graph visualization of a codebase with thousands of nodes and edges">
-    <meta property="og:site_name" content="codebase-memory-mcp">
+    <meta property="og:site_name" content="Codebase Memory">
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="codebase-memory-mcp — Code Intelligence for AI Coding Agents">
+    <meta name="twitter:title" content="codebase-memory-cli — Code Intelligence for AI Coding Agents">
     <meta name="twitter:description" content="Index any codebase into a knowledge graph. ~120x fewer tokens for AI code exploration. 162 languages, Hybrid LSP, sub-1ms queries, native executable with verified assets.">
     <meta name="twitter:image" content="https://deusdata.github.io/codebase-memory-mcp/graph-ui-screenshot.png">
 
@@ -35,13 +35,13 @@
     {
       "@context": "https://schema.org",
       "@type": "SoftwareApplication",
-      "name": "codebase-memory-mcp",
-      "alternateName": "Codebase Memory MCP",
+      "name": "codebase-memory-cli",
+      "alternateName": "Codebase Memory",
       "applicationCategory": "DeveloperApplication",
-      "applicationSubCategory": "Model Context Protocol (MCP) server",
+      "applicationSubCategory": "Developer command-line code intelligence",
       "operatingSystem": "macOS, Linux, Windows",
       "softwareVersion": "0.8.1",
-      "description": "An open-source MCP server that indexes a codebase into a persistent knowledge graph of functions, classes, call chains, HTTP routes, and cross-service links, so AI coding agents answer structural questions with roughly 120x fewer tokens than file-by-file search. Parses 162 languages via tree-sitter with Hybrid LSP semantic type resolution for 9 language families. Ships as a native executable with authenticated release-owned assets; the native install needs no language runtime.",
+      "description": "An open-source local code-intelligence CLI that indexes a codebase into a persistent structural knowledge graph for search, call tracing, exact source retrieval, coverage checks, architecture queries, and change analysis. Parses 162 languages via tree-sitter with Hybrid LSP semantic type resolution for selected language families and ships as a native executable.",
       "url": "https://deusdata.github.io/codebase-memory-mcp/",
       "downloadUrl": "https://github.com/DeusData/codebase-memory-mcp/releases/latest",
       "codeRepository": "https://github.com/DeusData/codebase-memory-mcp",
@@ -54,9 +54,9 @@
         "priceCurrency": "USD"
       },
       "featureList": [
-        "Indexes 158 programming languages via vendored tree-sitter grammars",
+        "Indexes 162 programming languages via vendored tree-sitter grammars",
         "Hybrid LSP semantic type resolution for Python, TypeScript/JavaScript, PHP, C#, Go, C/C++, Java, Kotlin, and Rust",
-        "15 MCP tools for structural search, call-path tracing, targeted coverage checks, and Cypher graph queries",
+        "CLI operations for structural search, call-path tracing, targeted coverage checks, and graph queries",
         "Semantic vector code search via bundled nomic-embed-code embeddings (no API key, fully local)",
         "Semantic graph edges (SEMANTICALLY_RELATED) and near-clone detection (SIMILAR_TO, MinHash + LSH)",
         "Cross-service linking for HTTP, gRPC, GraphQL, tRPC, and pub/sub channels with confidence scoring",
@@ -68,7 +68,7 @@
         "Infrastructure-as-code indexing for Dockerfiles, Kubernetes, and Kustomize",
         "Built-in 3D graph visualization UI",
         "Auto-sync background watcher for incremental re-indexing",
-        "One command configures 45 automatic/conditional client surfaces"
+        "CLI-first skills and lifecycle/context hooks for supported coding-agent environments"
       ],
       "author": {
         "@type": "Organization",
@@ -100,7 +100,7 @@
           "@type": "WebSite",
           "@id": "https://deusdata.github.io/codebase-memory-mcp/#website",
           "url": "https://deusdata.github.io/codebase-memory-mcp/",
-          "name": "codebase-memory-mcp",
+          "name": "Codebase Memory",
           "publisher": { "@id": "https://deusdata.github.io/codebase-memory-mcp/#org" }
         },
         {
@@ -122,23 +122,23 @@
       "mainEntity": [
         {
           "@type": "Question",
-          "name": "What is codebase-memory-mcp?",
+          "name": "What is codebase-memory-cli?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "codebase-memory-mcp is an open-source Model Context Protocol (MCP) server that indexes a codebase into a persistent knowledge graph of functions, classes, call chains, HTTP routes, and cross-service links. AI coding agents query that graph instead of reading files one by one, answering structural questions with roughly 120x fewer tokens. It parses 162 languages and ships as a native executable with authenticated release-owned assets; the native install needs no language runtime."
+            "text": "codebase-memory-cli is an open-source local code-intelligence command-line application that indexes a codebase into a persistent structural knowledge graph. Coding agents and humans use deterministic CLI operations to search symbols, retrieve exact source, trace relationships, check index coverage, and inspect architecture. It parses 162 languages and ships as a native executable."
           }
         },
         {
           "@type": "Question",
-          "name": "How does codebase-memory-mcp reduce token usage?",
+          "name": "How does codebase-memory-cli reduce token usage?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "AI agents normally explore code through repeated grep-then-read cycles, which burn large numbers of tokens. codebase-memory-mcp answers the same structural questions from a precomputed graph. In a five-query benchmark it used about 3,400 tokens versus about 412,000 tokens for file-by-file search — a roughly 120x reduction."
+            "text": "AI agents normally explore code through repeated grep-then-read cycles, which burn large numbers of tokens. codebase-memory-cli answers the same structural questions from a precomputed graph. In a five-query benchmark it used about 3,400 tokens versus about 412,000 tokens for file-by-file search — a roughly 120x reduction."
           }
         },
         {
           "@type": "Question",
-          "name": "Which programming languages does codebase-memory-mcp support?",
+          "name": "Which programming languages does codebase-memory-cli support?",
           "acceptedAnswer": {
             "@type": "Answer",
             "text": "It supports 162 languages through vendored tree-sitter grammars compiled into the binary, including Python, Go, JavaScript, TypeScript, Rust, Java, C, C++, C#, PHP, Ruby, Kotlin, Swift, and many more. Nine language families — Python, TypeScript/JavaScript, PHP, C#, Go, C/C++, Java, Kotlin, and Rust — additionally get Hybrid LSP semantic type resolution."
@@ -154,7 +154,7 @@
         },
         {
           "@type": "Question",
-          "name": "Which AI coding agents work with codebase-memory-mcp?",
+          "name": "Which AI coding agents work with codebase-memory-cli?",
           "acceptedAnswer": {
             "@type": "Answer",
             "text": "A single install command configures 45 automatic/conditional client surfaces. The 39 detected surfaces are Claude Code, Codex CLI, Gemini CLI, Zed, OpenCode, Antigravity, Aider, KiloCode, VS Code, Cursor, Windsurf, Augment / Auggie, OpenClaw, Kiro, Junie, Hermes, OpenHands, Cline, Warp, Qwen Code, GitHub Copilot CLI, Factory Droid, Crush, Goose, Mistral Vibe, Grok Build, Qoder CLI, Kimi Code CLI, GitLab Duo CLI, Rovo Dev CLI, Amp, Devin CLI / Local, Tabnine, Amazon Q Developer IDE, CodeBuddy Code CLI, IBM Bob Shell, Pochi, Pi, and Oh My Pi (omp). Continue / cn, Visual Studio, TRAE, Roo Code, IBM Bob IDE, and Sourcegraph Cody are conditional or explicit integrations. Qodo, Warp MCP, JetBrains AI/ACP, GitHub Copilot coding agent, Jules, CodeRabbit, Replit, BLACKBOX AI, Plandex, and SWE-agent require manual, UI, cloud, or repository-managed setup and are not counted among the 45."
@@ -162,15 +162,15 @@
         },
         {
           "@type": "Question",
-          "name": "Does codebase-memory-mcp send my code anywhere?",
+          "name": "Does codebase-memory-cli send my code anywhere?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. All indexing and querying happen 100% locally on your machine. There is no embedded LLM and no API key — your MCP client acts as the intelligence layer. Before release testing, three behaviourally identical executable candidates (unstripped, debug-stripped, stripped) for every platform and link mode are submitted to VirusTotal. The selected candidate is packaged with its SHA-256 unchanged, and release notes link every measured result. Publication permits only the documented single-Microsoft !ml tolerance."
+            "text": "No. All indexing and querying happen 100% locally on your machine. There is no embedded LLM and no API key; your coding agent or shell invokes the local CLI. Before release testing, three behaviourally identical executable candidates (unstripped, debug-stripped, stripped) for every platform and link mode are submitted to VirusTotal. The selected candidate is packaged with its SHA-256 unchanged, and release notes link every measured result. Publication permits only the documented single-Microsoft !ml tolerance."
           }
         },
         {
           "@type": "Question",
-          "name": "Does codebase-memory-mcp support semantic or natural-language code search?",
+          "name": "Does codebase-memory-cli support semantic or natural-language code search?",
           "acceptedAnswer": {
             "@type": "Answer",
             "text": "Yes. Alongside structural and BM25 full-text search, it offers semantic vector search over the whole graph via the search_graph tool's semantic_query parameter. It is powered by nomic-embed-code embeddings compiled directly into the binary (768-dimensional), so it bridges vocabulary gaps — finding 'publish' when you search 'send' — with no API key, no Ollama, and no Docker. The indexer also generates SEMANTICALLY_RELATED edges between conceptually similar functions and SIMILAR_TO edges for near-duplicate and clone detection."
@@ -178,7 +178,7 @@
         },
         {
           "@type": "Question",
-          "name": "Can codebase-memory-mcp detect duplicate or near-clone code?",
+          "name": "Can codebase-memory-cli detect duplicate or near-clone code?",
           "acceptedAnswer": {
             "@type": "Answer",
             "text": "Yes. During indexing it builds SIMILAR_TO edges using MinHash plus LSH with Jaccard scoring, surfacing near-duplicate and copy-pasted functions across the codebase. Combined with SEMANTICALLY_RELATED edges, this makes refactoring candidates and redundant implementations queryable through the graph."
@@ -431,14 +431,14 @@
             <a href="#semantic-search">Semantic search</a>
             <a href="#releases">Releases</a>
             <a href="#faq">FAQ</a>
-            <a class="nav-cta nav-star" href="https://github.com/DeusData/codebase-memory-mcp" title="Star codebase-memory-mcp on GitHub" aria-label="Star this project on GitHub">★ Star on GitHub</a>
+            <a class="nav-cta nav-star" href="https://github.com/DeusData/codebase-memory-mcp" title="Star Codebase Memory on GitHub" aria-label="Star this project on GitHub">★ Star on GitHub</a>
         </span>
     </div>
 </nav>
 
 <main class="container">
     <header class="hero">
-        <h1>codebase-memory-mcp</h1>
+        <h1>codebase-memory-cli</h1>
         <p class="by-line">by DeusData</p>
         <p class="tagline">
             The fastest, most efficient code intelligence engine for AI coding agents. It indexes any
@@ -460,7 +460,7 @@
 
     <div class="screenshot">
         <img src="graph-ui-screenshot.png" width="1538" height="932" loading="lazy" decoding="async"
-             alt="3D knowledge-graph visualization of the codebase-memory-mcp graph showing thousands of nodes and edges">
+             alt="3D knowledge-graph visualization of the Codebase Memory graph showing thousands of nodes and edges">
         <p class="caption">Built-in 3D graph visualization (UI variant) — explore your knowledge graph at <code>localhost:9749</code>.</p>
     </div>
 
@@ -477,19 +477,18 @@
     </aside>
 
     <section id="what-is-it">
-        <h2>What is codebase-memory-mcp?</h2>
+        <h2>What is codebase-memory-cli?</h2>
         <p class="lead">
-            codebase-memory-mcp is an open-source <a href="https://modelcontextprotocol.io/">Model Context
-            Protocol (MCP)</a> server that indexes a codebase into a persistent knowledge graph of functions,
+            codebase-memory-cli is an open-source local code-intelligence application that indexes a codebase into a persistent knowledge graph of functions,
             classes, call chains, HTTP routes, and cross-service links. Instead of reading files one at a time,
             an AI coding agent queries the graph — answering structural questions with roughly 120x fewer
             tokens. It parses 162 languages and ships as a native executable with authenticated release-owned assets;
             the native install needs no language runtime.
         </p>
         <p class="muted">
-            It is a structural-analysis backend, not a chatbot: there is no embedded LLM and no API key. Your
-            MCP client (Claude Code, or any MCP-compatible agent) is the intelligence layer; codebase-memory-mcp
-            builds and serves the graph. All processing happens locally — your code never leaves your machine.
+            It is a structural-analysis backend, not a chatbot: there is no embedded LLM and no API key.
+            Coding agents and humans invoke the local CLI directly, and canonical commands provide deterministic
+            JSON for automation. All processing happens locally — your code never leaves your machine.
         </p>
     </section>
 
@@ -514,62 +513,30 @@
     </section>
 
     <section id="install">
-        <h2>How do I install codebase-memory-mcp?</h2>
+        <h2>How do I install codebase-memory-cli?</h2>
         <p class="lead">
             Install with a single command, then tell your agent to index the project. The native runtime set contains
             an executable with verified assets for macOS, Linux, and Windows — no Docker, language runtime, or API key.
         </p>
         <div class="install-block">
             <span class="comment"># 1. One-line install (macOS / Linux). Add --ui for the 3D graph UI.</span><br>
-            <span class="cmd">curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash</span><br><br>
-            <span class="comment"># 2. The installer configures detected clients; explicit flags cover conditional clients.</span><br><br>
-            <span class="comment"># 3. Restart your agent, then say:</span><br>
-            <span class="cmd">"Index this project"</span>
+            <span class="cmd">curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/scripts/setup.sh | bash</span><br><br>
+            <span class="comment"># 2. Index the current repository.</span><br>
+            <span class="cmd">codebase-memory-cli index .</span><br><br>
+            <span class="comment"># 3. Query it directly, or use --json from an agent/script.</span><br>
+            <span class="cmd">codebase-memory-cli search "ClaimValidator" --json</span>
         </div>
         <p class="muted">
-            One command configures 45 automatic/conditional client surfaces. <strong>Detected automatically (39):</strong>
-            Claude Code, Codex CLI, Gemini CLI, Zed, OpenCode, Antigravity, Aider, KiloCode, VS Code, Cursor,
-            Windsurf, Augment / Auggie, OpenClaw, Kiro, Junie, Hermes, OpenHands, Cline, Warp, Qwen Code,
-            GitHub Copilot CLI, Factory Droid, Crush, Goose, Mistral Vibe, Grok Build, Qoder CLI, Kimi Code CLI,
-            GitLab Duo CLI, Rovo Dev CLI, Amp, Devin CLI / Local, Tabnine, Amazon Q Developer IDE,
-            CodeBuddy Code CLI, IBM Bob Shell, Pochi, Pi, and Oh My Pi (omp).
+            The installer places the native CLI. Run <code>codebase-memory-cli install --skip-binary</code> if you
+            also want CLI-first skills, durable instructions, and compatible lifecycle/context hooks for detected
+            coding agents. Clean installs do not create MCP registrations. Windows users can run the PowerShell
+            setup script. Distribution wrappers are also available through npm, PyPI, Homebrew, Scoop, Winget,
+            Chocolatey, AUR, and Go.
         </p>
         <p class="muted">
-            <strong>Conditional or explicit (6):</strong> Continue / cn, Visual Studio, TRAE, Roo Code, IBM Bob IDE,
-            and Sourcegraph Cody. <strong>Manual, UI, cloud, or repository-managed (not counted):</strong> Qodo,
-            Warp MCP, JetBrains AI/ACP, GitHub Copilot coding agent, Jules, CodeRabbit, Replit, BLACKBOX AI,
-            Plandex, and SWE-agent. Warp is counted above for its detected skill installation; its MCP connection
-            remains manual. Windows users run <code>install.ps1</code>. Also available via <code>npm</code>,
-            <code>pip</code>, Homebrew, Scoop, Winget, Chocolatey, AUR, and <code>go install</code>.
-        </p>
-        <p class="muted">
-            Lifecycle installation follows documented context contracts: Qoder uses <code>SessionStart</code>,
-            <code>SubagentStart</code>, and post-<code>Read</code> coverage, including its documented Windows
-            PowerShell executor. Kimi uses <code>UserPromptSubmit</code>;
-            on macOS/Linux, GitLab Duo gets a fail-open user <code>SessionStart</code>, while Devin gets
-            <code>UserPromptSubmit</code>, <code>PostCompaction</code>, and a deduplicated <code>SessionStart</code>
-            when Claude does not already provide it. GitLab Duo, Devin, and Factory hooks are withheld on
-            Windows where no deterministic shell/executor contract is documented. Cline's auto-activating file hooks
-            are withheld because their context output is not reliably consumed; CodeBuddy's beta hooks are not
-            auto-installed; Junie's EAP
-            <code>SessionStart</code> output is documented as ignored; and Cursor context hooks are withheld because
-            the documented events cannot safely provide race-free MCP context to read-only subagents.
-        </p>
-        <p class="muted">
-            Documented custom-agent formats receive three exact-owned evidence tiers: Scout for narrow provisional
-            discovery, Verify as the task-directed default, and Auditor for bounded, paginated, current-generation
-            verification. Every direct tier calls <code>check_index_coverage</code> for cited paths and relevant scopes,
-            then reads flagged ranges or skipped files directly. Kiro and Junie use positive-allowlist
-            <code>--tool-profile scout</code> and <code>--tool-profile analysis</code> server surfaces;
-            Junie selects dedicated named aliases because its subagent schema filters by server.
-            Qoder combines named-server selection with exact tier-specific MCP tool IDs. Factory uses
-            exact registered tool IDs without its additive whole-server <code>mcpServers</code> field.
-            A foreign Junie alias is preserved and causes the installed profiles to fail closed to parent handoff.
-            Cursor, Rovo, Augment, Pochi, and Cline use explicit
-            parent handoff where direct child MCP is unavailable or unsafe; Pochi is limited to <code>readFile</code>.
-            Neither IBM Bob surface receives an invented hook or custom agent. Amazon Q Developer
-            IDE defaults to <code>~/.aws/amazonq/default.json</code> while preserving either existing documented
-            alternative.
+            For coding agents, the recommended evidence loop is <code>projects/status</code> → <code>search</code>
+            → <code>snippet</code> → <code>trace</code> → <code>coverage</code>. Search narrowly before broadening,
+            retrieve exact source for material claims, and use coverage before making negative or exhaustive claims.
         </p>
     </section>
 
@@ -582,7 +549,7 @@
             three modules away, because it does not track imports, generics, inheritance, or stdlib types.
         </p>
         <p style="margin-bottom: 16px;">
-            codebase-memory-mcp ships a <strong>lightweight C implementation of language type-resolution
+            codebase-memory-cli ships a <strong>lightweight C implementation of language type-resolution
             algorithms, structurally inspired by and compatible with major language servers</strong> —
             tsserver/typescript-go, pyright, gopls, Roslyn, Eclipse JDT, and rust-analyzer —
             embedded directly into the native executable. There is no language-server process, no
@@ -615,7 +582,7 @@
     <section id="semantic-search">
         <h2>Can it do semantic and natural-language code search?</h2>
         <p class="lead">
-            Yes. Beyond structural and full-text search, codebase-memory-mcp performs <strong>semantic
+            Yes. Beyond structural and full-text search, codebase-memory-cli performs <strong>semantic
             vector search</strong> across the whole graph — so you can find code by meaning, not just by
             name. A search for <code>send</code> surfaces functions named <code>publish</code>,
             <code>emit</code>, or <code>dispatch</code>.
@@ -739,7 +706,7 @@
                 <p>The optional UI variant adds one verified, content-addressed frontend pack and serves an interactive 3D graph at <code>localhost:9749</code> to explore nodes, edges, and clusters visually.</p>
             </div>
             <div class="feature">
-                <h3>15 MCP tools</h3>
+                <h3>CLI-first operations</h3>
                 <p><code>search_graph</code>, <code>trace_path</code>, <code>detect_changes</code>, <code>query_graph</code> (Cypher), <code>get_architecture</code>, <code>get_code_snippet</code>, <code>check_index_coverage</code>, <code>manage_adr</code>, and 7 more.</p>
             </div>
             <div class="feature">
@@ -789,7 +756,7 @@
     <section id="faq" class="faq">
         <h2>Frequently asked questions</h2>
 
-        <h3>Does codebase-memory-mcp send my code anywhere?</h3>
+        <h3>Does codebase-memory-cli send my code anywhere?</h3>
         <p>No. All indexing and querying happen 100% locally. There is no embedded LLM and no API key. Release
            archives are signed and checksummed. Before testing, three behaviourally identical executable candidates
            (unstripped, debug-stripped, stripped) for every platform and link mode are submitted to VirusTotal; the selected candidate is packaged with its
@@ -815,8 +782,7 @@
 
         <h3>Why is there no built-in LLM?</h3>
         <p>Other code-graph tools embed an LLM to translate natural language into graph queries, which means
-           extra API keys and cost. With MCP, the agent you are already talking to is the query translator —
-           codebase-memory-mcp just builds and serves the graph.</p>
+           extra API keys and cost. The coding agent you are already using can invoke the deterministic CLI as needed; Codebase Memory builds and serves the local graph.</p>
 
         <h3>Is it free and open source?</h3>
         <p>Yes. It is MIT licensed. The full source, signed release binaries, and checksums are on

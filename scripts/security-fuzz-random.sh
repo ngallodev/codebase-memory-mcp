@@ -5,10 +5,13 @@ BINARY="${1:?usage: security-fuzz-random.sh <binary-path> [duration_seconds]}"
 DURATION="${2:-60}"
 [[ -x "$BINARY" ]] || { echo "FAIL: binary not executable: $BINARY" >&2; exit 2; }
 SEED="${CBM_FUZZ_SEED:-$$}"
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/cbm-cli-random-fuzz.XXXXXX")
-trap 'rm -rf "$TMP"' EXIT INT TERM
-export HOME="$TMP/home" XDG_CACHE_HOME="$TMP/cache"
-mkdir -p "$HOME" "$XDG_CACHE_HOME" "$TMP/repo"
+# shellcheck source=test-runtime.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test-runtime.sh"
+cbm_test_runtime_init
+TMP="$CBM_TEST_RUNTIME_ROOT"
+trap 'cbm_test_runtime_cleanup "$BINARY"' EXIT
+export HOME="$TMP/home" XDG_CACHE_HOME="$CBM_CACHE_DIR"
+mkdir -p "$HOME" "$TMP/repo"
 printf 'int widget(void){return 1;}\n' > "$TMP/repo/main.c"
 "$BINARY" index "$TMP/repo" --json >/dev/null
 printf 'fuzz seed: %s\n' "$SEED"

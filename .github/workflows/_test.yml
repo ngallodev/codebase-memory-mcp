@@ -206,7 +206,7 @@ jobs:
         run: scripts/ci/test-package-wrappers.sh
 
   # ThreadSanitizer data-race gate. The threaded production surfaces (watcher,
-  # subprocess, httpd, pipeline, mcp, worker pool, diagnostics, the runnable
+  # subprocess, httpd, pipeline, worker pool, diagnostics, the runnable
   # daemon-coordination paths) plus allocator concurrency all run under TSan
   # here — see TEST_TSAN_SUITES in Makefile.cbm. Runs on both Linux
   # architectures AND native ARM64 macOS: the threading code is shared, so a

@@ -63,7 +63,7 @@ static void capture_reset(void) {
     g_log_buf[0] = '\0';
 }
 
-/* Run index_repository through the production MCP flow, capturing the log. */
+/* Run index_repository through the production operation flow, capturing the log. */
 static char *index_capture(RProj *lp) {
     char args[700];
     snprintf(args, sizeof(args), "{\"repo_path\":\"%s\"}", lp->tmpdir);

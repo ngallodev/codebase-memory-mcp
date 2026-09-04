@@ -163,7 +163,7 @@ struct cbm_pipeline {
     cbm_registry_t *registry;
 
     /* Directory subtrees skipped during discovery (rel paths). Captured from
-     * cbm_discover_ex so the MCP layer can report excluded subtrees (#411).
+     * cbm_discover_ex so the operation layer can report excluded subtrees (#411).
      * Owned by the pipeline; freed in cbm_pipeline_free. */
     char **excluded_dirs;
     int excluded_count;
@@ -176,7 +176,7 @@ struct cbm_pipeline {
     int ignored_count;
     int ignored_total;
 
-    /* Per-file indexing failures (skipped files) surfaced via MCP/CLI/logfile
+    /* Per-file indexing failures (skipped files) surfaced via operation result/CLI/logfile
      * (Stage 2 / Track B). A skip is the expected handled outcome of a bad or
      * oversized file — the run still succeeds ("indexed"). Owned by the
      * pipeline; freed in cbm_pipeline_free. */
@@ -192,7 +192,7 @@ struct cbm_pipeline {
     int committed_edges;
 
     /* #769: set when a stale-format index was routed through the one-time
-     * full rebuild, so the MCP response can surface the migration. */
+     * full rebuild, so the operation response can surface the migration. */
     bool format_migration;
 
     /* ADR (project_summaries) captured before a full-reindex DB delete, so it
@@ -2223,7 +2223,7 @@ static int cbm_pipeline_run_staged(cbm_pipeline_t *p) {
     };
     cbm_file_info_t *files = NULL;
     int file_count = 0;
-    /* Capture skipped subtrees on the pipeline so the MCP layer can report
+    /* Capture skipped subtrees on the pipeline so the operation layer can report
      * which directories were excluded (#411), plus the individually-ignored
      * files (#963 "purposely not indexed"). Replace any prior lists (e.g. a
      * re-run on the same pipeline) to avoid leaking the previous ones. */

@@ -1,6 +1,6 @@
 # Configuration Reference
 
-This page documents the configuration files that `codebase-memory-mcp` reads or writes today. The product surface is CLI-first; daemon/UI settings described below are retained runtime/compatibility mechanisms during migration, not an instruction to configure an MCP client.
+This page documents the configuration and persisted runtime files used by `codebase-memory-cli`. Several filesystem paths retain the historical `codebase-memory-mcp` name for compatibility; those paths do not represent an MCP product interface.
 
 ## At a Glance
 
@@ -129,7 +129,7 @@ These environment variables affect runtime behavior:
 
 | Variable | Default | Description |
 |---|---|---|
-| `CBM_ALLOWED_ROOT` | *(unset)* | Confine `index_repository` to paths within this directory. When set, a `repo_path` that resolves (after symlink / `..` resolution) outside this root is refused, and the same check now applies to the graph UI's `POST /api/index` route rather than only to the MCP tool. Unset imposes no *containment* restriction — but see the always-on limits below, which apply whether or not this is set. Useful when agentic callers operate in a repository and indexing scope must remain human-controlled. |
+| `CBM_ALLOWED_ROOT` | *(unset)* | Confine `index_repository` to paths within this directory. When set, a `repo_path` that resolves (after symlink / `..` resolution) outside this root is refused, and the same check now applies to the graph UI's `POST /api/index` route rather than only to one request path. Unset imposes no *containment* restriction — but see the always-on limits below, which apply whether or not this is set. Useful when agentic callers operate in a repository and indexing scope must remain human-controlled. |
 | `CBM_CACHE_DIR` | `~/.cache/codebase-memory-mcp` | Override the cache directory used for indexes, `_config.db`, and UI `config.json`. |
 | `CBM_DIAGNOSTICS` | `false` | Enable periodic `snapshot.json` and retained `trajectory.ndjson` below a fresh owner-private directory in the system temp directory. The daemon records the randomized paths in the `diagnostics.start` discovery record (a single JSON line) in `${CBM_CACHE_DIR}/logs/cbm-daemon.log`; that one record is emitted even when `CBM_LOG_LEVEL` suppresses ordinary logging, so the paths always remain discoverable. |
 | `CBM_DOWNLOAD_URL` | GitHub releases | Override the update download URL. |
@@ -154,7 +154,7 @@ command fails, `config list` included, so the settings surface cannot be reached
 either:
 
 ```text
-codebase-memory-mcp: secure daemon endpoint could not be created
+codebase-memory-cli: secure daemon endpoint could not be created
 ```
 
 `CBM_RUNTIME_DIR` points the rendezvous at an ancestry you choose:

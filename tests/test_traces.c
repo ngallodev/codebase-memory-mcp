@@ -2,7 +2,7 @@
  * test_traces.c — Tests for OTLP trace processing helpers.
  *
  * Ported from internal/traces/traces_test.go (5 pure helper tests).
- * The TestIngestOTLPJSON integration test is deferred (needs full MCP pipeline).
+ * The TestIngestOTLPJSON integration test is deferred (needs the full trace-ingestion pipeline).
  */
 #include "test_framework.h"
 #include <traces/traces.h>

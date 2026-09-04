@@ -15,7 +15,7 @@
 # That absence is precisely why these files drifted — there was nothing to
 # check them against. The release workflow then institutionalised the drift for
 # three of them: publish-registries rewrites pkg/npm/package.json and
-# pkg/pypi/pyproject.toml from the dispatch input, and publish-mcp-registry
+# pkg/pypi/pyproject.toml from the dispatch input, and retired registry publication
 # published artifact was therefore correct while the repo told everyone reading
 # it a false version, and no surface outside that sync path was corrected at
 # all.
@@ -101,12 +101,12 @@ fi
 SURFACES=(
     "pkg/npm/package.json|release"
     "pkg/pypi/pyproject.toml|release"
-    "pkg/pypi/src/codebase_memory_mcp/_cli.py|release"
-    "pkg/go/cmd/codebase-memory-mcp/main.go|release"
-    "pkg/chocolatey/codebase-memory-mcp.nuspec|release"
+    "pkg/pypi/src/codebase_memory_cli/_cli.py|release"
+    "pkg/go/cmd/codebase-memory-cli/main.go|release"
+    "pkg/chocolatey/codebase-memory-cli.nuspec|release"
     "pkg/chocolatey/tools/chocolateyInstall.ps1|release"
-    "pkg/homebrew/Formula/codebase-memory-mcp.rb|pin:0.10.3"
-    "pkg/scoop/codebase-memory-mcp.json|pin:0.8.1"
+    "pkg/homebrew/Formula/codebase-memory-cli.rb|pin:0.10.3"
+    "pkg/scoop/codebase-memory-cli.json|pin:0.8.1"
     "pkg/aur/PKGBUILD|pin:0.8.1"
     "pkg/aur/.SRCINFO|pin:0.8.1"
 )
@@ -116,8 +116,8 @@ SURFACES=(
 # (gh release download v<X.Y.Z> --pattern checksums.txt), replace the version
 # AND every sha256 it pins, then move the entry to "release" above.
 PIN_REASONS=(
-    "pkg/homebrew/Formula/codebase-memory-mcp.rb|pins 4 per-asset sha256 (darwin/linux x arm/intel); last re-pinned for v0.10.3"
-    "pkg/scoop/codebase-memory-mcp.json|pins the windows-amd64.zip sha256; last re-pinned for v0.8.1"
+    "pkg/homebrew/Formula/codebase-memory-cli.rb|pins 4 per-asset sha256 (darwin/linux x arm/intel); last re-pinned for v0.10.3"
+    "pkg/scoop/codebase-memory-cli.json|pins the windows-amd64.zip sha256; last re-pinned for v0.8.1"
     "pkg/aur/PKGBUILD|pins sha256sums_x86_64 + sha256sums_aarch64; last re-pinned for v0.8.1"
     "pkg/aur/.SRCINFO|generated from PKGBUILD, so it must move with it, not before it"
 )

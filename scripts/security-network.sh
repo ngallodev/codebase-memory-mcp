@@ -10,10 +10,13 @@ if ! command -v strace >/dev/null 2>&1; then
     exit 0
 fi
 
-ROOT=$(mktemp -d "${TMPDIR:-/tmp}/cbm-network.XXXXXX")
-trap 'rm -rf "$ROOT"' EXIT INT TERM
-export HOME="$ROOT/home" XDG_CACHE_HOME="$ROOT/cache"
-mkdir -p "$HOME" "$XDG_CACHE_HOME" "$ROOT/repo"
+# shellcheck source=test-runtime.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test-runtime.sh"
+cbm_test_runtime_init
+ROOT="$CBM_TEST_RUNTIME_ROOT"
+trap 'cbm_test_runtime_cleanup "$BINARY"' EXIT
+export HOME="$ROOT/home" XDG_CACHE_HOME="$CBM_CACHE_DIR"
+mkdir -p "$HOME" "$ROOT/repo"
 printf 'int helper(void){return 42;}\nint main(void){return helper()!=42;}\n' > "$ROOT/repo/main.c"
 TRACE="$ROOT/strace.log"
 

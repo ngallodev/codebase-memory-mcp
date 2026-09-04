@@ -105,7 +105,7 @@ void cbm_pipeline_get_committed_counts(const cbm_pipeline_t *p, int *nodes, int 
  * the pipeline (copied on record, freed in cbm_pipeline_free). A skip is the
  * expected, handled outcome of a bad/oversized file — indexing continues and
  * the run still reports status "indexed"; these are surfaced (not errors that
- * fail the run) via MCP `skipped[]` / the CLI / a per-run logfile. */
+ * fail the run) via operation results / the CLI / a per-run logfile. */
 typedef struct {
     char *path;   /* repo-relative path of the skipped file */
     char *reason; /* human-readable cause (e.g. "oversized (712 MB > 512 MB)",
@@ -117,7 +117,7 @@ typedef struct {
                    * but contains tree-sitter ERROR/MISSING regions whose
                    * constructs are absent from the graph (best-effort signal —
                    * absence of the flag is NOT a completeness guarantee). The
-                   * MCP layer reports it separately from skipped[]. "cross_lsp"
+                   * operation layer reports it separately from skipped[]. "cross_lsp"
                    * is a RESERVED phase string for Track C's crash-attribution
                    * signal and is intentionally NOT emitted today (the
                    * cross-LSP passes are best-effort/void with no genuine
@@ -152,7 +152,7 @@ void cbm_pipeline_get_ignored(const cbm_pipeline_t *p, cbm_ignored_file_t **out,
 bool cbm_pipeline_try_lock(void);
 
 /* Acquire the global index lock, blocking until available.
- * Use this in MCP handler and autoindex — wait for busy watcher to finish. */
+ * Use this in operation handling and autoindex — wait for busy watcher to finish. */
 void cbm_pipeline_lock(void);
 
 /* Release the global index lock. */

@@ -1,4 +1,4 @@
-# codebase-memory-mcp — all crawlers welcome, including AI answer engines.
+# Codebase Memory CLI — all crawlers welcome, including AI answer engines.
 User-agent: *
 Allow: /
 

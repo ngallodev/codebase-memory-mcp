@@ -371,7 +371,7 @@ static void main_local_cli_mutation_release_all(main_local_cli_mutation_t *mutat
 }
 
 /* Signal handlers only publish intent and close stdin. The daemon host observes
- * the atomic; an MCP thin client unblocks its reader and closes its authenticated
+ * the atomic; a connected client unblocks its reader and closes its authenticated
  * daemon connection from normal thread context. */
 static void request_shutdown(void) {
     if (atomic_exchange(&g_shutdown, 1)) {
@@ -392,8 +392,8 @@ static void signal_handler(int sig) {
 /* ── Parent-process watchdog ────────────────────────────────────── */
 /* parent-death watchdog — distilled from #407 (fixes #406, thanks @nvt-pankajsharma).
  *
- * When this stdio MCP server is launched by an agent that later dies without a
- * clean SIGTERM (e.g. the editor is force-killed), the orphaned server would
+ * When a supervised worker is launched by a coordinator that later dies without a
+ * clean shutdown, the orphaned worker would
  * otherwise linger forever blocked on stdin. POSIX has no portable "notify on
  * parent death" primitive (PR_SET_PDEATHSIG is Linux-only), so we poll getppid:
  * once the parent dies the process is reparented (ppid changes, typically to 1)
@@ -665,7 +665,7 @@ static bool cli_first_nonspace_is_brace(const char *s) {
 static char *main_local_cli_daemon_execute(const char *tool_name, const char *args_json, bool *is_error_out);
 
 /* Slice 1 product boundary: canonical read-only CLI commands execute in the
- * already-coordinated one-shot process instead of opening a daemon-backed MCP
+ * already-coordinated one-shot process instead of opening another daemon-backed
  * session. This removes persistent-session/watch lifecycle from ordinary CLI
  * reads while the historical dispatcher is extracted into a protocol-neutral
  * operation layer in Slice 2. Indexing deliberately remains daemon-side so its
@@ -1060,9 +1060,8 @@ static void print_help(void) {
  *
  * Enrollment lives here, in a command a person types, and deliberately nowhere
  * else: the whole point of the grant store is that neither an indexed repository
- * nor a tool caller can widen its own boundary. A confirmation delivered through
- * the MCP surface would be answered by the same agent that may have been
- * influenced, so it would not be a human decision at all. */
+ * nor a tool caller can widen its own boundary. A confirmation delivered through an agent-controlled product surface could be
+ * answered by the same agent that may have been influenced, so it would not be a human decision at all. */
 static int main_run_allow_root(int argc, char **argv) {
     const char *path = NULL;
     bool approve_sensitive = false;
@@ -1944,8 +1943,7 @@ static char *main_hook_cwd(const char *input_json) {
 }
 
 /* Hooks never spawn a daemon (a cold spawn livelocks against the fail-open
- * budget), so augmentation is absent until an MCP session or `daemon start`
- * brings one up. That state must be VISIBLE, not silent — but a notice per
+ * budget), so augmentation is absent until a daemon is already running. That state must be VISIBLE, not silent — but a notice per
  * tool call would nag, so a cache-scoped marker rate-limits it. */
 static bool main_hook_absent_notice_due(void) {
     const char *cache_dir = cbm_resolve_cache_dir();
@@ -1984,8 +1982,8 @@ static void main_hook_report_absent_daemon(const char *hook_dialect) {
         return;
     }
     (void)fprintf(stderr, "codebase-memory-cli: no CBM daemon is running, so graph "
-                          "augmentation is skipped. Start an MCP session or run "
-                          "`codebase-memory-cli daemon start` to enable it.\n");
+                          "augmentation is skipped. Run `codebase-memory-cli daemon start` "
+                          "to enable it.\n");
     const char *notice = cbm_hook_admission_notice(CBM_HOOK_ADMISSION_DAEMON_ABSENT, hook_dialect);
     if (notice) {
         (void)fputs(notice, stdout);
@@ -2764,8 +2762,7 @@ int main(int argc, char **argv) {
     /* Hook augmentation is contractually fail-open and time-bounded. It is
      * daemon-backed but CONNECT-ONLY: a hook never spawns a daemon (a cold
      * spawn cannot fit the fail-open budget and livelocks against the
-     * last-client-exit teardown), it recycles whichever daemon an MCP
-     * session or `daemon start` already brought up. Arm the deadline before
+     * last-client-exit teardown), it reuses whichever daemon a prior CLI operation or `daemon start` already brought up. Arm the deadline before
      * hashing and IPC. */
     if (role == CBM_DAEMON_PROCESS_HOOK_CLIENT) {
 #ifndef _WIN32

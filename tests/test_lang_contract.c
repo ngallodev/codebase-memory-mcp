@@ -103,7 +103,7 @@ static cbm_store_t *lang_open_indexed(LangProj *lp) {
     return cbm_store_open_path(lp->dbpath);
 }
 
-/* Write each fixture file into a fresh temp project, index it via the MCP
+/* Write each fixture file into a fresh temp project, index it via the production operation
  * production flow (discover -> extract -> registry -> resolve -> dump), and open
  * the resulting graph DB. Returns the store (NULL on any failure). */
 static cbm_store_t *lang_index_files(LangProj *lp, const LangFile *files, int nfiles) {

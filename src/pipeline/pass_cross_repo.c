@@ -133,7 +133,7 @@ static bool cr_store_has_exact_project(cbm_store_t *store, const char *project) 
      * recorded a parse miss carries two rows. Requiring count == 1 over ALL rows
      * therefore made such a project unresolvable as source AND as target, and
      * cross-repo reported it as not indexed when it plainly was (#1609). This is
-     * the same defect mcp.c fixed for list_projects in #1044; this site never
+     * the same project-tail resolution defect fixed for list_projects in #1044; this site never
      * learned it.
      *
      * The single-primary requirement itself is kept: it is what proves this db
