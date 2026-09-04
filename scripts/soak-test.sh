@@ -54,10 +54,9 @@ BINARY=$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")
 #                 + crash-recovery). Unchanged from before this env var existed.
 #   query-leak  = #581 detector. After the initial index, NEVER reindex and NEVER
 #                 mutate files, so the mimalloc page-return path (cbm_mem_collect,
-#                 triggered by index_repository) is never invoked and cannot sweep
-#                 a query-only leak. Phase 3 then hammers a variety of READ tools
-#                 (search_graph / query_graph / trace_path / get_code_snippet /
-#                 search_code) to exercise the query-only store-open + WAL + alloc
+#                 triggered by indexing) is never invoked and cannot sweep
+#                 a query-only leak. Phase 3 then hammers a variety of canonical
+#                 read commands (search / query / trace / snippet / source-search) to exercise the query-only store-open + WAL + alloc
 #                 paths the bug report implicates. The RSS slope/ratio/ceiling
 #                 analysis below is the leak detector. The crash-recovery phase is
 #                 skipped in this mode because it reindexes (which would mask #581).
@@ -180,13 +179,9 @@ if [[ "$BINARY" == *.exe ]] && command -v winepath >/dev/null 2>&1; then
 elif [[ "$BINARY" == *.exe ]] && command -v cygpath >/dev/null 2>&1; then
     SOAK_PROJECT_VALUE=$(cygpath -m "$SOAK_PROJECT")
 fi
-# Every JSON request uses one pre-escaped spelling of the path. The Bash
-# harness keeps SOAK_PROJECT in its host/MSYS form for file and Git operations,
-# while a native Windows child receives the drive-letter form above.
-SOAK_PROJECT_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$SOAK_PROJECT_VALUE")
-SERVER_PID=""
-SERVER_IN=""
-SERVER_OUT=""
+# The Bash harness keeps SOAK_PROJECT in its host/MSYS form for file and Git
+# operations while native Windows CLI children receive SOAK_PROJECT_VALUE.
+DAEMON_PID=""
 SOAK_CLEANED=false
 
 soak_cleanup() {
@@ -194,15 +189,7 @@ soak_cleanup() {
         return
     fi
     SOAK_CLEANED=true
-    { exec 3>&-; } 2>/dev/null || true
-    { exec 4<&-; } 2>/dev/null || true
-    if [[ "${SERVER_PID:-}" =~ ^[0-9]+$ ]]; then
-        kill "$SERVER_PID" 2>/dev/null || true
-        wait "$SERVER_PID" 2>/dev/null || true
-        SERVER_PID=""
-    fi
-    [ -z "${SERVER_IN:-}" ] || rm -f -- "$SERVER_IN"
-    [ -z "${SERVER_OUT:-}" ] || rm -f -- "$SERVER_OUT"
+    CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" "$BINARY" daemon stop >/dev/null 2>&1 || true
     if [ -f "$DAEMON_LOG" ]; then
         cp "$DAEMON_LOG" "$RESULTS_DIR/cbm-daemon.log" 2>/dev/null || true
     fi
@@ -210,189 +197,28 @@ soak_cleanup() {
     [ -z "${SOAK_WIN_ROOT:-}" ] || rm -rf -- "$SOAK_WIN_ROOT"
 }
 
-# MSYS filesystem FIFOs do not provide a faithful stdin stream to a native
-# Windows process: the child observes a clean EOF before the writer's first
-# request. Use Bash's anonymous coprocess pipes for that one platform. Keep the
-# coproc syntax inside eval so macOS's system Bash 3.2 can still parse this
-# script; that branch is reached only by MSYS2 Bash 5. POSIX hosts retain the
-# established FIFO transport.
-start_mcp_server() {
+# Start the supported permanent coordination daemon under diagnostics. All
+# workload operations below are ordinary one-shot CLI clients of this daemon.
+start_soak_daemon() {
     local stderr_mode="$1"
-    if $SOAK_NATIVE_WINDOWS; then
-        unset CBM_SOAK_SERVER CBM_SOAK_SERVER_PID || true
-        if [ "$stderr_mode" = "append" ]; then
-            eval 'coproc CBM_SOAK_SERVER {
-                export CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE"
-                export CBM_DIAGNOSTICS=1 CBM_LOG_LEVEL=info CBM_LOG_FORMAT=text
-                exec "$BINARY" 2>>"$RESULTS_DIR/server-stderr.log"
-            }'
-        else
-            eval 'coproc CBM_SOAK_SERVER {
-                export CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE"
-                export CBM_DIAGNOSTICS=1 CBM_LOG_LEVEL=info CBM_LOG_FORMAT=text
-                exec "$BINARY" 2>"$RESULTS_DIR/server-stderr.log"
-            }'
-        fi
-        SERVER_PID=$CBM_SOAK_SERVER_PID
-        local server_read_fd="${CBM_SOAK_SERVER[0]}"
-        local server_write_fd="${CBM_SOAK_SERVER[1]}"
-        exec 3>&"$server_write_fd"
-        exec 4<&"$server_read_fd"
-        # Only fd3/fd4 may retain the parent endpoints. Otherwise closing fd3
-        # during crash/shutdown would leave the original writer open and the
-        # native frontend would never observe EOF.
-        eval "exec ${server_write_fd}>&-"
-        eval "exec ${server_read_fd}<&-"
-        return
+    local redir=">"
+    [ "$stderr_mode" = "append" ] && redir=">>"
+    local out
+    set +e
+    out=$(CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" CBM_DIAGNOSTICS=1 CBM_LOG_LEVEL=info \
+        CBM_LOG_FORMAT=text "$BINARY" daemon start 2>>"$RESULTS_DIR/server-stderr.log")
+    local rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+        return "$rc"
     fi
-
-    if [ "$stderr_mode" = "append" ]; then
-        CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" CBM_DIAGNOSTICS=1 CBM_LOG_LEVEL=info \
-            CBM_LOG_FORMAT=text "$BINARY" < "$SERVER_IN" > "$SERVER_OUT" \
-            2>>"$RESULTS_DIR/server-stderr.log" &
-    else
-        CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" CBM_DIAGNOSTICS=1 CBM_LOG_LEVEL=info \
-            CBM_LOG_FORMAT=text "$BINARY" < "$SERVER_IN" > "$SERVER_OUT" \
-            2>"$RESULTS_DIR/server-stderr.log" &
+    DAEMON_PID=$(printf '%s\n' "$out" | sed -n 's/.*pid \([0-9][0-9]*\).*/\1/p' | tail -n 1)
+    if [ -z "$DAEMON_PID" ]; then
+        local status
+        status=$(CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" "$BINARY" daemon status 2>&1 || true)
+        DAEMON_PID=$(printf '%s\n' "$status" | sed -n 's/.*pid \([0-9][0-9]*\).*/\1/p' | tail -n 1)
     fi
-    SERVER_PID=$!
-    # Open fds AFTER server starts (otherwise FIFO open blocks).
-    exec 3>"$SERVER_IN"
-    exec 4<"$SERVER_OUT"
-}
-
-trap soak_cleanup EXIT
-trap 'exit 130' INT TERM
-
-generate_project() {
-    local root="$1"
-    # Python package (80 files)
-    for i in $(seq 1 20); do
-        local pkg="$root/src/pkg_${i}"
-        mkdir -p "$pkg"
-        cat > "$pkg/__init__.py" << PYEOF
-from .handlers import handle_${i}
-from .models import Model${i}
-PYEOF
-        cat > "$pkg/handlers.py" << PYEOF
-from .models import Model${i}
-from .utils import validate_${i}, transform_${i}
-
-def handle_${i}(request):
-    data = Model${i}.from_request(request)
-    if not validate_${i}(data):
-        return {"error": "invalid"}
-    return transform_${i}(data)
-
-def process_batch_${i}(items):
-    return [handle_${i}(item) for item in items]
-PYEOF
-        cat > "$pkg/models.py" << PYEOF
-class Model${i}:
-    def __init__(self, name, value):
-        self.name = name
-        self.value = value
-
-    @classmethod
-    def from_request(cls, req):
-        return cls(req.get("name", ""), req.get("value", 0))
-
-    def to_dict(self):
-        return {"name": self.name, "value": self.value}
-PYEOF
-        cat > "$pkg/utils.py" << PYEOF
-def validate_${i}(data):
-    return data is not None and hasattr(data, 'name')
-
-def transform_${i}(data):
-    return {"result": data.name.upper(), "score": data.value * ${i}}
-PYEOF
-    done
-
-    # Go package (40 files)
-    mkdir -p "$root/internal/api" "$root/internal/store" "$root/cmd"
-    for i in $(seq 1 20); do
-        cat > "$root/internal/api/handler_${i}.go" << GOEOF
-package api
-
-import "fmt"
-
-func HandleRoute${i}(path string) (string, error) {
-    result := ProcessData${i}(path)
-    return fmt.Sprintf("route_%d: %s", ${i}, result), nil
-}
-
-func ProcessData${i}(input string) string {
-    return fmt.Sprintf("processed_%d_%s", ${i}, input)
-}
-GOEOF
-        cat > "$root/internal/store/repo_${i}.go" << GOEOF
-package store
-
-type Entity${i} struct {
-    ID   int
-    Name string
-    Data map[string]interface{}
-}
-
-func FindEntity${i}(id int) (*Entity${i}, error) {
-    return &Entity${i}{ID: id, Name: "entity"}, nil
-}
-
-func SaveEntity${i}(e *Entity${i}) error {
-    return nil
-}
-GOEOF
-    done
-
-    # TypeScript (40 files)
-    mkdir -p "$root/frontend/src/components" "$root/frontend/src/hooks"
-    for i in $(seq 1 20); do
-        cat > "$root/frontend/src/components/Component${i}.tsx" << TSEOF
-import React from 'react';
-import { useData${i} } from '../hooks/useData${i}';
-
-interface Props${i} { id: number; label: string; }
-
-export const Component${i}: React.FC<Props${i}> = ({ id, label }) => {
-    const { data, loading } = useData${i}(id);
-    if (loading) return <div>Loading...</div>;
-    return <div className="comp-${i}">{label}: {JSON.stringify(data)}</div>;
-};
-TSEOF
-        cat > "$root/frontend/src/hooks/useData${i}.ts" << TSEOF
-import { useState, useEffect } from 'react';
-
-export function useData${i}(id: number) {
-    const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
-    useEffect(() => {
-        fetch('/api/data/${i}/' + id)
-            .then(r => r.json())
-            .then(d => { setData(d); setLoading(false); });
-    }, [id]);
-    return { data, loading };
-}
-TSEOF
-    done
-
-    # Config files
-    cat > "$root/config.yaml" << 'YAMLEOF'
-database:
-  host: localhost
-  port: 5432
-  pool_size: 10
-server:
-  workers: 4
-  timeout: 30
-YAMLEOF
-    cat > "$root/Dockerfile" << 'DEOF'
-FROM python:3.11-slim
-WORKDIR /app
-COPY . .
-RUN pip install -r requirements.txt
-CMD ["python", "-m", "src.main"]
-DEOF
+    [ -n "$DAEMON_PID" ]
 }
 
 echo "Generating test project (~200 files)..."
@@ -405,119 +231,40 @@ git -C "$SOAK_PROJECT" -c user.email=test@test -c user.name=test commit -q -m "i
 FILE_COUNT=$(find "$SOAK_PROJECT" -type f | wc -l | tr -d ' ')
 echo "OK: $FILE_COUNT files in test project"
 
-# ── Helper: run CLI tool call and record latency ─────────────────
+# ── Helper: run canonical CLI operation and record latency ───────────────
 
-# Query ID counter
-QUERY_ID=1
-MCP_LAST_RESPONSE=""
+CLI_LAST_RESPONSE=""
 
-# Send a JSON-RPC tool call to the running server via its stdin pipe.
-# Reads response from server stdout. Records latency.
-json_rpc_response_ok() {
-    local expected_id="$1"
-    local response="$2"
-    python3 -c '
-import json
-import sys
-
-try:
-    message = json.loads(sys.stdin.read())
-    result = message.get("result") if isinstance(message, dict) else None
-    ok = (
-        isinstance(message, dict)
-        and message.get("id") == int(sys.argv[1])
-        and "error" not in message
-        and "result" in message
-        and not (isinstance(result, dict) and result.get("isError") is True)
-    )
-except (ValueError, TypeError):
-    ok = False
-sys.exit(0 if ok else 1)
-' "$expected_id" <<<"$response"
-}
-
-# Read the authoritative project key from index_repository's nested text JSON.
-# This mirrors the path canonicalization actually performed by CBM instead of
-# guessing from a host/MSYS spelling that can differ on macOS and Windows.
-mcp_response_project() {
-    local response="$1"
-    python3 -c '
-import json
-import sys
-
-try:
-    message = json.loads(sys.stdin.read())
-    result = message.get("result", {})
-    content = result.get("content", []) if isinstance(result, dict) else []
-    project = ""
-    for item in content:
-        if isinstance(item, dict) and item.get("type") == "text":
-            # The summary JSON may be preceded by plain-text banner items
-            # (update-available notice); skip anything that is not JSON.
-            try:
-                payload = json.loads(item.get("text", ""))
-            except ValueError:
-                continue
-            candidate = payload.get("project") if isinstance(payload, dict) else None
-            if isinstance(candidate, str) and candidate:
-                project = candidate
-                break
-    if not project:
-        raise ValueError("index response has no project")
-    print(project)
-except (ValueError, TypeError, AttributeError):
-    sys.exit(1)
-' <<<"$response"
-}
-
-mcp_initialize() {
-    local response=""
-    echo '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"capabilities":{}}}' >&3
-    read -r -t 10 response <&4 2>/dev/null && json_rpc_response_ok 0 "$response"
-}
-
-mcp_call() {
-    local tool="$1"
-    local args="$2"
-    local id=$QUERY_ID
-    QUERY_ID=$((QUERY_ID + 1))
-
-    local req="{\"jsonrpc\":\"2.0\",\"id\":$id,\"method\":\"tools/call\",\"params\":{\"name\":\"$tool\",\"arguments\":$args}}"
-    local t0
+cli_call() {
+    local label="$1"
+    shift
+    local t0 t1 dur rc
     t0=$(python3 -c "import time; print(int(time.time()*1000))")
-
-    # Send request to server stdin
-    echo "$req" >&3
-
-    # Read and validate one response (wait up to 30s). A JSON-RPC error or
-    # tool-level isError is a failed operation, not a successful round-trip.
-    local resp=""
-    local exit_code=1
-    MCP_LAST_RESPONSE=""
-    if read -r -t 30 resp <&4 2>/dev/null; then
-        MCP_LAST_RESPONSE="$resp"
-        if json_rpc_response_ok "$id" "$resp"; then
-            exit_code=0
-        else
-            # A stale (previous, late) response desyncs every later
-            # round-trip: drain queued lines until the matching id shows up
-            # or the stream runs dry, so one slow reply costs one failed op
-            # instead of corrupting the whole run's verdicts.
-            local drain=""
-            while read -r -t 2 drain <&4 2>/dev/null; do
-                MCP_LAST_RESPONSE="$drain"
-                if json_rpc_response_ok "$id" "$drain"; then
-                    exit_code=0
-                    break
-                fi
-            done
-        fi
-    fi
-    local t1
+    set +e
+    CLI_LAST_RESPONSE=$(CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" "$BINARY" "$@" --json \
+        2>>"$RESULTS_DIR/cli-stderr.log")
+    rc=$?
+    set -e
     t1=$(python3 -c "import time; print(int(time.time()*1000))")
-    local dur=$((t1 - t0))
-    echo "$(date +%s),$tool,$dur,$exit_code" >> "$LATENCY_CSV"
-    return "$exit_code"
+    dur=$((t1 - t0))
+    echo "$(date +%s),$label,$dur,$rc" >> "$LATENCY_CSV"
+    return "$rc"
+}
+
+index_project() { cli_call index "$@"; }
+
+index_response_project() {
+    python3 -c '
+import json, sys
+try:
+    payload=json.load(sys.stdin)
+    project=payload.get("project") if isinstance(payload, dict) else None
+    if not isinstance(project, str) or not project:
+        raise ValueError("missing project")
+    print(project)
+except Exception:
+    sys.exit(1)
+' <<<"$CLI_LAST_RESPONSE"
 }
 
 # ── Helper: collect diagnostics snapshot ─────────────────────────
@@ -633,50 +380,27 @@ print(value)
 ' "$key" 2>/dev/null
 }
 
-# ── Phase 1: Start CLI coordination runtime with diagnostics ──────────────────
+# ── Phase 1: Start CLI coordination runtime with diagnostics ─────────────
 
-echo "--- Phase 1: start server ---"
-# Bidirectional pipes: fd3 = server stdin (write), fd4 = server stdout (read)
-if ! $SOAK_NATIVE_WINDOWS; then
-    SERVER_IN=$(mktemp -u).in
-    SERVER_OUT=$(mktemp -u).out
-    mkfifo "$SERVER_IN" "$SERVER_OUT"
-fi
-start_mcp_server truncate
-sleep 3
-
-if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo "FAIL: server did not start"
-    echo "--- server stderr (tail) ---"
-    tail -40 "$RESULTS_DIR/server-stderr.log" 2>/dev/null || echo "(no stderr captured)"
-    exec 3>&- 4<&-
-    rm -f "$SERVER_IN" "$SERVER_OUT"
+echo "--- Phase 1: start permanent daemon ---"
+if ! start_soak_daemon truncate; then
+    echo "FAIL: daemon did not start"
+    tail -40 "$RESULTS_DIR/server-stderr.log" 2>/dev/null || true
     exit 1
 fi
-echo "OK: server running (pid=$SERVER_PID)"
+echo "OK: permanent daemon running (pid=$DAEMON_PID)"
 
 if ! wait_for_diagnostics_snapshot; then
     echo "FAIL: daemon did not emit a usable diagnostics.start path"
-    echo "--- server stderr (tail) ---"
-    tail -40 "$RESULTS_DIR/server-stderr.log" 2>/dev/null || echo "(no stderr captured)"
-    exec 3>&- 4<&-
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
-    rm -f "$SERVER_IN" "$SERVER_OUT"
-    exit 1
-fi
-
-# Send and validate the initialize handshake.
-if ! mcp_initialize; then
-    echo "FAIL: server did not complete initialize"
+    tail -40 "$RESULTS_DIR/server-stderr.log" 2>/dev/null || true
     exit 1
 fi
 
 # ── Phase 2: Initial index ───────────────────────────────────────
 
 echo "--- Phase 2: initial index ---"
-mcp_call index_repository "{\"repo_path\":$SOAK_PROJECT_JSON}" || PASS=false
-if ! PROJ_NAME=$(mcp_response_project "$MCP_LAST_RESPONSE"); then
+index_project "$SOAK_PROJECT_VALUE" --mode fast || PASS=false
+if ! PROJ_NAME=$(index_response_project); then
     echo "FAIL: initial index response did not report its canonical project key"
     exit 1
 fi
@@ -706,16 +430,16 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
         # cbm_mem_collect (mimalloc page return) is NEVER triggered and
         # cannot sweep a query-only leak. Hammer a VARIETY of read tools to
         # exercise the store-open + WAL + alloc paths the report implicates.
-        mcp_call search_graph "{\"project\":\"$PROJ_NAME\",\"name_pattern\":\".*Handle.*\"}" || PASS=false
-        mcp_call query_graph "{\"project\":\"$PROJ_NAME\",\"query\":\"MATCH (n) RETURN n.name LIMIT 25\"}" || PASS=false
-        mcp_call trace_path "{\"project\":\"$PROJ_NAME\",\"function_name\":\"handle_1\",\"direction\":\"both\"}" || PASS=false
-        mcp_call get_code_snippet "{\"project\":\"$PROJ_NAME\",\"qualified_name\":\"handle_1\"}" || PASS=false
-        mcp_call search_code "{\"project\":\"$PROJ_NAME\",\"pattern\":\"def \"}" || PASS=false
+        cli_call search search --project "$PROJ_NAME" --name-pattern ".*Handle.*" --limit 25 || PASS=false
+        cli_call query query "MATCH (n) RETURN n.name LIMIT 25" --project "$PROJ_NAME" || PASS=false
+        cli_call trace trace handle_1 --project "$PROJ_NAME" --direction both || PASS=false
+        cli_call snippet snippet handle_1 --project "$PROJ_NAME" || PASS=false
+        cli_call source-search source-search "def " --project "$PROJ_NAME" || PASS=false
     else
         # ── default mode (unchanged) ─────────────────────────────────
         # Queries every 2 seconds
-        mcp_call search_graph "{\"project\":\"$PROJ_NAME\",\"name_pattern\":\".*handle_.*\"}" || PASS=false
-        mcp_call trace_path "{\"project\":\"$PROJ_NAME\",\"function_name\":\"handle_1\",\"direction\":\"both\"}" || PASS=false
+        cli_call search search --project "$PROJ_NAME" --name-pattern ".*handle_.*" --limit 25 || PASS=false
+        cli_call trace trace handle_1 --project "$PROJ_NAME" --direction both || PASS=false
 
         # File mutation every 2 minutes
         if [ $((NOW - LAST_MUTATE)) -ge 120 ]; then
@@ -727,7 +451,7 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
 
         # Full reindex every 2 minutes (compressed — simulates 15min real interval)
         if [ $((NOW - LAST_REINDEX)) -ge 120 ]; then
-            mcp_call index_repository "{\"repo_path\":$SOAK_PROJECT_JSON}" || PASS=false
+            index_project "$SOAK_PROJECT_VALUE" --mode fast || PASS=false
             LAST_REINDEX=$NOW
         fi
     fi
@@ -761,7 +485,7 @@ fi
 # ── Phase 4b: one-shot CLI admission churn ───────────────────────
 # Every `cli` one-shot is a complete daemon client cycle (connect → commit →
 # execute → close-intent → drain) against the SAME daemon the metrics sampler
-# is watching. The long-lived MCP session above never exercises that path, so
+# is watching. The repeated workload already uses this path, so
 # a per-admission leak in the accept/worker-finish cycle would be invisible
 # without this churn — it lands in the same RSS/FD analysis below.
 
@@ -770,7 +494,7 @@ CHURN_CYCLES=${SOAK_CLI_CHURN_CYCLES:-40}
 CHURN_FAILS=0
 churn_index=0
 while [ "$churn_index" -lt "$CHURN_CYCLES" ]; do
-    if ! CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" "$BINARY" cli list_projects '{}' \
+    if ! CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" "$BINARY" projects --json \
         >/dev/null 2>>"$RESULTS_DIR/cli-churn-stderr.log"; then
         CHURN_FAILS=$((CHURN_FAILS + 1))
     fi
@@ -784,73 +508,45 @@ else
 fi
 collect_snapshot
 
-# ── Phase 5: Crash recovery test ────────────────────────────────
-# Skipped in query-leak mode: crash recovery re-indexes (Phase 5 calls
-# index_repository), which triggers cbm_mem_collect and would mask the #581
-# query-only leak the whole run is trying to surface.
+# ── Phase 5: crash recovery test ────────────────────────────────────────
+# Skipped in query-leak mode because recovery deliberately reindexes.
 
 if [ "$SKIP_CRASH" != "--skip-crash-test" ] && [ "$CBM_SOAK_MODE" != "query-leak" ]; then
-    echo "--- Phase 5: crash recovery ---"
-
-    # Hand an indexing request to the frontend, then kill it without consuming
-    # the response. The last-session disconnect must cancel session work and
-    # let the account daemon terminate before a clean restart.
+    echo "--- Phase 5: daemon crash recovery ---"
     DIAGNOSTICS_START_COUNT=$(diagnostics_start_count)
-    DAEMON_STOP_COUNT=$(daemon_stop_count)
     DIAG_FILE_BEFORE_CRASH="$DIAG_FILE"
-    crash_id=$QUERY_ID
-    QUERY_ID=$((QUERY_ID + 1))
-    echo "{\"jsonrpc\":\"2.0\",\"id\":$crash_id,\"method\":\"tools/call\",\"params\":{\"name\":\"index_repository\",\"arguments\":{\"repo_path\":$SOAK_PROJECT_JSON}}}" >&3
+
+    CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" "$BINARY" index "$SOAK_PROJECT_VALUE" --mode fast --json \
+        >"$RESULTS_DIR/crash-index.out" 2>"$RESULTS_DIR/crash-index.err" &
+    CRASH_INDEX_PID=$!
     sleep 0.1
-    kill -9 "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
-    SERVER_PID=""
-    exec 3>&- 4<&-
-    if ! wait_for_daemon_stop "$DAEMON_STOP_COUNT"; then
-        echo "FAIL: last-session crash did not stop the shared daemon"
-        exit 1
-    fi
+    kill -9 "$DAEMON_PID" 2>/dev/null || true
+    wait "$CRASH_INDEX_PID" 2>/dev/null || true
 
-    # Restart server
-    start_mcp_server append
-    sleep 3
-
-    if kill -0 "$SERVER_PID" 2>/dev/null; then
-        if ! wait_for_diagnostics_snapshot "$DIAGNOSTICS_START_COUNT" "$DIAG_FILE_BEFORE_CRASH"; then
-            echo "FAIL: frontend restart did not start a fresh daemon diagnostics generation"
-            exit 1
-        fi
-        echo "OK: server restarted after kill -9"
-        if ! mcp_initialize; then
-            echo "FAIL: restarted server did not complete initialize"
-            PASS=false
-        fi
-
-        # Verify clean re-index works
-        mcp_call index_repository "{\"repo_path\":$SOAK_PROJECT_JSON}" || PASS=false
-        if $PASS; then
-            echo "OK: clean re-index after crash recovery"
-        fi
-    else
-        echo "FAIL: server did not restart after kill -9"
+    if ! start_soak_daemon append; then
+        echo "FAIL: daemon did not restart after kill -9"
         PASS=false
+    elif ! wait_for_diagnostics_snapshot "$DIAGNOSTICS_START_COUNT" "$DIAG_FILE_BEFORE_CRASH"; then
+        echo "FAIL: daemon restart did not publish a fresh diagnostics generation"
+        PASS=false
+    else
+        echo "OK: daemon restarted after kill -9 (pid=$DAEMON_PID)"
+        index_project "$SOAK_PROJECT_VALUE" --mode fast || PASS=false
+        if $PASS; then
+            echo "OK: clean re-index after daemon crash recovery"
+        fi
     fi
 fi
 
-# ── Phase 6: Shutdown + analysis ─────────────────────────────────
+# ── Phase 6: shutdown + analysis ────────────────────────────────────────
 
 echo "--- Phase 6: shutdown + analysis ---"
-FINAL_DAEMON_STOP_COUNT=$(daemon_stop_count)
-exec 3>&-  # close server stdin → EOF → clean exit
-sleep 2
-exec 4<&-  # close stdout reader
-kill "$SERVER_PID" 2>/dev/null || true
-wait "$SERVER_PID" 2>/dev/null || true
-SERVER_PID=""
-if ! wait_for_daemon_stop "$FINAL_DAEMON_STOP_COUNT"; then
-    echo "FAIL: final frontend shutdown did not stop the shared daemon"
+if ! CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" "$BINARY" daemon stop \
+    >>"$RESULTS_DIR/server-stderr.log" 2>&1; then
+    echo "FAIL: permanent daemon did not stop cleanly"
     PASS=false
 fi
+DAEMON_PID=""
 
 # ── Analysis ─────────────────────────────────────────────────────
 
@@ -930,9 +626,9 @@ else
     echo "Idle daemon CPU: unavailable on Windows (not evaluated)" | tee -a "$SUMMARY"
 fi
 
-# Check 4: Max query latency (exclude index_repository — indexing is legitimately slow)
-MAX_LATENCY=$(awk -F, 'NR>1 && $2!="index_repository" { if ($3>max) max=$3 } END { print max+0 }' "$LATENCY_CSV")
-MAX_INDEX=$(awk -F, 'NR>1 && $2=="index_repository" { if ($3>max) max=$3 } END { print max+0 }' "$LATENCY_CSV")
+# Check 4: Max query latency (exclude index — indexing is legitimately slow)
+MAX_LATENCY=$(awk -F, 'NR>1 && $2!="index" { if ($3>max) max=$3 } END { print max+0 }' "$LATENCY_CSV")
+MAX_INDEX=$(awk -F, 'NR>1 && $2=="index" { if ($3>max) max=$3 } END { print max+0 }' "$LATENCY_CSV")
 echo "Max query latency: ${MAX_LATENCY}ms (index: ${MAX_INDEX}ms)" | tee -a "$SUMMARY"
 # 60s threshold — MSYS2/Wine adds significant overhead to all operations
 if [ "${MAX_LATENCY:-0}" -gt 60000 ] 2>/dev/null; then

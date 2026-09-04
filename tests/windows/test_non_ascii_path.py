@@ -1,7 +1,7 @@
 """GREEN regression guard — non-ASCII runtime and repo paths work on Windows.
 
 Guards the fix for issue #636 / #357 (landed on main via #700) at the product
-surface (real codebase-memory-mcp process, real SQLite DB, real stdio). Two
+surface (real codebase-memory-cli process, real SQLite DB, real CLI). Two
 byte-identical polyglot fixtures (TypeScript + Go, #1959) are indexed: one under
 an ASCII parent path, one under a non-ASCII parent path. The invariant under test:
 
@@ -24,7 +24,7 @@ Exit code: 0 == invariant holds (green), 1 == invariant violated (regression),
 2 == environment/setup error.
 
 Usage:
-    python test_non_ascii_path.py <path-to-codebase-memory-mcp[.exe]>
+    python test_non_ascii_path.py <path-to-codebase-memory-cli[.exe]>
 """
 import json
 import os
@@ -34,7 +34,6 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mcp_stdio import McpServer, wait_projects_with_stats  # noqa: E402
 
 MATH_TS = (
     "export function add(a: number, b: number): number { return a + b; }\n"
@@ -233,7 +232,7 @@ def verify_relocated_runtime(binary, work):
         *("segment_%02d_%s" % (i, "x" * 32) for i in range(7)),
         "bin",
     )
-    installed = os.path.join(target, "codebase-memory-mcp.exe")
+    installed = os.path.join(target, "codebase-memory-cli.exe")
     if len(os.path.abspath(installed)) <= 260:
         return fail("setup: intended long install path is only %d characters" % len(
             os.path.abspath(installed)))
@@ -357,72 +356,62 @@ def no_project_error(index_txt, repo, cache):
                         " | ".join(log_tails) or "<none>")}
 
 
+def run_cli(binary, cache, args, timeout=180, extra_env=None):
+    env = os.environ.copy()
+    env["CBM_CACHE_DIR"] = cache
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run([binary] + args, capture_output=True, timeout=timeout, env=env)
+
+
+def parse_query_count(text):
+    for line in text.splitlines():
+        stripped = line.strip().strip('"')
+        if stripped.isdigit():
+            return int(stripped)
+    return 0
+
+
 def index_and_count(binary, repo, cache):
     """Index `repo` into an isolated cache and return label-resolved counts."""
     os.makedirs(cache, exist_ok=True)
-    with McpServer(binary, cache_dir=cache) as s:
-        s.initialize()
-        resp = s.call_tool("index_repository", {"repo_path": repo}, timeout=180)
-        index_txt, err = s.tool_text(resp)
-        if err:
-            return {"error": "index tools/call error: %r" % err}
-        # The index response itself carries the synchronous, authoritative
-        # counts ("nodes"/"edges"). list_projects publishes its stats columns
-        # asynchronously — on some venues never within a one-shot session — so
-        # gating on it misreads a healthy index as a setup failure (#1952).
-        try:
-            summary = json.loads(index_txt)
-        except ValueError:
-            summary = {}
-        out = {"name": summary.get("project"), "nodes": summary.get("nodes"),
-               "edges": summary.get("edges")}
-        if out["nodes"] is None:
-            # Payload without counts: fall back to list_projects, polled
-            # because its stats row can trail the index on slow runners.
-            projects, _ = wait_projects_with_stats(s)
-            if not projects:
-                return no_project_error(index_txt, repo, cache)
-            p = projects[0]
-            out = {"name": p.get("name"), "nodes": p.get("nodes"),
-                   "edges": p.get("edges")}
-        # Definition-level counts prove the parser ran (not just discovery).
-        # query_graph defaults to TOON text; this scripted consumer requests
-        # format="json" ({"columns":[...],"rows":[["<n>"]],...}) explicitly.
-        name = out["name"]
-        defs = 0
-        for label in ("Function", "Class", "Method"):
-            q = "MATCH (n:%s) RETURN count(n)" % label
-            r = s.call_tool("query_graph",
-                            {"query": q, "project": name, "format": "json"},
-                            timeout=60)
-            t, _ = s.tool_text(r)
-            try:
-                rows = json.loads(t).get("rows") or []
-                if rows and rows[0]:
-                    defs += int(rows[0][0])
-            except Exception:
-                pass
-        out["definition_nodes"] = defs
-        # Go-file definitions separately: the Go passes derive qualified names
-        # from the containing directory, so they meet non-ASCII paths on a
-        # different route than the TS passes; a Go-specific count catches a
-        # regression that total counts could mask (#1959).
-        go_defs = 0
-        for label in ("Function", "Method"):
-            q = ("MATCH (n:%s) WHERE n.file_path CONTAINS '.go' "
-                 "RETURN count(n)" % label)
-            r = s.call_tool("query_graph",
-                            {"query": q, "project": name, "format": "json"},
-                            timeout=60)
-            t, _ = s.tool_text(r)
-            try:
-                rows = json.loads(t).get("rows") or []
-                if rows and rows[0]:
-                    go_defs += int(rows[0][0])
-            except Exception:
-                pass
-        out["go_definition_nodes"] = go_defs
-        return out
+    indexed = run_cli(binary, cache, ["index", repo, "--json"], timeout=180)
+    index_txt = (indexed.stdout or b"").decode("utf-8", "replace")
+    if indexed.returncode != 0:
+        diagnostic = ((indexed.stdout or b"") + (indexed.stderr or b"")).decode(
+            "utf-8", "replace")
+        return {"error": "index command error: %s" % diagnostic[:800]}
+    try:
+        summary = json.loads(index_txt)
+    except ValueError:
+        summary = {}
+    out = {"name": summary.get("project"), "nodes": summary.get("nodes"),
+           "edges": summary.get("edges")}
+    if not out["name"] or out["nodes"] is None:
+        return no_project_error(index_txt, repo, cache)
+
+    # Definition-level counts prove the parser ran (not just discovery).
+    defs = 0
+    for label in ("Function", "Class", "Method"):
+        q = "MATCH (n:%s) RETURN count(n)" % label
+        result = run_cli(binary, cache, ["query", q, "--project", out["name"]], timeout=60)
+        if result.returncode == 0:
+            defs += parse_query_count((result.stdout or b"").decode("utf-8", "replace"))
+    out["definition_nodes"] = defs
+
+    # Go-file definitions separately: the Go passes derive qualified names
+    # from the containing directory, so they meet non-ASCII paths on a
+    # different route than the TS passes; a Go-specific count catches a
+    # regression that total counts could mask (#1959).
+    go_defs = 0
+    for label in ("Function", "Method"):
+        q = ("MATCH (n:%s) WHERE n.file_path CONTAINS '.go' "
+             "RETURN count(n)" % label)
+        result = run_cli(binary, cache, ["query", q, "--project", out["name"]], timeout=60)
+        if result.returncode == 0:
+            go_defs += parse_query_count((result.stdout or b"").decode("utf-8", "replace"))
+    out["go_definition_nodes"] = go_defs
+    return out
 
 
 def main():
@@ -512,8 +501,8 @@ def main():
                     print("       %s retry matched baseline -- order-dependent, "
                           "not path-dependent" % key)
                 else:
-                    # The MCP result hides the pipeline's own diagnostics; the
-                    # CLI entrypoint prints them. Same repo, third fresh cache.
+                    # Capture the canonical CLI's own diagnostics on the same
+                    # repo with a third fresh cache.
                     cli_cache = os.path.join(work, "c3_" + key)
                     cli_env = os.environ.copy()
                     cli_env["CBM_CACHE_DIR"] = cli_cache
@@ -522,8 +511,7 @@ def main():
                     # is the only record of the pipeline's own diagnostics.
                     cli_env["CBM_PROFILE"] = "1"
                     cli = subprocess.run(
-                        [binary, "cli", "index_repository",
-                         json.dumps({"repo_path": repo})],
+                        [binary, "index", repo, "--json"],
                         capture_output=True, timeout=180, env=cli_env)
                     cli_out = (cli.stdout or b"").decode("utf-8", "replace")
                     cli_err = (cli.stderr or b"").decode("utf-8", "replace")

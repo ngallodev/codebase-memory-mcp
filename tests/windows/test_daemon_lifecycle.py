@@ -4,9 +4,9 @@ Guards the PR #1139 daemon-control surface at the product level:
 
 * ``daemon status`` with no daemon reports not-running and exits nonzero.
 * ``daemon start`` launches a PERMANENT daemon: it reports a pid, and the
-  daemon survives its clients (a one-shot ``cli`` command recycles it without
+  daemon survives its clients (a one-shot CLI command recycles it without
   printing the cold-start hint, and the daemon is still active afterwards).
-* A cold one-shot ``cli`` command (no daemon) prints the startup-tax hint.
+* A cold one-shot CLI command (no daemon) prints the startup-tax hint.
 * ``daemon stop`` on an idle daemon stops it; a second ``stop`` is idempotent.
 
 Every path carries a kill-by-pid backstop so a stuck daemon can never hang the
@@ -15,7 +15,7 @@ suite (the Windows leg's test-infra hang sensitivity is on record).
 Exit code: 0 == lifecycle behaves (green), 1 == regression, 2 == setup error.
 
 Usage:
-    python test_daemon_lifecycle.py <path-to-codebase-memory-mcp[.exe]>
+    python test_daemon_lifecycle.py <path-to-codebase-memory-cli[.exe]>
 """
 import os
 import re
@@ -64,7 +64,7 @@ def main():
             return 1
         print("PASS: status reports not-running before any daemon exists")
 
-        cold = run_cli(binary, cache, ["cli", "list_projects", "{}"])
+        cold = run_cli(binary, cache, ["projects", "--json"])
         cold_text = output_text(cold)
         if cold.returncode != 0 or "daemon start" not in cold_text:
             print("RED: a cold one-shot cli command should succeed and hint at "
@@ -82,7 +82,7 @@ def main():
             return 1
         print("PASS: daemon start reported permanent pid %d" % daemon_pid)
 
-        warm = run_cli(binary, cache, ["cli", "list_projects", "{}"])
+        warm = run_cli(binary, cache, ["projects", "--json"])
         warm_text = output_text(warm)
         if warm.returncode != 0 or "daemon start" in warm_text:
             print("RED: a warm cli one-shot should recycle the daemon without the "

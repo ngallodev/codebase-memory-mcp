@@ -1,7 +1,7 @@
 """GREEN native-Windows guard for the `update` -> install.ps1 handoff.
 
 Windows ships one executable in its runtime set, exactly like Linux and macOS:
-``codebase-memory-mcp.exe``.
+``codebase-memory-cli.exe``.
 
 There used to be a second, permanently resident launcher stub whose only job
 was to swap the product binary out from under itself, because a running .exe
@@ -19,7 +19,7 @@ This guard asserts the replacement contract on real native Windows:
 * ``update`` refuses to reach the network first: it hands off before it
   consults CBM_DOWNLOAD_URL, so it stays fast even when that URL is a black
   hole.
-* ``update`` does not disturb an already-open MCP/daemon session.
+* ``update`` does not disturb an already-running permanent daemon.
 
 A regression here means the in-process self-update and removed launcher stub
 came back.
@@ -27,7 +27,7 @@ came back.
 Exit code: 0 == contract honored, 1 == regression, 2 == precondition failure.
 
 Usage:
-    python test_windows_update_handoff.py <codebase-memory-mcp.exe>
+    python test_windows_update_handoff.py <codebase-memory-cli.exe>
 """
 
 import hashlib
@@ -39,8 +39,6 @@ import sys
 import tempfile
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mcp_stdio import McpError, McpServer  # noqa: E402
 
 
 class GuardFailure(Exception):
@@ -98,7 +96,7 @@ def isolated_environment(work):
 
 def copy_binary(source, directory):
     directory.mkdir(parents=True, exist_ok=True)
-    binary = directory / "codebase-memory-mcp.exe"
+    binary = directory / "codebase-memory-cli.exe"
     shutil.copy2(source, binary)
     return binary
 
@@ -146,7 +144,7 @@ def assert_update_hands_off_to_install_script(source, env, work):
         "replace itself; that is exactly what the removed launcher stub was for)",
     )
     require(
-        not (binary.parent / "codebase-memory-mcp.payload.exe").exists(),
+        not (binary.parent / "codebase-memory-cli.payload.exe").exists(),
         "update recreated a launcher/payload pair beside the binary",
     )
     require(
@@ -156,29 +154,38 @@ def assert_update_hands_off_to_install_script(source, env, work):
     print("PASS: update handed off to install.ps1 without touching its own image")
 
 
-def assert_update_does_not_drain_active_session(source, env, cache, work):
-    binary = copy_binary(source, work / "update-session")
-    with McpServer(str(binary), cache_dir=str(cache), extra_env=env) as server:
-        server.initialize(timeout=30)
-        require(server.tools_list(timeout=30), "MCP control session has no tools")
+def daemon_pid(text):
+    import re
+    match = re.search(r"pid[: ]+(\d+)", text)
+    return int(match.group(1)) if match else 0
 
-        command = copy_binary(source, work / "update-session-command")
-        command_env = dict(env)
+
+def assert_update_does_not_restart_active_daemon(source, env, cache, work):
+    binary = copy_binary(source, work / "update-daemon")
+    daemon_env = dict(env)
+    daemon_env["CBM_CACHE_DIR"] = str(cache)
+    start = run([binary, "daemon", "start"], daemon_env, timeout=30)
+    require(start.returncode == 0, "could not start permanent daemon: %s" % output_text(start)[-800:])
+    before_status = run([binary, "daemon", "status"], daemon_env, timeout=20)
+    before_pid = daemon_pid(output_text(before_status))
+    require(before_status.returncode == 0 and before_pid,
+            "could not resolve permanent daemon pid: %s" % output_text(before_status)[-800:])
+    try:
+        command = copy_binary(source, work / "update-daemon-command")
+        command_env = dict(daemon_env)
         command_env["CBM_DOWNLOAD_URL"] = "https://127.0.0.1:1"
         result = run([command, "update", "--yes"], command_env, timeout=20)
-        require(
-            result.returncode == 0,
-            "update exited %s beside a live session: %s"
-            % (result.returncode, output_text(result)[-800:]),
-        )
-        # The same already-open stdio session must still own the same live
-        # daemon connection. A stop-and-transparent-restart is not enough: the
-        # existing pipe itself has to remain usable.
-        require(
-            server.tools_list(timeout=10),
-            "update drained the active MCP/daemon session",
-        )
-    print("PASS: update left the active MCP/daemon session untouched")
+        require(result.returncode == 0,
+                "update exited %s beside a live daemon: %s"
+                % (result.returncode, output_text(result)[-800:]))
+        after_status = run([binary, "daemon", "status"], daemon_env, timeout=20)
+        after_pid = daemon_pid(output_text(after_status))
+        require(after_status.returncode == 0 and after_pid == before_pid,
+                "update restarted or drained the permanent daemon: before=%s after=%s\n%s"
+                % (before_pid, after_pid, output_text(after_status)[-800:]))
+    finally:
+        run([binary, "daemon", "stop"], daemon_env, timeout=30)
+    print("PASS: update left the active permanent daemon untouched")
 
 
 def main():
@@ -186,7 +193,7 @@ def main():
         print("PRECONDITION: native Windows is required")
         return 2
     if len(sys.argv) != 2:
-        print("usage: python test_windows_update_handoff.py <codebase-memory-mcp.exe>")
+        print("usage: python test_windows_update_handoff.py <codebase-memory-cli.exe>")
         return 2
 
     source = pathlib.Path(sys.argv[1]).resolve()
@@ -198,10 +205,10 @@ def main():
     try:
         env, cache = isolated_environment(work)
         assert_update_hands_off_to_install_script(source, env, work)
-        assert_update_does_not_drain_active_session(source, env, cache, work)
+        assert_update_does_not_restart_active_daemon(source, env, cache, work)
         print("\nGREEN: Windows update handoff contract honored.")
         return 0
-    except (GuardFailure, McpError, OSError, subprocess.SubprocessError) as exc:
+    except (GuardFailure, OSError, subprocess.SubprocessError) as exc:
         print("\nRED: %s" % exc)
         return 1
     finally:

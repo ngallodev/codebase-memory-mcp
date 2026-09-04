@@ -1,4 +1,5 @@
 # Codebase Memory CLI Migration — Plan and Status
+
 **Updated:** 2026-09-03  
 **Current authoritative baseline:** latest complete consolidated source attached to the project sources page  
 **Checkpoint policy:** prior overlay/checkpoint archives are historical only and are not replayed or used to reconstruct repository state.  
@@ -150,7 +151,7 @@ No production or retained C behavioral-test source includes `mcp/mcp.h` or calls
 9. **COMPLETE for production:** remove direct UI MCP dispatch and neutralize production utility/schema/profile ownership; unlink `src/mcp/mcp.c` from the product build.
 10. **COMPLETE for runtime/test architecture:** migrate/delete MCP-only tests and physically delete `src/mcp/`.
 11. **COMPLETE through CP47:** active installer/release/package/smoke execution is CLI-first; retain only ownership-aware legacy removal state, persisted compatibility paths, negative guards, and historical repository URLs.
-12. **IN PROGRESS:** post-MCP architectural simplification audit: remove transition-only wrappers/vocabulary and stale active product identity while preserving correctness and legacy removal safety.
+12. **IN PROGRESS:** post-MCP architectural simplification audit: transition-only wrappers/vocabulary and the Windows MCP-protocol guard dependency are removed; continue reconciling the remaining soak/repro protocol-shaped reliability harnesses while preserving correctness and legacy removal safety.
 13. Complete benchmark/baseline tooling and run the high-value end-to-end/concurrency/recovery/release verification appropriate for the milestone.
 
 ## 11. Drift assessment
@@ -171,5 +172,10 @@ No production or retained C behavioral-test source includes `mcp/mcp.h` or calls
 - **COMPLETE:** removed the obsolete MCP-stdio parent-watchdog harness from the active test graph; retained the supervised worker parent-death watchdog because it protects a real CLI worker containment property.
 - **COMPLETE:** active runtime/regression scripts that build or execute the product now default to `build/c/codebase-memory-cli`; canonical benchmark parsing no longer carries an MCP content-envelope fallback.
 - **COMPLETE:** graph-UI missed-coverage guidance now instructs agents to use the canonical CLI status command rather than an MCP tool call.
-- **PARTIAL:** substantial MCP-protocol Windows red-test infrastructure remains and must be migrated or retired in a dedicated Windows-test reconciliation slice rather than mechanically renamed.
+- **COMPLETE (CP49):** native-Windows product guards no longer depend on the retired MCP stdio/JSON-RPC client. Unicode repo/cache indexing now exercises canonical `index`/`query`; daemon churn uses canonical `projects`; update handoff verifies that a live permanent daemon retains the same pid; the protocol-only `tests/windows/mcp_stdio.py` helper is deleted.
+- **COMPLETE (CP50):** active watcher, memory-lab, and search-performance harnesses no longer construct MCP/JSON-RPC traffic. The watcher kill-switch is exercised through `config`/`daemon`/`index`; memlab repeatedly drives canonical operations against the long-lived coordination daemon; the search benchmark invokes canonical `search` directly.
+- **PRESERVED:** daemon stop refusal while committed clients exist remains covered directly by the neutral daemon runtime suite. The obsolete Windows product-surface setup that created such a client by opening an MCP stdio session was removed rather than replaced with a fake frontend.
 - **BLOCKED/EXTERNAL:** native Windows execution/validation evidence.
+
+- **COMPLETE (CP51):** `scripts/soak-test.sh` and `tests/repro/issue832_rss.py` no longer drive a retired MCP stdio/JSON-RPC frontend. Soak now keeps the supported permanent coordination daemon under diagnostics, exercises canonical CLI read/index operations, and kills the daemon itself during an active index to validate recovery. The #832 RSS repro samples the permanent daemon across canonical `index` cycles for in-process versus supervised isolation.
+- **REMAINING:** `tests/test_daemon_smoke.py` still contains a large mixed layer of valuable daemon lifecycle/cancellation/version-conflict assertions and retired MCP frontend-session semantics. Reconcile it as a dedicated bounded slice rather than mechanically translating protocol behavior.

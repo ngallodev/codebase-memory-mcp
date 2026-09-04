@@ -1,9 +1,8 @@
-"""GREEN regression guard — `cli index_repository` honors a non-ASCII repo_path.
+"""GREEN regression guard — `index` honors a non-ASCII repo path.
 
 Guards the CLI-argv fix for issue #636 / #423 / #20 on native Windows.
 
-The documented entrypoint `codebase-memory-mcp cli index_repository '<json>'`
-receives its JSON argument through argv. main() used to take only the narrow
+The canonical entrypoint `codebase-memory-cli index <path>` receives the repository path through argv. main() used to take only the narrow
 `int main(int argc, char **argv)` (src/main.c), so on Windows the C runtime handed
 it argv in the active ANSI code page: a repo_path containing non-ASCII characters
 was mangled (or, when yyjson rejected the now-invalid UTF-8, the whole argument was
@@ -23,7 +22,7 @@ argv path delivery was lossy.
 Exit code: 0 == honored (green), 1 == rejected/mangled (red), 2 == setup error.
 
 Usage:
-    python test_cli_non_ascii_arg.py <path-to-codebase-memory-mcp[.exe]>
+    python test_cli_non_ascii_arg.py <path-to-codebase-memory-cli[.exe]>
 """
 import json
 import os
@@ -77,8 +76,7 @@ def main():
             env = dict(os.environ)
             env["CBM_CACHE_DIR"] = os.path.join(work, attempt)
             ctrl = subprocess.run(
-                [binary, "cli", "index_repository",
-                 json.dumps({"repo_path": ascii_repo})],
+                [binary, "index", ascii_repo, "--json"],
                 capture_output=True, timeout=120, env=env)
             ctrl_out = (ctrl.stdout or b"").decode("utf-8", "replace")
             if '"nodes"' in ctrl_out:
@@ -100,8 +98,7 @@ def main():
         # here would run in-process and mask the spawn-boundary half of #423/#20, so we
         # drop the override and let the supervisor wrap the worker as it does for users.
         env2.pop("CBM_INDEX_SUPERVISOR", None)
-        arg = json.dumps({"repo_path": repo}, ensure_ascii=False)
-        p = subprocess.run([binary, "cli", "index_repository", arg],
+        p = subprocess.run([binary, "index", repo, "--json"],
                            capture_output=True, timeout=120, env=env2)
         out = (p.stdout or b"").decode("utf-8", "replace")
         err = (p.stderr or b"").decode("utf-8", "replace")
@@ -120,8 +117,8 @@ def main():
         env3 = dict(os.environ)
         env3["CBM_CACHE_DIR"] = os.path.join(work, "cache_cjk")
         env3.pop("CBM_INDEX_SUPERVISOR", None)
-        p2 = subprocess.run([binary, "cli", "index_repository",
-                             "--repo-path", cjk_repo, "--mode", "fast"],
+        p2 = subprocess.run([binary, "index", "--repo-path", cjk_repo,
+                             "--mode", "fast", "--json"],
                             capture_output=True, timeout=120, env=env3)
         out2 = (p2.stdout or b"").decode("utf-8", "replace")
         cjk_ok = '"nodes"' in out2 and '"nodes":0' not in out2.replace(" ", "")

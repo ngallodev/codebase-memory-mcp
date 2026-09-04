@@ -5,7 +5,7 @@
 .DESCRIPTION
     Builds the product binary if it is not already present, stages it under its
     release name, then runs the deterministic Windows integration tests under
-    tests/windows/ against it (real stdio / CLI / HTTP UI, real SQLite DB).
+    tests/windows/ against it (real CLI / daemon / HTTP UI, real SQLite DB).
     Windows ships ONE binary, exactly like Linux and macOS.
 
     Two categories of test:

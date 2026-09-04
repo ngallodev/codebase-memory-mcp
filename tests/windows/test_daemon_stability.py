@@ -12,8 +12,6 @@ that guard the daemon's PRODUCT contract under stress and misuse:
   with the SAME pid (no second daemon, no restart); ``daemon status`` reports
   the active pid; a ``--port=N`` pointing at an occupied port must not block
   the start (the UI bind is retried in the background by design).
-* ``daemon stop`` REFUSES while an MCP session is attached, lists the blocking
-  client, and succeeds once the session closes.
 * Crash recovery: after a kill -9 the stale daemon state must clear, a cold
   one-shot works again, and a fresh ``daemon start`` yields a NEW pid.
 * Churn stability: a permanent daemon must survive sequential and parallel
@@ -30,7 +28,7 @@ each other and from any interactive CBM use on the host.
 Exit code: 0 == all sections green, 1 == regression, 2 == setup error.
 
 Usage:
-    python test_daemon_stability.py <path-to-codebase-memory-mcp[.exe]>
+    python test_daemon_stability.py <path-to-codebase-memory-cli[.exe]>
 """
 import json
 import os
@@ -79,21 +77,6 @@ def wait_status_not_running(binary, cache, deadline_s):
             return True
         time.sleep(STATUS_POLL_S)
     return False
-
-
-def read_line_with_timeout(stream, timeout_s):
-    box = []
-
-    def _reader():
-        try:
-            box.append(stream.readline())
-        except Exception:
-            box.append(b"")
-
-    thread = threading.Thread(target=_reader, daemon=True)
-    thread.start()
-    thread.join(timeout_s)
-    return box[0] if box else None
 
 
 def section_params(binary, work):
@@ -194,65 +177,6 @@ def section_start_status_port(binary, work):
         kill_pid(daemon_pid)
 
 
-def section_stop_refuses_busy(binary, work):
-    cache = os.path.join(work, "cache-busy")
-    os.makedirs(cache, exist_ok=True)
-    daemon_pid = 0
-    session = None
-    try:
-        start = run_cli(binary, cache, ["daemon", "start"], timeout=60)
-        daemon_pid = pid_from(out_text(start))
-        if start.returncode != 0 or not daemon_pid:
-            print("SETUP FAIL: permanent daemon did not start for the busy-stop check")
-            return False
-        env = dict(os.environ)
-        env["CBM_CACHE_DIR"] = cache
-        session = subprocess.Popen([binary], stdin=subprocess.PIPE,
-                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                   env=env)
-        session.stdin.write(b'{"jsonrpc":"2.0","id":0,"method":"initialize",'
-                            b'"params":{"capabilities":{}}}\n')
-        session.stdin.flush()
-        reply = read_line_with_timeout(session.stdout, 45)
-        if not reply or b'"result"' not in reply:
-            print("SETUP FAIL: MCP session did not complete initialize: %r"
-                  % (reply[:200] if reply else reply))
-            return False
-        busy = run_cli(binary, cache, ["daemon", "stop"])
-        busy_text = out_text(busy)
-        listed_pids = re.findall(r"- pid (\d+)", busy_text)
-        # The daemon lists its authenticated peer process. On Windows the MCP
-        # frontend's daemon client is an internal child of the spawned .exe, so
-        # the listed pid need not equal the Popen pid (the same process-boundary
-        # caveat the soak's idle-CPU check documents); POSIX peers match exactly.
-        pids_ok = bool(listed_pids) if os.name == "nt" else str(session.pid) in listed_pids
-        if busy.returncode == 0 or "NOT stopped" not in busy_text or not pids_ok:
-            print("RED: `daemon stop` with an attached MCP session (pid %d) must refuse "
-                  "and list the blocking client:\n%s" % (session.pid, busy_text[:400]))
-            return False
-        session.stdin.close()
-        session.wait(timeout=45)
-        deadline = time.monotonic() + 45
-        stopped = False
-        while time.monotonic() < deadline:
-            retry = run_cli(binary, cache, ["daemon", "stop"])
-            if retry.returncode == 0:
-                stopped = True
-                break
-            time.sleep(STATUS_POLL_S)
-        if not stopped or not wait_status_not_running(binary, cache, 45):
-            print("RED: `daemon stop` did not succeed after the blocking session closed")
-            return False
-        daemon_pid = 0
-        print("PASS: stop refuses while a session is attached (listing its pid) and "
-              "succeeds once the session closes")
-        return True
-    finally:
-        if session and session.poll() is None:
-            session.kill()
-        kill_pid(daemon_pid)
-
-
 def section_crash_recovery(binary, work):
     cache = os.path.join(work, "cache-crash")
     os.makedirs(cache, exist_ok=True)
@@ -269,7 +193,7 @@ def section_crash_recovery(binary, work):
             print("RED: after kill -9 of pid %d the stale daemon state never cleared "
                   "(`daemon status` kept reporting it)" % daemon_pid)
             return False
-        cold = run_cli(binary, cache, ["cli", "list_projects", "{}"], timeout=90)
+        cold = run_cli(binary, cache, ["projects", "--json"], timeout=90)
         if cold.returncode != 0 or "daemon start" not in out_text(cold):
             print("RED: a cold one-shot after the daemon crash should succeed with the "
                   "startup-tax hint:\n%s" % out_text(cold)[:400])
@@ -298,7 +222,7 @@ def _parallel_one_shots(binary, cache, count):
     results = [None] * count
 
     def _one(index):
-        results[index] = run_cli(binary, cache, ["cli", "list_projects", "{}"], timeout=120)
+        results[index] = run_cli(binary, cache, ["projects", "--json"], timeout=120)
 
     threads = [threading.Thread(target=_one, args=(i,)) for i in range(count)]
     for thread in threads:
@@ -319,7 +243,7 @@ def section_churn_stability(binary, work):
             print("SETUP FAIL: permanent daemon did not start for the churn check")
             return False
         for round_index in range(10):
-            one = run_cli(binary, cache, ["cli", "list_projects", "{}"], timeout=90)
+            one = run_cli(binary, cache, ["projects", "--json"], timeout=90)
             if one.returncode != 0:
                 print("RED: sequential churn one-shot %d failed:\n%s"
                       % (round_index, out_text(one)[:300]))
@@ -383,7 +307,6 @@ def main():
         section_params,
         section_hook_fail_open,
         section_start_status_port,
-        section_stop_refuses_busy,
         section_crash_recovery,
         section_churn_stability,
         section_cold_storm,

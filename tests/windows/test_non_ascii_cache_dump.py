@@ -20,16 +20,15 @@ Passes on Linux/macOS either way (byte-transparent UTF-8 filesystems).
 Exit code: 0 == invariant holds, 1 == regression, 2 == setup error.
 
 Usage:
-    python test_non_ascii_cache_dump.py <path-to-codebase-memory-mcp[.exe]>
+    python test_non_ascii_cache_dump.py <path-to-codebase-memory-cli[.exe]>
 """
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mcp_stdio import McpServer  # noqa: E402
 
 MATH_TS = (
     "export function add(a: number, b: number): number { return a + b; }\n"
@@ -45,23 +44,30 @@ MATH_TS = (
 NON_ASCII_CACHE_SEGMENT = "cache_café_Ωμέγα_日本語"
 
 
-def graph_function_count(server, project):
-    resp = server.call_tool(
-        "query_graph",
-        {
-            "project": project,
-            "format": "json",
-            "query": "MATCH (n:Function) RETURN count(n) AS c",
-        },
+def run_cli(binary, cache, args, timeout=180):
+    env = dict(os.environ)
+    env["CBM_CACHE_DIR"] = cache
+    return subprocess.run([binary] + args, capture_output=True, timeout=timeout, env=env)
+
+
+def output_text(result):
+    return (result.stdout or b"").decode("utf-8", "replace")
+
+
+def graph_function_count(binary, cache, project):
+    result = run_cli(
+        binary, cache,
+        ["query", "MATCH (n:Function) RETURN count(n) AS c", "--project", project],
+        timeout=60,
     )
-    text, err = McpServer.tool_text(resp)
-    if err or not text:
+    if result.returncode != 0:
         return 0
-    data = json.loads(text)
-    rows = data.get("rows") or []
-    if not rows or not rows[0]:
-        return 0
-    return int(rows[0][0])
+    text = output_text(result)
+    for line in text.splitlines():
+        stripped = line.strip().strip('"')
+        if stripped.isdigit():
+            return int(stripped)
+    return 0
 
 
 def main():
@@ -83,44 +89,31 @@ def main():
         cache = os.path.join(work, NON_ASCII_CACHE_SEGMENT)
         os.makedirs(cache)
 
-        with McpServer(binary, cache_dir=cache) as s:
-            resp = s.call_tool("index_repository", {"repo_path": repo})
-            text, err = McpServer.tool_text(resp)
-            if err:
-                print(f"FAIL: index_repository rpc error: {err}")
-                return 1
-            text = text or ""
-            if '"error"' in text:
-                print(f"FAIL: index_repository into non-ASCII cache errored: {text[:300]}")
-                return 1
-            if "phase" in text and "dump" in text and "error" in text.lower():
-                print(f"FAIL: dump phase error: {text[:300]}")
-                return 1
+        indexed = run_cli(binary, cache, ["index", repo, "--json"])
+        text = output_text(indexed)
+        if indexed.returncode != 0:
+            diagnostic = ((indexed.stdout or b"") + (indexed.stderr or b"")).decode(
+                "utf-8", "replace")
+            print(f"FAIL: index into non-ASCII cache errored: {diagnostic[:500]}")
+            return 1
+        if "phase" in text and "dump" in text and "error" in text.lower():
+            print(f"FAIL: dump phase error: {text[:300]}")
+            return 1
 
-            # Non-vacuous readback: the DB must exist under the non-ASCII
-            # cache and answer queries.
+        # Non-vacuous readback: the DB must exist under the non-ASCII cache
+        # and the canonical query command must reopen and query it.
+        try:
+            project = json.loads(text).get("project")
+        except (ValueError, AttributeError):
             project = None
-            try:
-                project = json.loads(text).get("project")
-            except (ValueError, AttributeError):
-                pass
-            if not project:
-                # TOON-shaped success output: fall back to list_projects.
-                lp = s.call_tool("list_projects", {})
-                lp_text, _ = McpServer.tool_text(lp)
-                lp_text = lp_text or ""
-                for line in lp_text.splitlines():
-                    if "ascii_repo" in line:
-                        project = line.split(",")[0].strip().strip('"')
-                        break
-            if not project:
-                print("FAIL: could not determine project name after index")
-                return 1
+        if not project:
+            print("FAIL: canonical index output did not identify the project")
+            return 1
 
-            count = graph_function_count(s, project)
-            if count < 1:
-                print(f"FAIL: readback from non-ASCII cache found {count} Function nodes")
-                return 1
+        count = graph_function_count(binary, cache, project)
+        if count < 1:
+            print(f"FAIL: readback from non-ASCII cache found {count} Function nodes")
+            return 1
 
         print(f"OK: dump wrote and reopened graph DB under non-ASCII cache ({count} functions)")
         return 0

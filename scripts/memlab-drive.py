@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Drive a fixed sequence of MCP requests over stdio and wait for each reply.
+"""Drive a deterministic sequence of canonical CLI operations.
 
-Batching all requests and closing stdin does not work: the server treats EOF as
-the client disconnecting and shuts down before answering, so the run produces a
-census of a process that never did any work. Reading each response before
-sending the next also makes the workload deterministic — every request is
-serviced from the same steady state, which is what makes two runs comparable.
+The long-lived process under observation is the coordination daemon. Each CLI
+request connects through the supported neutral operation protocol, so this
+harness continues to expose per-request daemon growth without retaining the
+retired MCP stdio/JSON-RPC frontend.
 """
 import argparse
 import json
@@ -14,22 +13,20 @@ import sys
 import time
 
 
-def rpc(proc, payload, timeout_note):
-    proc.stdin.write(json.dumps(payload) + "\n")
-    proc.stdin.flush()
-    while True:
-        line = proc.stdout.readline()
-        if not line:
-            raise RuntimeError(f"server closed stdout while waiting for {timeout_note}")
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            message = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if message.get("id") == payload.get("id"):
-            return message
+def run(binary, argv, *, cwd=None):
+    return subprocess.run(
+        [binary, *argv], cwd=cwd, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+    )
+
+
+def operation_args(tool):
+    return {
+        "search": ["search", "--name-pattern", ".*Widget.*", "--limit", "10", "--json"],
+        "projects": ["projects", "--json"],
+        "schema": ["schema", "--json"],
+        "source-search": ["source-search", "Widget", "--json"],
+    }[tool]
 
 
 def main():
@@ -37,68 +34,55 @@ def main():
     parser.add_argument("binary")
     parser.add_argument("corpus")
     parser.add_argument("requests", type=int)
-    parser.add_argument("--stderr", help="file for the server's stderr; never discard it")
-    parser.add_argument("--tool", default="search_graph",
-                        help="tool to repeat; varying it isolates which path leaks")
-    parser.add_argument("--idle-seconds", type=float, default=0.0,
-                        help="pause midway; separates per-request growth from per-second growth")
-    parser.add_argument("--skip-index", action="store_true",
-                        help="omit the initial index, to separate store setup from the loop")
+    parser.add_argument("--stderr", help="append CLI/daemon diagnostics here")
+    parser.add_argument("--tool", default="search",
+                        choices=("search", "projects", "schema", "source-search"),
+                        help="canonical CLI operation to repeat")
+    parser.add_argument("--idle-seconds", type=float, default=0.0)
+    parser.add_argument("--skip-index", action="store_true")
     args = parser.parse_args()
 
-    proc = subprocess.Popen(
-        [args.binary],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        # Never DEVNULL: when the server refuses to start, its stderr is the
-        # only thing that says why.
-        stderr=open(args.stderr, "w") if args.stderr else None,
-        text=True,
-        bufsize=1,
-    )
-    served = 0
-    failures = 0
+    log = open(args.stderr, "a", encoding="utf-8") if args.stderr else None
+    served = failures = 0
     try:
-        rpc(proc, {"jsonrpc": "2.0", "id": 0, "method": "initialize",
-                   "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                              "clientInfo": {"name": "memlab", "version": "1"}}},
-            "initialize")
+        started = run(args.binary, ["daemon", "start"])
+        if log:
+            log.write(started.stderr or "")
+        if started.returncode != 0:
+            print("daemon start failed", file=sys.stderr)
+            return 3
+
         if not args.skip_index:
-            indexed = rpc(proc, {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                                 "params": {"name": "index_repository",
-                                            "arguments": {"path": args.corpus}}},
-                          "index_repository")
-            if "error" in indexed:
-                print(f"index failed: {indexed['error']}", file=sys.stderr)
+            indexed = run(args.binary, ["index", args.corpus, "--mode", "fast", "--json"])
+            if log:
+                log.write(indexed.stderr or "")
+            if indexed.returncode != 0:
+                print(f"index failed: {indexed.stderr.strip()}", file=sys.stderr)
                 return 3
 
-        halfway = 2 + args.requests // 2
-        for i in range(2, args.requests + 2):
+        halfway = args.requests // 2
+        argv = operation_args(args.tool)
+        for i in range(args.requests):
             if args.idle_seconds > 0 and i == halfway:
-                # Nothing is requested during this gap. Any commit growth across
-                # it belongs to a background thread, not the request path.
-                print(f"idle-start id={i}", flush=True)
+                print(f"idle-start request={i + 1}", flush=True)
                 time.sleep(args.idle_seconds)
-                print(f"idle-end id={i}", flush=True)
-            arguments = {"search_graph": {"name_pattern": ".*Widget.*", "limit": 10},
-                         "list_projects": {},
-                         "get_graph_schema": {},
-                         "search_code": {"pattern": "Widget"}}.get(args.tool, {})
-            reply = rpc(proc, {"jsonrpc": "2.0", "id": i, "method": "tools/call",
-                               "params": {"name": args.tool, "arguments": arguments}},
-                        f"request {i}")
+                print(f"idle-end request={i + 1}", flush=True)
+            reply = run(args.binary, argv, cwd=args.corpus)
+            if log:
+                log.write(reply.stderr or "")
             served += 1
-            if "error" in reply:
+            if reply.returncode != 0:
                 failures += 1
+            elif reply.stdout:
+                try:
+                    json.loads(reply.stdout)
+                except json.JSONDecodeError:
+                    failures += 1
     finally:
-        try:
-            proc.stdin.close()
-        except Exception:
-            pass
-        try:
-            proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        stopped = run(args.binary, ["daemon", "stop"])
+        if log:
+            log.write(stopped.stderr or "")
+            log.close()
 
     print(f"served={served} failed={failures}")
     return 0 if served == args.requests and failures == 0 else 1

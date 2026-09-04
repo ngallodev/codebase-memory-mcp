@@ -6,6 +6,7 @@
  * can clean configurations created by older releases.
  */
 #include "agent_clients.h"
+
 #include "config_json_like.h"
 #include "config_text_edit.h"
 #include "config_yaml_edit.h"
@@ -61,7 +62,6 @@ static const cbm_agent_client_profile_t agent_profiles[CBM_AGENT_CLIENT_COUNT] =
 size_t cbm_agent_client_count(void) {
     return CBM_AGENT_CLIENT_COUNT;
 }
-
 const cbm_agent_client_profile_t *cbm_agent_client_at(size_t index) {
     return index < CBM_AGENT_CLIENT_COUNT ? &agent_profiles[index] : NULL;
 }

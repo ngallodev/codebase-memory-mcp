@@ -2,7 +2,7 @@ r"""GREEN regression guard — the PreToolUse hook augmenter fires on Windows.
 
 Guards the fix for issue #618 (landed on main via #619) at the product surface.
 
-`codebase-memory-mcp hook-augment` is the non-blocking Claude Code PreToolUse
+`codebase-memory-cli hook-augment` is the non-blocking Claude Code PreToolUse
 Grep/Glob augmenter: given a hook payload it should emit a `hookSpecificOutput`
 with `additionalContext` listing graph symbols that match the searched token.
 
@@ -22,7 +22,7 @@ Also passes on Linux/macOS (`cwd` starts with `/`).
 Exit code: 0 == augmenter fired (green), 1 == no-op (regression), 2 == setup error.
 
 Usage:
-    python test_hook_augment.py <path-to-codebase-memory-mcp[.exe]>
+    python test_hook_augment.py <path-to-codebase-memory-cli[.exe]>
 """
 import json
 import os
@@ -69,8 +69,7 @@ def main():
         # broken CLI index. Reindexing the same cache is idempotent.
         idx_out = ""
         for attempt in (1, 2):
-            idx = run_cli(binary, cache, ["cli", "index_repository",
-                                          json.dumps({"repo_path": repo_fwd})])
+            idx = run_cli(binary, cache, ["index", repo_fwd, "--json"])
             idx_out = (idx.stdout or b"").decode("utf-8", "replace")
             if '"nodes"' in idx_out:
                 break
@@ -82,13 +81,10 @@ def main():
             return 2
 
         # Control: prove the symbol is indexed and queryable.
-        lp = run_cli(binary, cache, ["cli", "list_projects", "{}"])
+        lp = run_cli(binary, cache, ["projects", "--json"])
         projects = json.loads((lp.stdout or b"").decode("utf-8", "replace"))["projects"]
         name = projects[0]["name"]
-        sg = run_cli(binary, cache, ["cli", "search_graph",
-                     json.dumps({"label": "Function",
-                                 "name_pattern": ".*%s.*" % SYMBOL,
-                                 "project": name})])
+        sg = run_cli(binary, cache, ["search", SYMBOL, "--project", name, "--json"])
         if SYMBOL not in (sg.stdout or b"").decode("utf-8", "replace"):
             print("SETUP FAIL: control search_graph did not find %s" % SYMBOL)
             return 2
@@ -96,7 +92,7 @@ def main():
 
         # Hooks are connect-only under the mandatory daemon: they never spawn
         # one and fail open when none is active. Bring up a permanent daemon
-        # first — the supported way to keep hooks armed outside MCP sessions —
+        # first — the supported way to keep hooks armed outside one-shot CLI sessions —
         # and retire it afterwards (with a kill-by-pid backstop so a stuck stop
         # can never hang CI).
         start_out = ""

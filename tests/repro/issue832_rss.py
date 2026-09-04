@@ -11,18 +11,17 @@ the PROD binary, which links mimalloc as the global allocator (Makefile.cbm:
 MI_OVERRIDE=1). The C test-runner and the C repro-runner are built CRT+ASan
 (MI_OVERRIDE=0), so mimalloc is inert there and cbm_mem_rss() falls back to
 os_rss() -- a C test would be VACUOUS. Hence this drives the real
-`build/c/codebase-memory-cli` server over stdio and samples its RSS from `ps`.
+`build/c/codebase-memory-cli` coordination daemon with canonical CLI indexing and
+samples the daemon RSS from `ps`.
 
 WHAT IT SHOWS
 -------------
-A long-lived MCP server is driven through K index_repository cycles of the same
-fixture. The in-process pipeline (CBM_INDEX_SUPERVISOR=0) is the pre-#832-fix
-background-path behaviour: RSS RATCHETS across cycles. The supervised subprocess
-path (default) is the fix: each child returns 100% of its RSS on exit, so the
-long-lived parent stays ~FLAT. The auto-index (mcp.c) and watcher re-index
-(main.c) paths now route through that same supervised subprocess, so they inherit
-this flat profile; the deterministic routing proof is the GATING guard
-tests/test_mcp.c::index_bg_paths_route_through_supervisor_issue832.
+A long-lived permanent coordination daemon is driven through K `index` cycles of
+the same fixture. The in-process pipeline (CBM_INDEX_SUPERVISOR=0) models the
+pre-#832 background-path behaviour: RSS RATCHETS across cycles. The supervised
+subprocess path (default) is the fix: each child returns its RSS on exit, so the
+long-lived daemon stays ~FLAT. Watcher and other background indexing paths route
+through the same neutral supervisor and inherit this isolation.
 
 Inherently noisy (allocator/OS dependent) -> thresholds are generous and this is
 NOT wired into `make test` / `ci-ok`. Run manually:
@@ -37,7 +36,7 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-BINARY = os.path.join(ROOT, "build", "c", "codebase-memory-mcp")
+BINARY = os.path.join(ROOT, "build", "c", "codebase-memory-cli")
 CYCLES = 10
 NUM_FILES = 120  # enough files to fan out across worker threads (abandoned heaps)
 
@@ -62,31 +61,37 @@ def run_series(repo, cache, supervised):
     if supervised:
         env.pop("CBM_INDEX_SUPERVISOR", None)
     else:
-        env["CBM_INDEX_SUPERVISOR"] = "0"  # in-process (pre-fix background behaviour)
+        env["CBM_INDEX_SUPERVISOR"] = "0"  # in-process pre-fix behavior
     env["CBM_INDEX_WORKER_TIMEOUT_S"] = "120"
 
-    proc = subprocess.Popen(
-        [BINARY], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL, env=env, text=True, bufsize=1,
+    started = subprocess.run(
+        [BINARY, "daemon", "start"], env=env, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
     )
+    if started.returncode != 0:
+        raise RuntimeError("daemon start failed: " + started.stderr.strip())
+    import re
+    match = re.search(r"pid (\d+)", (started.stdout or "") + (started.stderr or ""))
+    if not match:
+        subprocess.run([BINARY, "daemon", "stop"], env=env,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        raise RuntimeError("daemon start did not report a pid")
+    daemon_pid = int(match.group(1))
 
-    def rpc(obj):
-        proc.stdin.write(json.dumps(obj) + "\n")
-        proc.stdin.flush()
-        return proc.stdout.readline()
-
-    rpc({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}})
     series = []
-    for k in range(CYCLES):
-        rpc({"jsonrpc": "2.0", "id": k + 1, "method": "tools/call",
-             "params": {"name": "index_repository",
-                        "arguments": {"repo_path": repo, "mode": "fast"}}})
-        series.append(rss_kb(proc.pid))
     try:
-        proc.stdin.close()
-        proc.wait(timeout=15)
-    except Exception:
-        proc.kill()
+        for _ in range(CYCLES):
+            indexed = subprocess.run(
+                [BINARY, "index", repo, "--mode", "fast", "--json"],
+                env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                check=False,
+            )
+            if indexed.returncode != 0:
+                raise RuntimeError("index failed: " + indexed.stderr.strip())
+            series.append(rss_kb(daemon_pid))
+    finally:
+        subprocess.run([BINARY, "daemon", "stop"], env=env,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return series
 
 
