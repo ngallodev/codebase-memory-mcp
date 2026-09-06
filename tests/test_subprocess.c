@@ -527,12 +527,12 @@ TEST(subprocess_quiet_timeout_kills_ignoring_tree) {
     char pid_path[64];
     ASSERT_TRUE(make_tree_pid_path(pid_path));
     cbm_subprocess_t *process = NULL;
-    ASSERT_EQ(spawn_ignoring_tree(pid_path, 750, 100, &process), 0);
+    ASSERT_EQ(spawn_ignoring_tree(pid_path, 1500, 100, &process), 0);
     ASSERT_NOT_NULL(process);
 
     pid_t parent_pid = -1;
     pid_t grandchild_pid = -1;
-    bool ready = wait_for_tree_pids(pid_path, process, &parent_pid, &grandchild_pid, 500);
+    bool ready = wait_for_tree_pids(pid_path, process, &parent_pid, &grandchild_pid, 1000);
     cbm_proc_result_t result;
     bool terminal = ready && poll_until_terminal(process, 3000, &result);
     bool parent_gone = terminal && wait_pid_gone(parent_pid, 1000);

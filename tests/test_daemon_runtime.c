@@ -930,12 +930,13 @@ static void *runtime_real_application_detect_changes_thread(void *opaque) {
     return NULL;
 }
 
-static bool runtime_real_application_ingest_probe(cbm_daemon_runtime_client_t *client) {
+static bool runtime_real_application_ingest_probe(cbm_daemon_runtime_client_t *client,
+                                                  uint32_t timeout_ms) {
     uint8_t *response = NULL;
     uint32_t response_length = 0;
     cbm_daemon_runtime_application_status_t status =
         cbm_daemon_application_client_operation(client, "ingest_traces", "{\"traces\":[]}", &response,
-                                           &response_length, RUNTIME_TEST_TIMEOUT_MS);
+                                           &response_length, timeout_ms);
     bool usable = status == CBM_DAEMON_RUNTIME_APPLICATION_OK && response && response_length > 0 &&
                   strstr((const char *)response, "traces_received");
     free(response);
@@ -3667,9 +3668,16 @@ TEST(daemon_runtime_disconnect_cancels_blocked_non_index_child_and_preserves_oth
         cbm_daemon_application_client_set_context(second, root, root, NULL, NULL,
                                                   RUNTIME_TEST_TIMEOUT_MS) ==
             CBM_DAEMON_RUNTIME_APPLICATION_OK;
-    bool second_usable_before =
-        contexts_set && runtime_real_application_ingest_probe(second) &&
-        cbm_daemon_runtime_client_heartbeat(second, RUNTIME_TEST_TIMEOUT_MS);
+#ifdef CBM_SANITIZED_BUILD
+    const uint32_t second_session_probe_timeout_ms = 5000;
+#else
+    const uint32_t second_session_probe_timeout_ms = RUNTIME_TEST_TIMEOUT_MS;
+#endif
+    bool second_ingest_before = contexts_set && runtime_real_application_ingest_probe(second, second_session_probe_timeout_ms);
+    bool second_heartbeat_before =
+        second_ingest_before &&
+        cbm_daemon_runtime_client_heartbeat(second, second_session_probe_timeout_ms);
+    bool second_usable_before = second_ingest_before && second_heartbeat_before;
 
     runtime_real_application_call_t call = {
         .client = first,
@@ -3743,7 +3751,7 @@ TEST(daemon_runtime_disconnect_cancels_blocked_non_index_child_and_preserves_oth
     }
 
     bool second_usable_after = second && child_cleanup_complete &&
-                               runtime_real_application_ingest_probe(second) &&
+                               runtime_real_application_ingest_probe(second, RUNTIME_TEST_TIMEOUT_MS) &&
                                cbm_daemon_runtime_client_heartbeat(second, RUNTIME_TEST_TIMEOUT_MS);
     bool second_closed = false;
     if (second) {
@@ -3810,6 +3818,11 @@ TEST(daemon_runtime_disconnect_cancels_blocked_non_index_child_and_preserves_oth
     ASSERT_EQ(first_result.status, CBM_DAEMON_RUNTIME_CONNECT_ACCEPTED);
     ASSERT_EQ(second_result.status, CBM_DAEMON_RUNTIME_CONNECT_ACCEPTED);
     ASSERT_TRUE(contexts_set);
+    if (!second_usable_before) {
+        printf("  second-session preflight diagnostic: ingest=%d heartbeat=%d timeout_ms=%u\n",
+               second_ingest_before ? 1 : 0, second_heartbeat_before ? 1 : 0,
+               second_session_probe_timeout_ms);
+    }
     ASSERT_TRUE(second_usable_before);
     ASSERT_EQ(request_thread_create_rc, 0);
     ASSERT_TRUE(marker_published);

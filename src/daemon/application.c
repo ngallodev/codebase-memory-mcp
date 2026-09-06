@@ -62,28 +62,10 @@ enum {
     APPLICATION_COORDINATION_CLEANUP_MS = 500,
     APPLICATION_DEFAULT_PHYSICAL_JOB_LIMIT = 4,
     APPLICATION_DEFAULT_MAX_RESTARTS = 100,
+    APPLICATION_BACKGROUND_REAP_MS = 10000,
     APPLICATION_MARKER_MAX_BYTES = 64 * 1024 * 1024,
     APPLICATION_MAX_SUSPECTS = 65536,
-    APPLICATION_UPDATE_POLL_US = 10000,
-    APPLICATION_BACKGROUND_REAP_MS = 10000,
-    APPLICATION_UPDATE_VERSION_CAP = 128,
-    APPLICATION_UPDATE_NOTICE_CAP = 1024,
 };
-
-/* There is deliberately NO production update-check provider. The daemon used to
- * spawn `curl` against the GitHub releases API on the first eligible session of
- * every run, purely to print "a newer version exists". That put a release URL
- * and an outbound request into every shipped binary, and made a developer tool
- * phone home from every agent session, to deliver something the install scripts
- * and package managers already report.
- *
- * The SEAM below survives: `update_ops` remains injectable, and the notice,
- * ownership, cancellation and generation-replay logic is still exercised by the
- * fakes in tests/test_daemon_application.c. With no provider installed the whole
- * machinery simply never starts a generation (see
- * application_update_subscribe_locked), so a build that ships no provider makes
- * no network request by default -- the property, not just the absence of a call.
- */
 
 typedef struct cbm_daemon_application_watch cbm_daemon_application_watch_t;
 typedef struct cbm_daemon_application_session cbm_daemon_application_session_t;
@@ -129,7 +111,6 @@ struct cbm_daemon_application_session {
     bool auto_index_evaluated;
     bool auto_index_retry_pending;
     bool background_eligible;
-    bool update_owner;
     bool pending_background_initialize;
     cbm_daemon_application_session_t *next;
 };
@@ -182,20 +163,10 @@ struct cbm_daemon_application {
     cbm_daemon_application_watch_job_subscription_t *watch_job_subscriptions;
     cbm_daemon_application_mutation_t *mutations;
     cbm_daemon_application_worker_ops_t worker_ops;
-    cbm_daemon_application_update_ops_t update_ops;
     cbm_project_lock_manager_t *project_locks;
     size_t physical_job_limit;
     size_t worker_memory_budget_bytes;
     size_t active_mutations;
-    size_t update_owners;
-    cbm_daemon_application_update_worker_t update_worker;
-    cbm_thread_t update_thread;
-    char update_notice[APPLICATION_UPDATE_NOTICE_CAP];
-    bool update_generation_started;
-    bool update_cancel_requested;
-    bool update_thread_started;
-    bool update_thread_done;
-    bool update_thread_joining;
     bool stopping;
     /* See cbm_daemon_application_set_permanent. */
     bool permanent;
@@ -209,8 +180,6 @@ static void application_watch_job_unsubscribe_session_locked(
 static bool application_watch_job_subscribe_late_session_locked(
     cbm_daemon_application_session_t *session, cbm_daemon_application_watch_t *watch);
 static bool application_unique_recovery_file(char out[APPLICATION_PATH_CAP], const char *kind);
-static bool application_update_reap(cbm_daemon_application_t *application, bool wait,
-                                    uint32_t timeout_ms);
 static void *application_job_thread(void *opaque);
 static char *application_auto_index_args(const char *root_path);
 static cbm_daemon_application_job_t *application_job_subscribe_locked(
@@ -1889,200 +1858,6 @@ static void application_auto_index_cancel_join(cbm_daemon_application_t *applica
     }
 }
 
-static void application_update_cancel_locked(cbm_daemon_application_t *application) {
-    if (!application->update_generation_started || application->update_thread_done) {
-        return;
-    }
-    application->update_cancel_requested = true;
-    if (application->update_worker) {
-        (void)application->update_ops.cancel(application->update_ops.context,
-                                             application->update_worker);
-    }
-}
-
-static bool application_update_owner_release_locked(cbm_daemon_application_session_t *session) {
-    if (!session || !session->update_owner) {
-        return false;
-    }
-    cbm_daemon_application_t *application = session->application;
-    session->update_owner = false;
-    if (application->update_owners > 0) {
-        application->update_owners--;
-    }
-    if (application->update_owners == 0) {
-        application_update_cancel_locked(application);
-        return application->update_thread_started;
-    }
-    return false;
-}
-
-static bool application_update_version_valid(const char *version) {
-    if (!version || !version[0] || strlen(version) >= APPLICATION_UPDATE_VERSION_CAP) {
-        return false;
-    }
-    for (const unsigned char *cursor = (const unsigned char *)version; *cursor; cursor++) {
-        if (!(isalnum(*cursor) || *cursor == '.' || *cursor == '-' || *cursor == '_' ||
-              *cursor == '+')) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static void application_update_publish_terminal_locked(cbm_daemon_application_t *application,
-                                                       const char *latest_version,
-                                                       bool completed_generation) {
-    if (!application->update_cancel_requested && application_update_version_valid(latest_version) &&
-        cbm_compare_versions(latest_version, cbm_cli_get_version()) > 0) {
-        (void)snprintf(application->update_notice, sizeof(application->update_notice),
-                       "Update available: %s -> %s -- run: codebase-memory-cli update  |  "
-                       "Enjoying codebase-memory-cli? Please leave a star: "
-                       "https://github.com/DeusData/codebase-memory-mcp",
-                       cbm_cli_get_version(), latest_version);
-        cbm_log_info("update.available", "current", cbm_cli_get_version(), "latest",
-                     latest_version);
-    }
-    for (cbm_daemon_application_session_t *session = application->sessions; session;
-         session = session->next) {
-        session->update_owner = false;
-    }
-    application->update_owners = 0;
-    application->update_worker = NULL;
-    /* A clean/poll-terminal generation is immutable daemon history and is
-     * replayed to late sessions. Cancellation and worker-start failure did
-     * not perform a check, so they release the generation slot for retry once
-     * this thread has been joined. */
-    application->update_generation_started = completed_generation;
-    application->update_thread_done = true;
-    application_auto_index_retry_pending_locked(application);
-}
-
-static void *application_update_thread(void *opaque) {
-    cbm_daemon_application_t *application = opaque;
-    cbm_daemon_application_update_worker_t worker = NULL;
-    if (application->update_ops.start(application->update_ops.context, &worker) != 0 || !worker) {
-        cbm_mutex_lock(&application->mutex);
-        application_update_publish_terminal_locked(application, NULL, false);
-        cbm_mutex_unlock(&application->mutex);
-        return NULL;
-    }
-
-    cbm_mutex_lock(&application->mutex);
-    application->update_worker = worker;
-    if (application->update_cancel_requested || application->stopping ||
-        application->update_owners == 0) {
-        application_update_cancel_locked(application);
-    }
-    cbm_mutex_unlock(&application->mutex);
-
-    const char *latest_version = NULL;
-    for (;;) {
-        cbm_daemon_application_update_poll_t status =
-            application->update_ops.poll(application->update_ops.context, worker, &latest_version);
-        if (status != CBM_DAEMON_APPLICATION_UPDATE_POLL_RUNNING) {
-            if (status == CBM_DAEMON_APPLICATION_UPDATE_POLL_ERROR) {
-                latest_version = NULL;
-            }
-            break;
-        }
-        cbm_mutex_lock(&application->mutex);
-        if (application->update_cancel_requested || application->stopping ||
-            application->update_owners == 0) {
-            application_update_cancel_locked(application);
-        }
-        cbm_mutex_unlock(&application->mutex);
-        cbm_usleep(APPLICATION_UPDATE_POLL_US);
-    }
-
-    char version[APPLICATION_UPDATE_VERSION_CAP] = {0};
-    if (latest_version && strlen(latest_version) < sizeof(version)) {
-        (void)snprintf(version, sizeof(version), "%s", latest_version);
-    }
-    cbm_mutex_lock(&application->mutex);
-    bool completed_generation = !application->update_cancel_requested && !application->stopping &&
-                                application->update_owners > 0;
-    application_update_publish_terminal_locked(application, version[0] ? version : NULL,
-                                               completed_generation);
-    cbm_mutex_unlock(&application->mutex);
-    application->update_ops.destroy(application->update_ops.context, worker);
-    return NULL;
-}
-
-static void application_update_subscribe_locked(cbm_daemon_application_session_t *session) {
-    cbm_daemon_application_t *application = session->application;
-    /* No provider, no generation. This is what makes "the daemon performs no
-     * network request by default" a structural property rather than a promise:
-     * with update_ops empty nothing is ever started, so no session can observe
-     * a generation, become its owner, or wait on it. */
-    if (!application->update_ops.start) {
-        return;
-    }
-    if (application->update_generation_started) {
-        if (application->update_thread_started && !application->update_thread_done &&
-            !application->update_cancel_requested && !session->update_owner) {
-            session->update_owner = true;
-            application->update_owners++;
-        }
-        return;
-    }
-    /* A retryable generation may already be terminal but not yet joined. The
-     * owning thread handle cannot be overwritten; the next request retries
-     * after application_update_reap() clears it. */
-    if (application->update_thread_started) {
-        return;
-    }
-    application->update_generation_started = true;
-    application->update_thread_done = false;
-    application->update_cancel_requested = false;
-    session->update_owner = true;
-    application->update_owners = 1;
-    if (cbm_thread_create(&application->update_thread, APPLICATION_JOB_THREAD_STACK,
-                          application_update_thread, application) == 0) {
-        application->update_thread_started = true;
-        return;
-    }
-    session->update_owner = false;
-    application->update_owners = 0;
-    application->update_generation_started = false;
-    application->update_thread_done = false;
-    cbm_log_warn("daemon.update.thread_start_failed", "action", "retry");
-}
-
-static bool application_update_reap(cbm_daemon_application_t *application, bool wait,
-                                    uint32_t timeout_ms) {
-    if (!application) {
-        return false;
-    }
-    uint64_t deadline = application_deadline_after(timeout_ms);
-    for (;;) {
-        bool join = false;
-        cbm_mutex_lock(&application->mutex);
-        if (!application->update_thread_started) {
-            cbm_mutex_unlock(&application->mutex);
-            return true;
-        }
-        if (application->update_thread_done && !application->update_thread_joining) {
-            application->update_thread_joining = true;
-            join = true;
-        }
-        cbm_mutex_unlock(&application->mutex);
-        if (join) {
-            bool joined = cbm_thread_join(&application->update_thread) == 0;
-            cbm_mutex_lock(&application->mutex);
-            if (joined) {
-                application->update_thread_started = false;
-            }
-            application->update_thread_joining = false;
-            cbm_mutex_unlock(&application->mutex);
-            return joined;
-        }
-        if (!wait || cbm_now_ms() >= deadline) {
-            return false;
-        }
-        cbm_usleep(APPLICATION_UPDATE_POLL_US);
-    }
-}
-
 static char *application_auto_index_args(const char *root_path) {
     yyjson_mut_doc *document = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = document ? yyjson_mut_obj(document) : NULL;
@@ -2109,10 +1884,6 @@ static void application_background_initialize_impl(cbm_daemon_application_sessio
     if (!project || !project[0] || !root_path || !root_path[0]) {
         return;
     }
-    /* Join a terminal retryable update generation before reusing its single
-     * thread slot. This is non-blocking unless the thread already published
-     * terminal state. */
-    (void)application_update_reap(application, false, 0);
     bool db_exists = application_regular_db_exists(project);
     bool auto_index = application->config &&
                       cbm_config_get_bool(application->config, CBM_CONFIG_AUTO_INDEX, false);
@@ -2146,7 +1917,6 @@ static void application_background_initialize_impl(cbm_daemon_application_sessio
         return;
     }
     session->background_eligible = true;
-    application_update_subscribe_locked(session);
     bool attempt_auto_index = !session->auto_index_subscribed &&
                               (!session->auto_index_evaluated || session->auto_index_retry_pending);
     if (attempt_auto_index) {
@@ -2499,6 +2269,7 @@ static cbm_daemon_runtime_application_status_t application_set_context(
     session->hook_event = hook_event;
     session->hook_dialect = hook_dialect;
     session->context_set = true;
+    session->pending_background_initialize = true;
     return CBM_DAEMON_RUNTIME_APPLICATION_OK;
 }
 
@@ -2721,9 +2492,7 @@ static cbm_daemon_runtime_application_status_t application_request(
     bool activate_background =
         !cancelled && status == CBM_DAEMON_RUNTIME_APPLICATION_OK &&
         (session->pending_background_initialize ||
-         (session->background_eligible &&
-          (session->auto_index_retry_pending ||
-           (!application->update_generation_started && !session->update_owner))));
+         (session->background_eligible && session->auto_index_retry_pending));
     session->pending_background_initialize = false;
     cbm_mutex_unlock(&application->mutex);
     if (cancelled) {
@@ -2781,7 +2550,6 @@ static void application_session_cancel(void *context,
     cbm_daemon_application_t *application = context;
     cbm_daemon_application_session_t *session = (cbm_daemon_application_session_t *)opaque_session;
     if (application && session && session->application == application) {
-        bool reap_update = false;
         cbm_daemon_application_job_t *join_auto_index = NULL;
         cbm_mutex_lock(&application->mutex);
         /* Runtime may need to keep the session allocation alive until its
@@ -2799,10 +2567,6 @@ static void application_session_cancel(void *context,
             application_job_unsubscribe_locked(job);
         }
         join_auto_index = application_auto_index_release_locked(session);
-        reap_update = application_update_owner_release_locked(session);
-        reap_update =
-            reap_update || (session->background_eligible && application->update_thread_started &&
-                            application->update_owners == 0);
         application_release_session_watch_locked(session);
         bool final_live_session = newly_cancelled;
         for (cbm_daemon_application_session_t *other = application->sessions;
@@ -2819,18 +2583,11 @@ static void application_session_cancel(void *context,
              * keeps admitting new ones; only the stop/drain paths latch it. */
             application->stopping = true;
             application_cancel_jobs_locked(application);
-            application_update_cancel_locked(application);
-            reap_update = reap_update || application->update_thread_started;
         }
         cbm_mutex_unlock(&application->mutex);
         (void)cbm_operation_session_cancel_active(session->operation_session);
         application_auto_index_cancel_join(application, join_auto_index);
         application_jobs_reap_completed(application);
-        if (reap_update) {
-            if (!application_update_reap(application, true, APPLICATION_BACKGROUND_REAP_MS)) {
-                application_cleanup_force_terminate("update_cleanup");
-            }
-        }
     }
 }
 
@@ -2841,7 +2598,6 @@ static void application_session_close(void *context,
     if (!application || !session || session->application != application) {
         return;
     }
-    bool reap_update = false;
     cbm_daemon_application_job_t *join_auto_index = NULL;
     cbm_mutex_lock(&application->mutex);
     cbm_daemon_application_session_t **cursor = &application->sessions;
@@ -2857,19 +2613,10 @@ static void application_session_close(void *context,
         session->active_job_subscribed = false;
     }
     join_auto_index = application_auto_index_release_locked(session);
-    reap_update = application_update_owner_release_locked(session);
-    reap_update =
-        reap_update || (session->background_eligible && application->update_thread_started &&
-                        application->update_owners == 0);
     application_release_session_watch_locked(session);
     cbm_mutex_unlock(&application->mutex);
     application_auto_index_cancel_join(application, join_auto_index);
     application_jobs_reap_completed(application);
-    if (reap_update) {
-        if (!application_update_reap(application, true, APPLICATION_BACKGROUND_REAP_MS)) {
-            application_cleanup_force_terminate("update_cleanup");
-        }
-    }
     cbm_store_host_free(session->store_host);
     cbm_operation_session_state_free(session->operation_session);
     free(session->hook_event);
@@ -2917,9 +2664,6 @@ cbm_daemon_application_t *cbm_daemon_application_new(
         if (config->worker_ops) {
             application->worker_ops = *config->worker_ops;
         }
-        if (config->update_ops) {
-            application->update_ops = *config->update_ops;
-        }
         if (config->ui_readiness_secret &&
             config->ui_readiness_secret_length == sizeof(application->ui_readiness_secret)) {
             memcpy(application->ui_readiness_secret, config->ui_readiness_secret,
@@ -2956,18 +2700,6 @@ cbm_daemon_application_t *cbm_daemon_application_new(
         free(application);
         return NULL;
     }
-    /* No provider means no update checking, which is the production default now
-     * that the curl-based GitHub check is gone. An INCOMPLETE provider is still
-     * a programming error: a caller that supplies `start` must supply the whole
-     * quartet, or the thread would start work it cannot poll, cancel or free. */
-    if (application->update_ops.start &&
-        (!application->update_ops.poll || !application->update_ops.cancel ||
-         !application->update_ops.destroy)) {
-        cbm_mutex_destroy(&application->mutex);
-        cbm_secure_zero(application->ui_readiness_secret, sizeof(application->ui_readiness_secret));
-        free(application);
-        return NULL;
-    }
     if (application->watcher) {
         cbm_watcher_set_project_mutation_guard(
             application->watcher, application_watcher_mutation_begin,
@@ -2991,18 +2723,13 @@ bool cbm_daemon_application_shutdown(cbm_daemon_application_t *application, uint
             session->auto_index_job = NULL;
             session->auto_index_subscribed = false;
         }
-        (void)application_update_owner_release_locked(session);
     }
     application_cancel_jobs_locked(application);
-    application_update_cancel_locked(application);
     cbm_mutex_unlock(&application->mutex);
     for (;;) {
         bool all_done = true;
         cbm_mutex_lock(&application->mutex);
         if (application->active_mutations != 0) {
-            all_done = false;
-        }
-        if (application->update_thread_started && !application->update_thread_done) {
             all_done = false;
         }
         for (cbm_daemon_application_session_t *session = application->sessions; all_done && session;
@@ -3020,12 +2747,7 @@ bool cbm_daemon_application_shutdown(cbm_daemon_application_t *application, uint
         cbm_mutex_unlock(&application->mutex);
         if (all_done) {
             application_jobs_reap_completed(application);
-            uint64_t now = cbm_now_ms();
-            uint32_t remaining =
-                now >= deadline
-                    ? 0
-                    : (uint32_t)((deadline - now) > UINT32_MAX ? UINT32_MAX : deadline - now);
-            return application_update_reap(application, true, remaining);
+            return true;
         }
         if (cbm_now_ms() >= deadline) {
             return false;

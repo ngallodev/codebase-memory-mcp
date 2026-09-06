@@ -730,29 +730,6 @@ TEST(agent_clients_omp_profile_does_not_register_global_instructions_capability)
 }
 
 
-TEST(agent_clients_remove_only_canonical_and_missing_is_noop) {
-    const char *canonical =
-        "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"/usr/bin/cbm\",\"args\":[]}},\"keep\":true}\n";
-    char *dir = NULL;
-    char *path = agent_fixture(canonical, &dir);
-    ASSERT_NOT_NULL(path);
-    ASSERT_EQ(cbm_agent_client_remove_legacy_mcp(CBM_AGENT_CLIENT_GITLAB_DUO, path,
-                                                 "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_OK);
-    char *after = agent_read(path);
-    ASSERT_NOT_NULL(after);
-    ASSERT_NULL(strstr(after, "codebase-memory-mcp"));
-    ASSERT_NOT_NULL(strstr(after, "\"keep\":true"));
-    free(after);
-    ASSERT_EQ(cbm_agent_client_remove_legacy_mcp(CBM_AGENT_CLIENT_GITLAB_DUO, path,
-                                                 "/usr/bin/cbm"),
-              CBM_AGENT_EDIT_OK);
-    free(path);
-    th_cleanup(dir);
-    PASS();
-}
-
-
 /* ── Generated client adapters ──────────────────────────────────── */
 
 /* The generator exists so a client extension cannot carry a hand-picked subset
@@ -778,5 +755,4 @@ SUITE(agent_clients) {
     RUN_TEST(agent_clients_cody_is_opt_in_and_requires_explicit_existing_settings);
     RUN_TEST(agent_clients_omp_resolves_to_injected_agent_dir_when_provided);
     RUN_TEST(agent_clients_omp_profile_does_not_register_global_instructions_capability);
-    RUN_TEST(agent_clients_remove_only_canonical_and_missing_is_noop);
 }

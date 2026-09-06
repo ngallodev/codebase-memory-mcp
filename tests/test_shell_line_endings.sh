@@ -14,18 +14,42 @@ cd "$ROOT"
 
 failures=0
 checked=0
-while IFS= read -r -d '' path &&
-    IFS= read -r -d '' attribute &&
-    IFS= read -r -d '' eol; do
-    checked=$((checked + 1))
-    if [[ "$eol" != "lf" ]]; then
-        echo "FAIL: $path must declare eol=lf (got ${eol:-unset})" >&2
-        failures=$((failures + 1))
-    fi
-done < <(
-    git ls-files -z '*.sh' 'scripts/git-hooks/*' 'scripts/hooks/*' |
-        git check-attr -z --stdin eol
-)
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    while IFS= read -r -d '' path &&
+        IFS= read -r -d '' attribute &&
+        IFS= read -r -d '' eol; do
+        checked=$((checked + 1))
+        if [[ "$eol" != "lf" ]]; then
+            echo "FAIL: $path must declare eol=lf (got ${eol:-unset})" >&2
+            failures=$((failures + 1))
+        fi
+    done < <(
+        git ls-files -z '*.sh' 'scripts/git-hooks/*' 'scripts/hooks/*' |
+            git check-attr -z --stdin eol
+    )
+else
+    # Source/release archives have no .git metadata. Validate the retained
+    # checkout policy directly and inspect the shipped shell entrypoint bytes.
+    grep -Fqx '*.sh text eol=lf' .gitattributes || {
+        echo "FAIL: .gitattributes must retain '*.sh text eol=lf'" >&2
+        exit 1
+    }
+    grep -Eq '^scripts/git-hooks/commit-msg[[:space:]]+text eol=lf$' .gitattributes || {
+        echo "FAIL: commit-msg hook must retain eol=lf" >&2
+        exit 1
+    }
+    grep -Eq '^scripts/hooks/pre-commit[[:space:]]+text eol=lf$' .gitattributes || {
+        echo "FAIL: pre-commit hook must retain eol=lf" >&2
+        exit 1
+    }
+    while IFS= read -r -d '' path; do
+        checked=$((checked + 1))
+        if LC_ALL=C grep -q $'\r' "$path"; then
+            echo "FAIL: $path contains CR bytes in source archive" >&2
+            failures=$((failures + 1))
+        fi
+    done < <(find . -type f \( -name '*.sh' -o -path './scripts/git-hooks/commit-msg' -o -path './scripts/hooks/pre-commit' \) -print0)
+fi
 
 if ((checked == 0)); then
     echo "FAIL: the line-ending contract matched no files — the glob set is broken" >&2

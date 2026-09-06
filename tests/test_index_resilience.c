@@ -170,7 +170,7 @@ TEST(index_oversized_file_reported) {
 
     yyjson_doc *d = yyjson_read(resp, strlen(resp), 0);
     ASSERT_NOT_NULL(d);
-    yyjson_val *sc = yyjson_obj_get(yyjson_doc_get_root(d), "structuredContent");
+    yyjson_val *sc = yyjson_doc_get_root(d);
     ASSERT_NOT_NULL(sc);
 
     /* Status stays "indexed" — the skip is expected + handled. */
@@ -252,7 +252,7 @@ TEST(index_clean_run_no_logfile) {
 
     yyjson_doc *d = yyjson_read(resp, strlen(resp), 0);
     ASSERT_NOT_NULL(d);
-    yyjson_val *sc = yyjson_obj_get(yyjson_doc_get_root(d), "structuredContent");
+    yyjson_val *sc = yyjson_doc_get_root(d);
     ASSERT_NOT_NULL(sc);
 
     int skipped_count = yyjson_get_int(yyjson_obj_get(sc, "skipped_count"));
@@ -328,7 +328,7 @@ TEST(index_parse_partial_reported) {
 
     yyjson_doc *d = yyjson_read(resp, strlen(resp), 0);
     ASSERT_NOT_NULL(d);
-    yyjson_val *sc = yyjson_obj_get(yyjson_doc_get_root(d), "structuredContent");
+    yyjson_val *sc = yyjson_doc_get_root(d);
     ASSERT_NOT_NULL(sc);
 
     /* Indexed, and NOT counted as a skip. */
@@ -454,7 +454,7 @@ TEST(index_parse_partial_reported) {
     ASSERT_NOT_NULL(iresp);
     yyjson_doc *idoc = yyjson_read(iresp, strlen(iresp), 0);
     ASSERT_NOT_NULL(idoc);
-    yyjson_val *isc = yyjson_obj_get(yyjson_doc_get_root(idoc), "structuredContent");
+    yyjson_val *isc = yyjson_doc_get_root(idoc);
     ASSERT_NOT_NULL(isc);
     ASSERT_GTE(yyjson_get_int(yyjson_obj_get(isc, "parse_partial_count")), 1);
     yyjson_val *ipp = yyjson_obj_get(isc, "parse_partial");
@@ -591,7 +591,7 @@ TEST(index_not_indexed_by_design_reported) {
 
     yyjson_doc *d = yyjson_read(resp, strlen(resp), 0);
     ASSERT_NOT_NULL(d);
-    yyjson_val *sc = yyjson_obj_get(yyjson_doc_get_root(d), "structuredContent");
+    yyjson_val *sc = yyjson_doc_get_root(d);
     ASSERT_NOT_NULL(sc);
 
     /* By design ≠ failure: both failure surfaces stay clean. */
@@ -641,7 +641,7 @@ TEST(index_not_indexed_by_design_reported) {
     ASSERT_NOT_NULL(strstr(sresp, "not_indexed"));
     ASSERT_NOT_NULL(strstr(sresp, "secret.py"));
     ASSERT_NOT_NULL(strstr(sresp, "generated"));
-    ASSERT_NOT_NULL(strstr(sresp, "BY DESIGN"));
+    ASSERT_NOT_NULL(strstr(sresp, "Purposely not indexed"));
     free(sresp);
 
     /* The missed graph shows FAILURES only — no by-design paths, so the UI

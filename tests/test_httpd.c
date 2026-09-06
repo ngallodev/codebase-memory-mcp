@@ -1157,7 +1157,10 @@ TEST(ui_server_mutations_require_json_content_type) {
              port, strlen(body), body);
     n = th_http_raw(port, req, resp, sizeof(resp));
     ASSERT_GT(n, 0);
-    ASSERT_EQ(th_status(resp), 400);
+    /* A JSON media type with charset is accepted. With no daemon admission
+     * available in this fixture, the request reaches the operation boundary
+     * and returns service-unavailable rather than a content-type error. */
+    ASSERT_EQ(th_status(resp), 503);
 
     th_server_stop(&ts);
     PASS();

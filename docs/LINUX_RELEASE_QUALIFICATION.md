@@ -103,3 +103,22 @@ For an actual release candidate, the GitHub release workflow is the authoritativ
 - leaves the release in DRAFT for external Windows qualification.
 
 A GitHub RC workflow failure is qualification evidence and must be fixed in a new source commit/new RC. A successful workflow supplies the final-link/build evidence that the current local execution environment has been unable to complete within bounded compiler windows.
+
+## 2026-09-04 full-suite remediation (4f0d7b9 follow-up)
+
+The first direct full sanitized run on `release-tooling` exposed stale test contracts plus one
+ASan failure. The first remediation slice makes the following distinctions explicit:
+
+- daemon operation responses on the internal application wire are length-delimited; tests must
+  not treat those buffers as NUL-terminated strings;
+- the old injectable daemon update-generation seam had no production provider or caller and is
+  removed instead of maintaining tests for unreachable behavior;
+- `projects` treats a not-yet-created cache directory as an empty fresh installation while still
+  reporting real directory access errors;
+- the Windows VM guard contract expects `codebase-memory-cli.exe`;
+- the POSIX quiet-timeout tree probe gives sanitizer startup enough time to publish its PID marker.
+
+Changed C surfaces compile under the repository `-Wall -Wextra -Werror` sanitizer and production
+flags. The Windows VM manifest and build-directory safety contracts pass locally after the stale
+binary expectation is corrected. The remaining auto-index/watch and daemon-runtime assertions are
+tracked separately and are not marked resolved by this slice.

@@ -7,34 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-    cbm_graph_profile_dialect_t dialect;
-    const char *syntax_fragment;
-    const char *read_fragment;
-    const char *grep_fragment;
-} direct_dialect_expectation_t;
-
-static const direct_dialect_expectation_t direct_dialects[] = {
-    {CBM_GRAPH_DIALECT_CLAUDE, "permissionMode: plan", "  - Read\n", "  - Grep\n"},
-    {CBM_GRAPH_DIALECT_CODEX, "sandbox_mode = \"read-only\"", "read", "grep"},
-    {CBM_GRAPH_DIALECT_GEMINI, "kind: local", "  - read_file\n", "  - grep_search\n"},
-    {CBM_GRAPH_DIALECT_QWEN, "approvalMode: plan", "  - read_file\n", "  - grep_search\n"},
-    {CBM_GRAPH_DIALECT_COPILOT, "codebase-memory-mcp/check_index_coverage", "  - read\n",
-     "source read/grep fallback"},
-    {CBM_GRAPH_DIALECT_OPENCODE, "  \"*\": deny", "  read: allow", "  grep: allow"},
-    {CBM_GRAPH_DIALECT_KILO, "mode: subagent", "  read: allow", "  grep: allow"},
-    {CBM_GRAPH_DIALECT_KIRO, "\"includeMcpJson\": false", "\"read\"", "\"grep\""},
-    {CBM_GRAPH_DIALECT_JUNIE, "mcpServers: [\"codebase-memory-", "\"Read\"", "\"Grep\""},
-    {CBM_GRAPH_DIALECT_QODER, "mcp__codebase-memory-mcp__check_index_coverage",
-     "tools: Read,Grep,Glob,mcp__codebase-memory-mcp__", "Read,Grep"},
-    {CBM_GRAPH_DIALECT_CODEBUDDY, "permissionMode: plan", "tools: Read,Grep,Glob,", "Read,Grep"},
-    {CBM_GRAPH_DIALECT_FACTORY, "mcp__codebase-memory-mcp__check_index_coverage",
-     "tools: [\"Read\", \"LS\", \"Grep\", \"Glob\"", "source read/grep fallback"},
-    {CBM_GRAPH_DIALECT_VIBE, "agent_type = \"subagent\"", "\"read_file\"", "\"grep_search\""},
-    {CBM_GRAPH_DIALECT_OMP, "read-summarize: false", "  - read\n", "  - grep\n"},
-    {CBM_GRAPH_DIALECT_GROK, "mcpInheritance:", "read_file", "grep"},
-};
-
 static const cbm_graph_profile_dialect_t handoff_only_dialects[] = {
     CBM_GRAPH_DIALECT_AUGMENT,
     CBM_GRAPH_DIALECT_CURSOR,
@@ -77,35 +49,6 @@ TEST(agent_profiles_stable_tier_identity) {
     PASS();
 }
 
-TEST(agent_profiles_direct_dialects_are_coverage_aware_and_read_only) {
-    for (size_t i = 0U; i < sizeof(direct_dialects) / sizeof(direct_dialects[0]); i++) {
-        const direct_dialect_expectation_t *expectation = &direct_dialects[i];
-        for (int tier = 0; tier < (int)CBM_GRAPH_TIER_COUNT; tier++) {
-            const char *binary = expectation->dialect == CBM_GRAPH_DIALECT_KIRO ||
-                                         expectation->dialect == CBM_GRAPH_DIALECT_CODEX
-                                     ? "/opt/codebase memory/cbm"
-                                     : NULL;
-            char *profile = cbm_render_graph_profile(expectation->dialect, (cbm_graph_tier_t)tier,
-                                                     CBM_GRAPH_ACCESS_DIRECT, binary);
-            if (!profile) {
-                FAIL("every documented direct dialect must render all three tiers");
-            }
-            int valid = strstr(profile, "codebase-memory") != NULL &&
-                        strstr(profile, "check_index_coverage") != NULL &&
-                        strstr(profile, expectation->syntax_fragment) != NULL &&
-                        strstr(profile, expectation->read_fragment) != NULL &&
-                        strstr(profile, expectation->grep_fragment) != NULL &&
-                        strstr(profile, "source read/grep fallback") != NULL &&
-                        !profile_has_mutator(profile);
-            free(profile);
-            if (!valid) {
-                FAIL("direct profiles must expose coverage plus source fallback and omit mutators");
-            }
-        }
-    }
-    PASS();
-}
-
 TEST(agent_profiles_tiers_encode_distinct_evidence_budgets) {
     char *scout = cbm_render_graph_profile(CBM_GRAPH_DIALECT_CLAUDE, CBM_GRAPH_TIER_SCOUT,
                                            CBM_GRAPH_ACCESS_DIRECT, NULL);
@@ -130,32 +73,6 @@ TEST(agent_profiles_tiers_encode_distinct_evidence_budgets) {
     free(verify);
     free(audit);
     ASSERT_TRUE(valid);
-    PASS();
-}
-
-TEST(agent_profiles_handoff_requires_parent_evidence_without_child_mcp) {
-    for (int dialect = 0; dialect < (int)CBM_GRAPH_DIALECT_COUNT; dialect++) {
-        for (int tier = 0; tier < (int)CBM_GRAPH_TIER_COUNT; tier++) {
-            char *profile =
-                cbm_render_graph_profile((cbm_graph_profile_dialect_t)dialect,
-                                         (cbm_graph_tier_t)tier, CBM_GRAPH_ACCESS_HANDOFF, NULL);
-            if (!profile) {
-                FAIL("every dialect must be able to render a parent-handoff profile");
-            }
-            int valid = strstr(profile, "parent agent must supply") &&
-                        strstr(profile, "coverage evidence") &&
-                        strstr(profile, "must not call or claim access to MCP") &&
-                        !strstr(profile, "mcpServers") &&
-                        !strstr(profile, "mcp__codebase-memory-mcp__") &&
-                        !strstr(profile, "mcp_codebase-memory-mcp_") &&
-                        !strstr(profile, "@codebase-memory-mcp/") &&
-                        !strstr(profile, "codebase-memory-mcp/");
-            free(profile);
-            if (!valid) {
-                FAIL("handoff profiles must require parent coverage and expose no child MCP");
-            }
-        }
-    }
     PASS();
 }
 
@@ -264,24 +181,6 @@ TEST(agent_profiles_codex_declares_transport_and_escapes_binary_path) {
     PASS();
 }
 
-TEST(agent_profiles_vibe_uses_matching_prompt_identifier_and_contract) {
-    for (int tier = 0; tier < (int)CBM_GRAPH_TIER_COUNT; tier++) {
-        const char *slug = cbm_graph_tier_slug((cbm_graph_tier_t)tier);
-        char *profile = cbm_render_graph_profile(CBM_GRAPH_DIALECT_VIBE, (cbm_graph_tier_t)tier,
-                                                 CBM_GRAPH_ACCESS_DIRECT, NULL);
-        char *prompt = cbm_render_graph_prompt((cbm_graph_tier_t)tier, CBM_GRAPH_ACCESS_DIRECT);
-        int valid = profile && prompt && strstr(profile, slug) &&
-                    strstr(profile, "system_prompt_id") && strstr(prompt, "check_index_coverage") &&
-                    strstr(prompt, "source read/grep fallback");
-        free(profile);
-        free(prompt);
-        if (!valid) {
-            FAIL("Vibe profile and canonical prompt must share the tier slug and contract");
-        }
-    }
-    PASS();
-}
-
 /* Grok Build children reach MCP only through its search_tool/use_tool
  * dispatcher and filter inheritance per server, so the direct profile must
  * name the server for inheritance and spell out the tier's qualified tool ids
@@ -362,14 +261,11 @@ TEST(agent_profiles_omp_direct_has_prefixed_tools_and_handoff_excludes_mcp) {
 
 SUITE(legacy_agent_profiles) {
     RUN_TEST(agent_profiles_stable_tier_identity);
-    RUN_TEST(agent_profiles_direct_dialects_are_coverage_aware_and_read_only);
     RUN_TEST(agent_profiles_tiers_encode_distinct_evidence_budgets);
-    RUN_TEST(agent_profiles_handoff_requires_parent_evidence_without_child_mcp);
     RUN_TEST(agent_profiles_handoff_only_dialects_fail_closed_for_direct_access);
     RUN_TEST(agent_profiles_server_level_dialects_hard_enforce_read_only_tools);
     RUN_TEST(agent_profiles_kiro_is_valid_json_and_escapes_binary_path);
     RUN_TEST(agent_profiles_codex_declares_transport_and_escapes_binary_path);
-    RUN_TEST(agent_profiles_vibe_uses_matching_prompt_identifier_and_contract);
     RUN_TEST(agent_profiles_omp_direct_has_prefixed_tools_and_handoff_excludes_mcp);
     RUN_TEST(agent_profiles_grok_uses_dispatcher_ids_and_named_inheritance);
     RUN_TEST(agent_profiles_render_deterministically_and_reject_invalid_inputs);

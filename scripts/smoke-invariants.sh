@@ -3,6 +3,19 @@
 # its public command surface; no MCP/JSON-RPC compatibility path is involved.
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+Usage: scripts/smoke-invariants.sh <codebase-memory-cli binary>
+
+Run the canonical CLI-first production invariant battery against an existing executable.
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  -*) echo "smoke-invariants: unknown option '$1'. Please consult --help." >&2; exit 2 ;;
+esac
+
 BIN=${1:-}
 if [[ -z "$BIN" ]]; then
   echo "Usage: scripts/smoke-invariants.sh <codebase-memory-cli binary>" >&2

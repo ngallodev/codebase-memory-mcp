@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+    cat <<'EOF'
+Usage: scripts/smoke-test.sh <binary-path> [--agent-config-only]
+
+Run CLI-first smoke invariants and, when a release fixture URL is supplied,
+the installer round-trip against the installed executable.
+EOF
+}
+
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+    -*) echo "smoke-test: unknown option '$1'. Please consult --help." >&2; exit 2 ;;
+esac
+
 # Canonical CLI-first smoke entry. Product behavior is exercised through the
 # public CLI invariant battery. When a local release fixture URL is supplied,
 # also exercise the real installer and the installed executable.
@@ -16,7 +30,7 @@ if [[ "$MODE" == "--agent-config-only" ]]; then
     echo "PASS: agent integration dry-run"
     exit 0
 elif [[ -n "$MODE" ]]; then
-    echo "smoke-test: unknown option: $MODE" >&2
+    echo "smoke-test: unknown option: $MODE. Please consult --help." >&2
     exit 2
 fi
 

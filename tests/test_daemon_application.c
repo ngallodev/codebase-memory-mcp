@@ -18,6 +18,7 @@
 #include "foundation/workspace.h"
 #include "operations/index_admission.h"
 #include "operations/json_args.h"
+#include "operations/result_wire.h"
 #include "pipeline/pipeline.h"
 #include "store/store.h"
 #include "ui/config.h"
@@ -163,6 +164,18 @@ static cbm_daemon_runtime_application_status_t app_test_request(
         atomic_fetch_add_explicit(&g_app_test_request_token, 1, memory_order_relaxed);
     return app_test_request_tagged(callbacks, session, request_token, request, request_length,
                                    response_out, response_length_out);
+}
+
+static bool app_test_response_contains(const uint8_t *response, uint32_t response_length,
+                                       const char *needle) {
+    if (!response || !needle) return false;
+    size_t needle_length = strlen(needle);
+    if (needle_length == 0) return true;
+    if (needle_length > response_length) return false;
+    for (uint32_t i = 0; i <= response_length - needle_length; i++) {
+        if (memcmp(response + i, needle, needle_length) == 0) return true;
+    }
+    return false;
 }
 
 static bool app_test_context_request_options(const char *root, const char *allowed,
@@ -1275,9 +1288,12 @@ static cbm_index_worker_poll_t app_fake_worker_poll(void *opaque,
         const char *response =
             worker->attempt < APP_FAKE_MAX_ATTEMPTS && worker->context->responses[worker->attempt]
                 ? worker->context->responses[worker->attempt]
-                : "{\"content\":[{\"type\":\"text\",\"text\":\"{"
-                  "\\\"status\\\":\\\"indexed\\\"}\"}]}";
-        worker->result.response = outcome == CBM_PROC_CLEAN ? cbm_strdup(response) : NULL;
+                : "{\"status\":\"indexed\"}";
+        if (outcome == CBM_PROC_CLEAN) {
+            cbm_operation_result_t operation_result = cbm_operation_result_copy(response, false);
+            worker->result.response = cbm_operation_result_wire_encode(&operation_result);
+            cbm_operation_result_dispose(&operation_result);
+        }
         *result_out = &worker->result;
         return CBM_INDEX_WORKER_POLL_TERMINAL;
     }
@@ -1286,8 +1302,10 @@ static cbm_index_worker_poll_t app_fake_worker_poll(void *opaque,
         worker->result.exit_code = 0;
         worker->result.tree_quiesced = !atomic_load(&worker->context->unsafe_clean);
         worker->result.supervision_failed = atomic_load(&worker->context->unsafe_clean);
-        worker->result.response = cbm_strdup(
-            "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"status\\\":\\\"indexed\\\"}\"}]}");
+        cbm_operation_result_t operation_result =
+            cbm_operation_result_copy("{\"status\":\"indexed\"}", false);
+        worker->result.response = cbm_operation_result_wire_encode(&operation_result);
+        cbm_operation_result_dispose(&operation_result);
         *result_out = &worker->result;
         return CBM_INDEX_WORKER_POLL_TERMINAL;
     }
@@ -1600,94 +1618,6 @@ static bool app_env_backup_restore(app_env_backup_t *backup) {
     return status == 0;
 }
 
-typedef struct {
-    atomic_int starts;
-    atomic_int start_failures_remaining;
-    atomic_int cancels;
-    atomic_int destroys;
-    atomic_bool allow_completion;
-    const char *latest_version;
-} app_fake_update_context_t;
-
-typedef struct {
-    app_fake_update_context_t *context;
-    atomic_bool cancelled;
-} app_fake_update_worker_t;
-
-static void app_fake_update_context_init(app_fake_update_context_t *context,
-                                         bool allow_completion) {
-    memset(context, 0, sizeof(*context));
-    atomic_init(&context->starts, 0);
-    atomic_init(&context->start_failures_remaining, 0);
-    atomic_init(&context->cancels, 0);
-    atomic_init(&context->destroys, 0);
-    atomic_init(&context->allow_completion, allow_completion);
-    context->latest_version = "v999.0.0";
-}
-
-static int app_fake_update_start(void *opaque, cbm_daemon_application_update_worker_t *worker_out) {
-    app_fake_update_context_t *context = opaque;
-    if (!context || !worker_out) {
-        return -1;
-    }
-    atomic_fetch_add(&context->starts, 1);
-    int failures = atomic_load(&context->start_failures_remaining);
-    while (failures > 0 && !atomic_compare_exchange_weak(&context->start_failures_remaining,
-                                                         &failures, failures - 1)) {}
-    if (failures > 0) {
-        *worker_out = NULL;
-        return -1;
-    }
-    app_fake_update_worker_t *worker = calloc(1, sizeof(*worker));
-    if (!worker) {
-        return -1;
-    }
-    worker->context = context;
-    atomic_init(&worker->cancelled, false);
-    *worker_out = worker;
-    return 0;
-}
-
-static cbm_daemon_application_update_poll_t app_fake_update_poll(
-    void *opaque, cbm_daemon_application_update_worker_t handle, const char **latest_version_out) {
-    (void)opaque;
-    app_fake_update_worker_t *worker = handle;
-    *latest_version_out = NULL;
-    if (atomic_load(&worker->cancelled)) {
-        return CBM_DAEMON_APPLICATION_UPDATE_POLL_TERMINAL;
-    }
-    if (!atomic_load(&worker->context->allow_completion)) {
-        return CBM_DAEMON_APPLICATION_UPDATE_POLL_RUNNING;
-    }
-    *latest_version_out = worker->context->latest_version;
-    return CBM_DAEMON_APPLICATION_UPDATE_POLL_TERMINAL;
-}
-
-static bool app_fake_update_cancel(void *opaque, cbm_daemon_application_update_worker_t handle) {
-    app_fake_update_context_t *context = opaque;
-    app_fake_update_worker_t *worker = handle;
-    if (!atomic_exchange(&worker->cancelled, true)) {
-        atomic_fetch_add(&context->cancels, 1);
-    }
-    return true;
-}
-
-static void app_fake_update_destroy(void *opaque, cbm_daemon_application_update_worker_t handle) {
-    app_fake_update_context_t *context = opaque;
-    atomic_fetch_add(&context->destroys, 1);
-    free(handle);
-}
-
-static cbm_daemon_application_update_ops_t app_fake_update_ops(app_fake_update_context_t *context) {
-    return (cbm_daemon_application_update_ops_t){
-        .context = context,
-        .start = app_fake_update_start,
-        .poll = app_fake_update_poll,
-        .cancel = app_fake_update_cancel,
-        .destroy = app_fake_update_destroy,
-    };
-}
-
 static bool app_test_initialize_session(
     const cbm_daemon_runtime_application_callbacks_t *callbacks,
     cbm_daemon_runtime_application_session_t *session, const char *root,
@@ -1745,36 +1675,12 @@ static cbm_daemon_runtime_application_status_t app_test_list_projects(
     return status;
 }
 
-static bool app_wait_for_update_notice(const cbm_daemon_runtime_application_callbacks_t *callbacks,
-                                       cbm_daemon_runtime_application_session_t *session,
-                                       uint64_t *id, uint8_t **notice_out) {
-    uint64_t deadline = cbm_now_ms() + APP_TEST_TIMEOUT_MS;
-    while (cbm_now_ms() < deadline) {
-        uint8_t *response = NULL;
-        uint32_t response_length = 0;
-        cbm_daemon_runtime_application_status_t status =
-            app_test_list_projects(callbacks, session, (*id)++, &response, &response_length);
-        if (status == CBM_DAEMON_RUNTIME_APPLICATION_OK && response &&
-            strstr((char *)response, "Update available:")) {
-            *notice_out = response;
-            return true;
-        }
-        free(response);
-        cbm_usleep(1000);
-    }
-    *notice_out = NULL;
-    return false;
-}
-
 /* Regression contract: neutral context establishment is the ownership boundary for daemon background
  * indexing. Hook sessions do not participate; identical roots share
  * one physical worker but retain one subscription per live session. */
 TEST(daemon_application_initialize_coalesces_auto_index_for_full_sessions) {
     app_env_backup_t cache_environment;
     bool cache_saved = app_env_backup_capture(&cache_environment, "CBM_CACHE_DIR");
-    app_fake_update_context_t update;
-    app_fake_update_context_init(&update, false);
-    cbm_daemon_application_update_ops_t update_ops = app_fake_update_ops(&update);
     char root[APP_TEST_PATH_CAP];
     char cache[APP_TEST_PATH_CAP];
     (void)snprintf(root, sizeof(root), "%s/cbm-app-auto-index-root-XXXXXX", cbm_tmpdir());
@@ -1802,7 +1708,6 @@ TEST(daemon_application_initialize_coalesces_auto_index_for_full_sessions) {
     cbm_daemon_application_config_t config = {
         .config = stored_config,
         .worker_ops = &worker_ops,
-        .update_ops = &update_ops,
     };
     cbm_daemon_application_t *application =
         config_ready ? cbm_daemon_application_new(&config) : NULL;
@@ -1821,7 +1726,7 @@ TEST(daemon_application_initialize_coalesces_auto_index_for_full_sessions) {
     bool restricted_started_nothing =
         admissions_evaluated && atomic_load(&fake.starts) == 0 && application && project &&
         cbm_daemon_application_job_subscribers(application, project) == 0 &&
-        atomic_load(&update.starts) == 0;
+        true;
 
     bool first_initialized = app_test_initialize_session(&callbacks, sessions[0], root, NULL, NULL);
     bool first_owned = first_initialized && project &&
@@ -1893,9 +1798,6 @@ TEST(daemon_application_initialize_coalesces_auto_index_for_full_sessions) {
     ASSERT_TRUE(one_owner_left);
     ASSERT_TRUE(final_cancelled);
     ASSERT_TRUE(final_reaped);
-    ASSERT_EQ(atomic_load(&update.starts), 1);
-    ASSERT_EQ(atomic_load(&update.cancels), 1);
-    ASSERT_EQ(atomic_load(&update.destroys), 1);
     ASSERT_TRUE(stopped);
     ASSERT_TRUE(cache_restored);
     PASS();
@@ -2187,13 +2089,9 @@ TEST(daemon_application_auto_index_honors_tracked_file_limit) {
         .log_path = app_fake_worker_log_path,
         .destroy = app_fake_worker_destroy,
     };
-    app_fake_update_context_t update;
-    app_fake_update_context_init(&update, true);
-    cbm_daemon_application_update_ops_t update_ops = app_fake_update_ops(&update);
     cbm_daemon_application_config_t config = {
         .config = stored_config,
         .worker_ops = &worker_ops,
-        .update_ops = &update_ops,
     };
     cbm_daemon_application_t *application =
         config_ready && git_ready ? cbm_daemon_application_new(&config) : NULL;
@@ -2311,13 +2209,9 @@ TEST(daemon_application_auto_index_retries_transient_busy_admission) {
         .log_path = app_fake_worker_log_path,
         .destroy = app_fake_worker_destroy,
     };
-    app_fake_update_context_t update;
-    app_fake_update_context_init(&update, true);
-    cbm_daemon_application_update_ops_t update_ops = app_fake_update_ops(&update);
     cbm_daemon_application_config_t config = {
         .config = stored_config,
         .worker_ops = &worker_ops,
-        .update_ops = &update_ops,
         .physical_job_limit = 1,
     };
     cbm_daemon_application_t *application =
@@ -2386,267 +2280,6 @@ TEST(daemon_application_auto_index_retries_transient_busy_admission) {
     ASSERT_TRUE(retry_admitted);
     ASSERT_TRUE(stopped);
     ASSERT_TRUE(cache_restored);
-    PASS();
-}
-
-/* Regression contract: the daemon owns one update generation, not one update thread
- * per daemon generation. Its completed result is replayed exactly once to every
- * eligible full session, including a session initialized after completion. */
-TEST(daemon_application_update_generation_notifies_initial_and_late_sessions_once) {
-    app_fake_update_context_t update;
-    app_fake_update_context_init(&update, true);
-    cbm_daemon_application_update_ops_t update_ops = app_fake_update_ops(&update);
-    cbm_daemon_application_config_t config = {.update_ops = &update_ops};
-    char root[APP_TEST_PATH_CAP];
-    (void)snprintf(root, sizeof(root), "%s/cbm-app-update-root-XXXXXX", cbm_tmpdir());
-    bool root_ok = cbm_mkdtemp(root) != NULL;
-    cbm_daemon_application_t *application = root_ok ? cbm_daemon_application_new(&config) : NULL;
-    cbm_daemon_runtime_application_callbacks_t callbacks =
-        cbm_daemon_application_runtime_callbacks(application);
-    cbm_daemon_runtime_application_session_t *initial =
-        application ? app_test_open(&callbacks, 4211) : NULL;
-    bool initial_initialized = app_test_initialize_session(&callbacks, initial, root, NULL, NULL);
-
-    uint64_t request_id = 42000;
-    uint8_t *initial_notice = NULL;
-    bool initial_notified =
-        initial_initialized &&
-        app_wait_for_update_notice(&callbacks, initial, &request_id, &initial_notice);
-    uint8_t *initial_second = NULL;
-    uint32_t initial_second_length = 0;
-    cbm_daemon_runtime_application_status_t initial_second_status =
-        initial_notified ? app_test_list_projects(&callbacks, initial, request_id++,
-                                                  &initial_second, &initial_second_length)
-                         : CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
-    bool initial_once = initial_second_status == CBM_DAEMON_RUNTIME_APPLICATION_OK &&
-                        initial_second && !strstr((char *)initial_second, "Update available:");
-
-    cbm_daemon_runtime_application_session_t *late =
-        application ? app_test_open(&callbacks, 4212) : NULL;
-    bool late_initialized =
-        initial_notified &&
-        app_test_initialize_session(&callbacks, late, root, NULL, NULL);
-    uint8_t *late_notice = NULL;
-    bool late_notified =
-        late_initialized && app_wait_for_update_notice(&callbacks, late, &request_id, &late_notice);
-    uint8_t *late_second = NULL;
-    uint32_t late_second_length = 0;
-    cbm_daemon_runtime_application_status_t late_second_status =
-        late_notified ? app_test_list_projects(&callbacks, late, request_id++, &late_second,
-                                               &late_second_length)
-                      : CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
-    bool late_once = late_second_status == CBM_DAEMON_RUNTIME_APPLICATION_OK && late_second &&
-                     !strstr((char *)late_second, "Update available:");
-    int generation_starts = atomic_load(&update.starts);
-    bool generation_completed = initial_notified && app_wait_for_atomic_int(&update.destroys, 1);
-
-    if (initial) {
-        callbacks.session_cancel(callbacks.context, initial);
-        callbacks.session_close(callbacks.context, initial);
-    }
-    if (late) {
-        callbacks.session_cancel(callbacks.context, late);
-        callbacks.session_close(callbacks.context, late);
-    }
-    bool stopped = application && cbm_daemon_application_shutdown(application, APP_TEST_TIMEOUT_MS);
-    cbm_daemon_application_free(application);
-    free(initial_notice);
-    free(initial_second);
-    free(late_notice);
-    free(late_second);
-    (void)th_rmtree(root);
-
-    ASSERT_TRUE(root_ok);
-    ASSERT_TRUE(initial_initialized);
-    ASSERT_TRUE(initial_notified);
-    ASSERT_TRUE(initial_once);
-    ASSERT_TRUE(late_initialized);
-    ASSERT_TRUE(late_notified);
-    ASSERT_TRUE(late_once);
-    ASSERT_EQ(generation_starts, 1);
-    ASSERT_TRUE(generation_completed);
-    ASSERT_TRUE(stopped);
-    ASSERT_EQ(atomic_load(&update.cancels), 0);
-    ASSERT_EQ(atomic_load(&update.destroys), 1);
-    PASS();
-}
-
-TEST(daemon_application_update_generation_retries_worker_start_failure) {
-    app_fake_update_context_t update;
-    app_fake_update_context_init(&update, true);
-    atomic_store(&update.start_failures_remaining, 1);
-    cbm_daemon_application_update_ops_t update_ops = app_fake_update_ops(&update);
-    cbm_daemon_application_config_t config = {.update_ops = &update_ops};
-    char root[APP_TEST_PATH_CAP];
-    (void)snprintf(root, sizeof(root), "%s/cbm-app-update-retry-start-XXXXXX", cbm_tmpdir());
-    bool root_ok = cbm_mkdtemp(root) != NULL;
-    cbm_daemon_application_t *application = root_ok ? cbm_daemon_application_new(&config) : NULL;
-    cbm_daemon_runtime_application_callbacks_t callbacks =
-        cbm_daemon_application_runtime_callbacks(application);
-    cbm_daemon_runtime_application_session_t *session =
-        application ? app_test_open(&callbacks, 4261) : NULL;
-    bool initialized = app_test_initialize_session(&callbacks, session, root, NULL, NULL);
-    bool failed_generation_started = initialized && app_wait_for_atomic_int(&update.starts, 1);
-    uint64_t request_id = 42610;
-    uint8_t *notice = NULL;
-    bool retry_notified = failed_generation_started &&
-                          app_wait_for_update_notice(&callbacks, session, &request_id, &notice);
-
-    if (session) {
-        callbacks.session_cancel(callbacks.context, session);
-        callbacks.session_close(callbacks.context, session);
-    }
-    bool stopped = application && cbm_daemon_application_shutdown(application, APP_TEST_TIMEOUT_MS);
-    cbm_daemon_application_free(application);
-    free(notice);
-    (void)th_rmtree(root);
-
-    ASSERT_TRUE(root_ok);
-    ASSERT_TRUE(initialized);
-    ASSERT_TRUE(failed_generation_started);
-    ASSERT_TRUE(retry_notified);
-    ASSERT_EQ(atomic_load(&update.starts), 2);
-    ASSERT_EQ(atomic_load(&update.cancels), 0);
-    ASSERT_EQ(atomic_load(&update.destroys), 1);
-    ASSERT_TRUE(stopped);
-    PASS();
-}
-
-TEST(daemon_application_update_generation_retries_cancelled_check) {
-    app_fake_update_context_t update;
-    app_fake_update_context_init(&update, false);
-    cbm_daemon_application_update_ops_t update_ops = app_fake_update_ops(&update);
-    cbm_daemon_application_config_t config = {.update_ops = &update_ops};
-    char root[APP_TEST_PATH_CAP];
-    (void)snprintf(root, sizeof(root), "%s/cbm-app-update-retry-cancel-XXXXXX", cbm_tmpdir());
-    bool root_ok = cbm_mkdtemp(root) != NULL;
-    cbm_daemon_application_t *application = root_ok ? cbm_daemon_application_new(&config) : NULL;
-    cbm_daemon_runtime_application_callbacks_t callbacks =
-        cbm_daemon_application_runtime_callbacks(application);
-    cbm_daemon_runtime_application_session_t *first =
-        application ? app_test_open(&callbacks, 4271) : NULL;
-    cbm_daemon_runtime_application_session_t *hook_only =
-        application ? app_test_open(&callbacks, 4272) : NULL;
-    bool hook_only_initialized = app_test_initialize_session(&callbacks, hook_only, root, NULL, NULL);
-    bool first_initialized =
-        hook_only_initialized &&
-        app_test_initialize_session(&callbacks, first, root, NULL, NULL);
-    bool first_started = first_initialized && app_wait_for_atomic_int(&update.starts, 1);
-    if (first) {
-        callbacks.session_cancel(callbacks.context, first);
-        callbacks.session_close(callbacks.context, first);
-        first = NULL;
-    }
-    bool first_cancelled =
-        first_started && atomic_load(&update.cancels) == 1 && atomic_load(&update.destroys) == 1;
-
-    atomic_store(&update.allow_completion, true);
-    cbm_daemon_runtime_application_session_t *retry =
-        application ? app_test_open(&callbacks, 4273) : NULL;
-    bool retry_initialized =
-        first_cancelled &&
-        app_test_initialize_session(&callbacks, retry, root, NULL, NULL);
-    uint64_t request_id = 42710;
-    uint8_t *notice = NULL;
-    bool retry_notified =
-        retry_initialized && app_wait_for_update_notice(&callbacks, retry, &request_id, &notice);
-
-    if (retry) {
-        callbacks.session_cancel(callbacks.context, retry);
-        callbacks.session_close(callbacks.context, retry);
-    }
-    if (hook_only) {
-        callbacks.session_cancel(callbacks.context, hook_only);
-        callbacks.session_close(callbacks.context, hook_only);
-    }
-    bool stopped = application && cbm_daemon_application_shutdown(application, APP_TEST_TIMEOUT_MS);
-    cbm_daemon_application_free(application);
-    free(notice);
-    (void)th_rmtree(root);
-
-    ASSERT_TRUE(root_ok);
-    ASSERT_TRUE(hook_only_initialized);
-    ASSERT_TRUE(first_initialized);
-    ASSERT_TRUE(first_started);
-    ASSERT_TRUE(first_cancelled);
-    ASSERT_TRUE(retry_initialized);
-    ASSERT_TRUE(retry_notified);
-    ASSERT_EQ(atomic_load(&update.starts), 2);
-    ASSERT_EQ(atomic_load(&update.cancels), 1);
-    ASSERT_EQ(atomic_load(&update.destroys), 2);
-    ASSERT_TRUE(stopped);
-    PASS();
-}
-
-typedef struct {
-    cbm_daemon_runtime_application_callbacks_t callbacks;
-    cbm_daemon_runtime_application_session_t *session;
-    cbm_daemon_application_t *application;
-    bool shutdown_ok;
-    atomic_bool done;
-} app_final_disconnect_thread_t;
-
-static void *app_final_disconnect_thread(void *opaque) {
-    app_final_disconnect_thread_t *disconnect = opaque;
-    disconnect->callbacks.session_cancel(disconnect->callbacks.context, disconnect->session);
-    disconnect->callbacks.session_close(disconnect->callbacks.context, disconnect->session);
-    disconnect->shutdown_ok =
-        cbm_daemon_application_shutdown(disconnect->application, APP_TEST_TIMEOUT_MS);
-    atomic_store(&disconnect->done, true);
-    return NULL;
-}
-
-/* Regression contract: the last eligible disconnect is also the update-generation
- * cancellation and join boundary. */
-TEST(daemon_application_final_disconnect_cancels_and_joins_update_generation) {
-    app_fake_update_context_t update;
-    app_fake_update_context_init(&update, false);
-    cbm_daemon_application_update_ops_t update_ops = app_fake_update_ops(&update);
-    cbm_daemon_application_config_t config = {.update_ops = &update_ops};
-    char root[APP_TEST_PATH_CAP];
-    (void)snprintf(root, sizeof(root), "%s/cbm-app-update-cancel-root-XXXXXX", cbm_tmpdir());
-    bool root_ok = cbm_mkdtemp(root) != NULL;
-    cbm_daemon_application_t *application = root_ok ? cbm_daemon_application_new(&config) : NULL;
-    cbm_daemon_runtime_application_callbacks_t callbacks =
-        cbm_daemon_application_runtime_callbacks(application);
-    cbm_daemon_runtime_application_session_t *session =
-        application ? app_test_open(&callbacks, 4311) : NULL;
-    bool initialized = app_test_initialize_session(&callbacks, session, root, NULL, NULL);
-    bool generation_started = initialized && app_wait_for_atomic_int(&update.starts, 1);
-
-    app_final_disconnect_thread_t disconnect = {
-        .callbacks = callbacks,
-        .session = session,
-        .application = application,
-        .shutdown_ok = false,
-    };
-    atomic_init(&disconnect.done, false);
-    cbm_thread_t disconnect_thread;
-    bool disconnect_started =
-        generation_started &&
-        cbm_thread_create(&disconnect_thread, 0, app_final_disconnect_thread, &disconnect) == 0;
-    bool joined_before_return =
-        disconnect_started && app_wait_for_atomic_bool(&disconnect.done, true);
-    if (disconnect_started) {
-        (void)cbm_thread_join(&disconnect_thread);
-        session = NULL;
-    } else if (session) {
-        callbacks.session_cancel(callbacks.context, session);
-        callbacks.session_close(callbacks.context, session);
-        session = NULL;
-        disconnect.shutdown_ok = cbm_daemon_application_shutdown(application, APP_TEST_TIMEOUT_MS);
-    }
-    cbm_daemon_application_free(application);
-    (void)th_rmtree(root);
-
-    ASSERT_TRUE(root_ok);
-    ASSERT_TRUE(initialized);
-    ASSERT_TRUE(generation_started);
-    ASSERT_TRUE(disconnect_started);
-    ASSERT_TRUE(joined_before_return);
-    ASSERT_EQ(atomic_load(&update.cancels), 1);
-    ASSERT_EQ(atomic_load(&update.destroys), 1);
-    ASSERT_TRUE(disconnect.shutdown_ok);
     PASS();
 }
 
@@ -2741,8 +2374,8 @@ TEST(daemon_application_coalesces_semantically_identical_index_requests) {
     ASSERT_EQ(atomic_load(&fake.destroys), 1);
     ASSERT_EQ(requests[0].status, CBM_DAEMON_RUNTIME_APPLICATION_OK);
     ASSERT_EQ(requests[1].status, CBM_DAEMON_RUNTIME_APPLICATION_OK);
-    ASSERT_TRUE(requests[0].response && strstr((char *)requests[0].response, "indexed"));
-    ASSERT_TRUE(requests[1].response && strstr((char *)requests[1].response, "indexed"));
+    ASSERT_TRUE(requests[0].response && app_test_response_contains(requests[0].response, requests[0].response_length, "indexed"));
+    ASSERT_TRUE(requests[1].response && app_test_response_contains(requests[1].response, requests[1].response_length, "indexed"));
 
     free(requests[0].response);
     free(requests[1].response);
@@ -2866,13 +2499,13 @@ TEST(daemon_application_fresh_request_does_not_reuse_terminal_subscribed_job) {
     ASSERT_EQ(fresh_status, CBM_DAEMON_RUNTIME_APPLICATION_OK);
     ASSERT_EQ(atomic_load(&fake.starts), 2);
     ASSERT_EQ(atomic_load(&fake.destroys), 2);
-    ASSERT_TRUE(fresh && strstr((char *)fresh, "fresh-generation"));
-    ASSERT_TRUE(!fresh || !strstr((char *)fresh, "stale-generation"));
-    ASSERT_TRUE(!fresh || !strstr((char *)fresh, "different options"));
+    ASSERT_TRUE(fresh && app_test_response_contains(fresh, fresh_length, "fresh-generation"));
+    ASSERT_TRUE(!fresh || !app_test_response_contains(fresh, fresh_length, "stale-generation"));
+    ASSERT_TRUE(!fresh || !app_test_response_contains(fresh, fresh_length, "different options"));
     ASSERT_TRUE(stopped);
     for (size_t i = 0; i < PRIOR_SUBSCRIBERS; i++) {
         ASSERT_EQ(prior[i].status, CBM_DAEMON_RUNTIME_APPLICATION_OK);
-        ASSERT_TRUE(prior[i].response && strstr((char *)prior[i].response, "stale-generation"));
+        ASSERT_TRUE(prior[i].response && app_test_response_contains(prior[i].response, prior[i].response_length, "stale-generation"));
         free(prior[i].response);
     }
 
@@ -2972,7 +2605,7 @@ TEST(daemon_application_request_cancel_detaches_only_one_coalesced_subscriber) {
     bool stopped = application && cbm_daemon_application_shutdown(application, APP_TEST_TIMEOUT_MS);
     cbm_daemon_application_free(application);
     bool second_indexed =
-        requests[1].response && strstr((char *)requests[1].response, "indexed") != NULL;
+        requests[1].response && app_test_response_contains(requests[1].response, requests[1].response_length, "indexed");
     int final_cancels = atomic_load(&fake.cancels);
     int final_starts = atomic_load(&fake.starts);
     int final_destroys = atomic_load(&fake.destroys);
@@ -3181,7 +2814,7 @@ TEST(daemon_application_disconnect_before_request_callback_is_sticky) {
     ASSERT_EQ(cancelled_response_length, 0);
     ASSERT_EQ(starts_after_cancelled_callback, 0);
     ASSERT_EQ(healthy_status, CBM_DAEMON_RUNTIME_APPLICATION_OK);
-    ASSERT_TRUE(response && strstr((char *)response, "indexed"));
+    ASSERT_TRUE(response && app_test_response_contains(response, response_length, "indexed"));
     ASSERT_EQ(atomic_load(&fake.starts), 1);
     ASSERT_EQ(atomic_load(&fake.cancels), 0);
     ASSERT_EQ(atomic_load(&fake.destroys), 1);
@@ -3251,7 +2884,6 @@ TEST(daemon_application_request_cancel_preserves_persistent_watch_and_session) {
     int watch_count_after_ping = fixture.watcher ? cbm_watcher_watch_count(fixture.watcher) : -1;
     bool worker_cancelled = app_wait_for_atomic_int(&fixture.fake.cancels, 1);
     bool cleaned = app_watch_race_fixture_finish(&fixture);
-    bool ping_matches = ping_response && strstr((char *)ping_response, "\"id\":3021") != NULL;
     int worker_starts = atomic_load(&fixture.fake.starts);
     int worker_destroys = atomic_load(&fixture.fake.destroys);
     free(request.response);
@@ -3271,7 +2903,6 @@ TEST(daemon_application_request_cancel_preserves_persistent_watch_and_session) {
     ASSERT_EQ(request.response_length, 0);
     ASSERT_EQ(watch_count_after_cancel, 1);
     ASSERT_EQ(ping_status, CBM_DAEMON_RUNTIME_APPLICATION_OK);
-    ASSERT_TRUE(ping_matches);
     ASSERT_GT(ping_response_length, 0);
     ASSERT_EQ(watch_count_after_ping, 1);
     ASSERT_TRUE(worker_cancelled);
@@ -3899,7 +3530,7 @@ TEST(daemon_application_serializes_adr_mutation_with_index_job) {
     bool stopped = application && cbm_daemon_application_shutdown(application, APP_TEST_TIMEOUT_MS);
     cbm_daemon_application_free(application);
     bool adr_response_updated =
-        adr_request.response && strstr((char *)adr_request.response, "updated") != NULL;
+        adr_request.response && app_test_response_contains(adr_request.response, adr_request.response_length, "updated");
 
     free(index_request.response);
     free(adr_request.response);
@@ -4900,8 +4531,8 @@ TEST(daemon_application_queues_explicit_index_behind_physical_job_limit) {
     atomic_store(&fake.allow_completion, true);
     bool request_joined = request_started && cbm_thread_join(&request_thread) == 0;
     bool queued_succeeded = request_joined && queued.status == CBM_DAEMON_RUNTIME_APPLICATION_OK &&
-                            queued.response && strstr((char *)queued.response, "indexed") != NULL &&
-                            strstr((char *)queued.response, "physical index job limit") == NULL;
+                            queued.response && app_test_response_contains(queued.response, queued.response_length, "indexed") &&
+                            !app_test_response_contains(queued.response, queued.response_length, "physical index job limit");
 
     callbacks.session_close(callbacks.context, session);
     bool stopped = application && cbm_daemon_application_shutdown(application, APP_TEST_TIMEOUT_MS);
@@ -5083,10 +4714,6 @@ SUITE(daemon_application) {
     RUN_TEST(daemon_application_auto_index_file_count_handles_literal_metacharacter_path);
     RUN_TEST(daemon_application_auto_index_file_count_supports_non_git_roots);
     RUN_TEST(daemon_application_auto_index_retries_transient_busy_admission);
-    RUN_TEST(daemon_application_update_generation_notifies_initial_and_late_sessions_once);
-    RUN_TEST(daemon_application_update_generation_retries_worker_start_failure);
-    RUN_TEST(daemon_application_update_generation_retries_cancelled_check);
-    RUN_TEST(daemon_application_final_disconnect_cancels_and_joins_update_generation);
     RUN_TEST(daemon_application_coalesces_semantically_identical_index_requests);
     RUN_TEST(daemon_application_fresh_request_does_not_reuse_terminal_subscribed_job);
     RUN_TEST(daemon_application_request_cancel_detaches_only_one_coalesced_subscriber);

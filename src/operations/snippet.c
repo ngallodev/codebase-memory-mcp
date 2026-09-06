@@ -223,6 +223,26 @@ static cbm_operation_result_t node_result(cbm_store_t *store, const char *projec
     yyjson_mut_obj_add_strcpy(doc, root, "source", source);
     if (match) yyjson_mut_obj_add_strcpy(doc, root, "match", match);
 
+    /* Preserve the coverage warning promised by the public snippet contract.
+     * The graph may contain a callable from a file whose parse included
+     * ERROR/MISSING regions; callers need that signal before treating the
+     * snippet as complete evidence. */
+    cbm_coverage_row_t *coverage_rows = NULL;
+    int coverage_count = 0;
+    if (cbm_store_coverage_get_path(store, project, node->file_path, &coverage_rows,
+                                    &coverage_count) == CBM_STORE_OK) {
+        for (int i = 0; i < coverage_count; ++i) {
+            if (coverage_rows[i].kind && strcmp(coverage_rows[i].kind, "parse_partial") == 0) {
+                yyjson_mut_obj_add_str(
+                    doc, root, "coverage_note",
+                    "This file was only PARTIALLY indexed; read the source directly when graph "
+                    "coverage matters for completeness.");
+                break;
+            }
+        }
+    }
+    cbm_store_free_coverage(coverage_rows, coverage_count);
+
     if (include_neighbors) {
         char **callers = NULL;
         char **callees = NULL;

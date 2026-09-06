@@ -2,9 +2,8 @@
  * application.h — Daemon-owned CBM application sessions and thin-client wire.
  *
  * The runtime authenticates a local process and owns connection lifetime. This
- * layer owns everything above that boundary: one isolated MCP session per
- * connection, explicit workspace context, shared watcher subscriptions,
- * daemon-owned index jobs, and one update-check generation. Frontends never
+ * layer owns everything above that boundary: explicit workspace context,
+ * shared watcher subscriptions, and daemon-owned index jobs. Frontends never
  * construct stores or watchers.
  */
 #ifndef CBM_DAEMON_APPLICATION_H
@@ -23,7 +22,6 @@ struct cbm_watcher;
 
 typedef struct cbm_daemon_application cbm_daemon_application_t;
 typedef void *cbm_daemon_application_worker_t;
-typedef void *cbm_daemon_application_update_worker_t;
 
 /* Injectable physical-worker boundary. Production uses index_supervisor;
  * tests use this to deterministically hold/release one shared job. */
@@ -39,33 +37,11 @@ typedef struct {
     void (*destroy)(void *context, cbm_daemon_application_worker_t worker);
 } cbm_daemon_application_worker_ops_t;
 
-typedef enum {
-    CBM_DAEMON_APPLICATION_UPDATE_POLL_ERROR = -1,
-    CBM_DAEMON_APPLICATION_UPDATE_POLL_RUNNING = 0,
-    CBM_DAEMON_APPLICATION_UPDATE_POLL_TERMINAL = 1,
-} cbm_daemon_application_update_poll_t;
-
-/* Injectable update-check boundary. Production supervises one curl process;
- * tests provide an offline worker. latest_version_out is borrowed from the
- * worker and is only meaningful for a clean terminal result. RUNNING is the
- * only non-terminal poll result; ERROR is a contained terminal failure. cancel
- * must be safe concurrently with poll, and destroy receives only a terminal
- * worker. */
-typedef struct {
-    void *context;
-    int (*start)(void *context, cbm_daemon_application_update_worker_t *worker_out);
-    cbm_daemon_application_update_poll_t (*poll)(void *context,
-                                                 cbm_daemon_application_update_worker_t worker,
-                                                 const char **latest_version_out);
-    bool (*cancel)(void *context, cbm_daemon_application_update_worker_t worker);
-    void (*destroy)(void *context, cbm_daemon_application_update_worker_t worker);
-} cbm_daemon_application_update_ops_t;
 
 typedef struct {
     struct cbm_watcher *watcher;                           /* borrowed; daemon lifetime */
     struct cbm_config *config;                             /* borrowed; daemon lifetime */
     const cbm_daemon_application_worker_ops_t *worker_ops; /* NULL = production */
-    const cbm_daemon_application_update_ops_t *update_ops; /* NULL = production */
     /* Maximum distinct, non-terminal physical index jobs. Zero selects the
      * conservative daemon default (4). Identical requests still coalesce even
      * while the limit is full. */
@@ -73,7 +49,7 @@ typedef struct {
     /* Aggregate budget shared by every concurrently admitted physical worker.
      * The daemon host supplies its already-resolved CBM process budget. */
     size_t aggregate_memory_budget_bytes;
-    /* Borrowed native-lock manager for daemon-owned mutations (MCP tools,
+    /* Borrowed native-lock manager for daemon-owned mutations (CLI operations,
      * watcher/UI operations). Index workers create and own their independent
      * process-local manager; the daemon job registry reserves index projects
      * in-process and must not hold the worker's OS lease. */

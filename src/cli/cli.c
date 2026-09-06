@@ -5970,7 +5970,7 @@ unsigned char *cbm_extract_binary_from_targz(const unsigned char *data, int data
         return NULL;
     }
 
-    /* Parse tar: find entry starting with "codebase-memory-mcp" */
+    /* Parse tar: find the canonical codebase-memory-cli binary entry. */
     size_t pos = 0;
     while (pos + TAR_BLOCK_SIZE <= total) {
         const unsigned char *hdr = decompressed + pos;

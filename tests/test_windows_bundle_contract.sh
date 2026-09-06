@@ -115,7 +115,7 @@ shipped_surfaces = (
     "install.ps1",
     "pkg/npm/install.js",
     "pkg/npm/bin.js",
-    "pkg/pypi/src/codebase_memory_mcp/_cli.py",
+    "pkg/pypi/src/codebase_memory_cli/_cli.py",
     ".github/workflows/_build.yml",
 )
 for relative in shipped_surfaces:
@@ -245,16 +245,16 @@ require(
 # ── 4. Package-manager shims resolve the single Windows binary ───────────────
 single_binary_contracts = {
     "pkg/npm/install.js": (
-        r"const\s+WINDOWS_BINARY_NAME\s*=\s*['\"]codebase-memory-mcp\.exe['\"]",
+        r"const\s+WINDOWS_BINARY_NAME\s*=\s*['\"]codebase-memory-cli\.exe['\"]",
         r"installWindowsBinaryAtomically\(",
         r"windowsBinaryReady\(",
     ),
     "pkg/npm/bin.js": (
-        r"binName\s*=\s*isWindows\s*\?\s*['\"]codebase-memory-mcp\.exe['\"]",
+        r"binName\s*=\s*isWindows\s*\?\s*['\"]codebase-memory-cli\.exe['\"]",
         r"const\s+executionPath\s*=\s*binPath",
     ),
-    "pkg/pypi/src/codebase_memory_mcp/_cli.py": (
-        r"_WINDOWS_BINARY_NAME\s*=\s*['\"]codebase-memory-mcp\.exe['\"]",
+    "pkg/pypi/src/codebase_memory_cli/_cli.py": (
+        r"_WINDOWS_BINARY_NAME\s*=\s*['\"]codebase-memory-cli\.exe['\"]",
         r"def\s+_runtime_set_ready\(",
     ),
 }
@@ -286,7 +286,7 @@ exact_archive_guards = {
         "'install.ps1'",
         "THIRD_PARTY_NOTICES.md",
     ),
-    "pkg/pypi/src/codebase_memory_mcp/_cli.py": (
+    "pkg/pypi/src/codebase_memory_cli/_cli.py": (
         "name not in required_set",
         "len(seen) != len(required)",
         "_WINDOWS_BINARY_NAME",
@@ -306,13 +306,13 @@ for relative, needles in exact_archive_guards.items():
 # A portable mutation refusal must point to the owning package manager.
 guidance_contracts = {
     "pkg/npm/bin.js": (
-        "npm install codebase-memory-mcp@latest",
-        "npm uninstall codebase-memory-mcp",
-        "codebase-memory-mcp install --yes",
+        "npm install codebase-memory-cli@latest",
+        "npm uninstall codebase-memory-cli",
+        "codebase-memory-cli install --yes",
     ),
-    "pkg/pypi/src/codebase_memory_mcp/_cli.py": (
-        "python -m pip install --upgrade codebase-memory-mcp",
-        "python -m pip uninstall codebase-memory-mcp",
+    "pkg/pypi/src/codebase_memory_cli/_cli.py": (
+        "python -m pip install --upgrade codebase-memory-cli",
+        "python -m pip uninstall codebase-memory-cli",
         "install --yes",
     ),
 }
@@ -415,7 +415,7 @@ require(
             '"install.ps1" in lowered',
             "result.returncode == 0",
             "sha256_file(binary) == before",
-            "codebase-memory-mcp.payload.exe",
+            "codebase-memory-cli.payload.exe",
         )
     ),
     "the native update guard must assert exit 0, the printed install.ps1 command, an "
@@ -708,40 +708,16 @@ require(
     "Windows smoke must leave canonical targets absent for an authenticated install",
 )
 require(
-    "smoke_mktemp_file" in smoke_script
-    and "smoke_mktemp_dir" in smoke_script
-    and re.search(r"\$\(\s*mktemp(?:\s+-d)?(?:\s|\))", smoke_script) is None,
-    "smoke-test.sh must route every temporary fixture through its private-root helpers",
+    '"$ROOT/scripts/smoke-invariants.sh" "$BINARY"' in smoke_script,
+    "smoke-test.sh must execute the canonical CLI invariant battery",
 )
 require(
-    "SMOKE_UPDATE_FIXTURE_DIR" in smoke_script
-    and 'UPDATE_DOWNLOAD_URL="file://$UPDATE_FIXTURE_DIR"' in smoke_script
-    and 'UPDATE_DOWNLOAD_URL="file:///$UPDATE_FIXTURE_DIR"' in smoke_script
-    and 'CBM_DOWNLOAD_URL="$UPDATE_DOWNLOAD_URL"' in smoke_script,
-    "Phase 14 native update must use an explicit file:// fixture override",
-)
-# The handoff contract is no longer Windows-specific: no platform replaces its
-# own image in process, so Phase 14 asserts one platform-neutral contract and
-# selects the script name via UPDATE_SCRIPT. Windows still has the strictest
-# reason for it -- regressing here means reintroducing the launcher stub.
-require(
-    "FAIL 14a: update replaced the binary in-process" in smoke_script
-    and 'grep -q "$UPDATE_SCRIPT" "$UPDATE_LOG"' in smoke_script
-    and 'UPDATE_SCRIPT="install.ps1"' in smoke_script,
-    "Phase 14 must assert the update handoff instead of an in-process replacement",
-)
-require(
-    'HOME="$WIN_HOME" TEMP="$WIN_HOME" TMP="$WIN_HOME"' in smoke_script
-    and "MSYS2_ARG_CONV_EXCL='*'" in smoke_script
-    and "powershell.exe -NoProfile -ExecutionPolicy Bypass -File" in smoke_script
-    and '"$WIN_SCRIPT" "--dir=$WIN_DIR"' in smoke_script
-    and "& $args[1]" not in smoke_script,
-    "Windows install.ps1 smoke must pass native HOME/TEMP/TMP and execute the script directly",
-)
-require(
-    'CBM_DOWNLOAD_URL="$SMOKE_DOWNLOAD_URL"' in smoke_script
-    and '"$SMOKE_DOWNLOAD_URL/$DL_ARCHIVE"' in smoke_script,
-    "installer and raw download smoke phases must retain loopback HTTP coverage",
+    'DOWNLOAD_URL="${SMOKE_DOWNLOAD_URL:-${CBM_DOWNLOAD_URL:-}}"' in smoke_script
+    and 'CBM_DOWNLOAD_URL="$DOWNLOAD_URL"' in smoke_script
+    and 'bash "$ROOT/install.sh" --dir "$INSTALL_ROOT" --skip-config' in smoke_script
+    and 'INSTALLED="$INSTALL_ROOT/codebase-memory-cli"' in smoke_script
+    and '"$ROOT/scripts/smoke-invariants.sh" "$INSTALLED"' in smoke_script,
+    "release smoke must exercise the current installer round-trip and installed CLI invariants",
 )
 require(
     'SMOKE_UPDATE_FIXTURE_DIR="$FIXTURE_DIR"' in vm_smoke

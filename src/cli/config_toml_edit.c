@@ -2749,7 +2749,11 @@ static int toml_codex_current_command_is_owned(const char *command, size_t len) 
         }
     }
     size_t basename_len = word_end - basename;
-    return (basename_len == strlen("codebase-memory-mcp") &&
+    return (basename_len == strlen("codebase-memory-cli") &&
+            memcmp(executable + basename, "codebase-memory-cli", basename_len) == 0) ||
+           (basename_len == strlen("codebase-memory-cli.exe") &&
+            memcmp(executable + basename, "codebase-memory-cli.exe", basename_len) == 0) ||
+           (basename_len == strlen("codebase-memory-mcp") &&
             memcmp(executable + basename, "codebase-memory-mcp", basename_len) == 0) ||
            (basename_len == strlen("codebase-memory-mcp.exe") &&
             memcmp(executable + basename, "codebase-memory-mcp.exe", basename_len) == 0);

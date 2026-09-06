@@ -370,8 +370,8 @@ expect_select_failure("cross-target", lambda rows: (
     rows[2].update(scan_path=candidates[0]["scan_path"], sha256=candidates[0]["sha256"], size=candidates[0]["size"]),
 ))
 
-# Reconcile all 14 canonical containers, recursively, against the selected
-# eight hashes. Eligible MCPBs repeat exactly the matching selected bytes.
+# Reconcile all eight canonical CLI containers, recursively, against the selected
+# eight hashes. Each archive contains the selected executable at its release root.
 archives = fix / "containers"
 archive_for: dict[str, bytes] = {}
 for row in selections:
@@ -382,7 +382,7 @@ for name in ARCHIVES:
     destination = archives / target / "archive" / name
     destination.parent.mkdir(parents=True, exist_ok=True)
     binary_name = "codebase-memory-cli.exe" if target.startswith("windows-") else "codebase-memory-cli"
-    member = f"server/{binary_name}"
+    member = binary_name
     if name.endswith(".zip"):
         with zipfile.ZipFile(destination, "w") as handle:
             info = zipfile.ZipInfo(member)

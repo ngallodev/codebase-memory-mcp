@@ -18,6 +18,7 @@
 #include "store/store.h"
 #include "yyjson/yyjson.h"
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -202,8 +203,9 @@ static cbm_operation_result_t execute_projects(const char *args_json) {
     }
 
     const char *cache_dir = cbm_resolve_cache_dir();
+    errno = 0;
     cbm_dir_t *dir = cache_dir ? cbm_opendir(cache_dir) : NULL;
-    if (!dir) {
+    if (!dir && errno != ENOENT) {
         return json_error("cannot read cache directory",
                           "Check directory permissions or run 'codebase-memory-cli index .' first.");
     }
@@ -213,7 +215,7 @@ static cbm_operation_result_t execute_projects(const char *args_json) {
     size_t capacity = 0;
     bool oom = false;
     cbm_dirent_t *entry = NULL;
-    while ((entry = cbm_readdir(dir)) != NULL) {
+    while (dir && (entry = cbm_readdir(dir)) != NULL) {
         if (!project_db_file(entry->name)) {
             continue;
         }
@@ -234,7 +236,9 @@ static cbm_operation_result_t execute_projects(const char *args_json) {
         }
         ++count;
     }
-    cbm_closedir(dir);
+    if (dir) {
+        cbm_closedir(dir);
+    }
     if (oom) {
         for (size_t i = 0; i < count; ++i) {
             free(names[i]);
@@ -491,6 +495,9 @@ cbm_operation_result_t cbm_read_operation_execute(cbm_operation_id_t operation,
     }
     if (operation == CBM_OPERATION_COMPARE) {
         return cbm_compare_operation_execute(args_json, runtime);
+    }
+    if (operation == CBM_OPERATION_INGEST_TRACES) {
+        return cbm_trace_ingest_operation_execute(args_json);
     }
     return cbm_operation_result_copy("native read operation not implemented", true);
 }
