@@ -291,3 +291,32 @@ Status: **COMPLETE (release qualification contract)**
 - `BASELINE_ZERO` is never inferred automatically. After the first qualified CLI release, later candidates must name the exact prior qualified CLI release tag for comparative benchmarking.
 - The Windows qualification runbook consumes the RC dispatch decision and must not substitute an incompatible baseline artifact.
 - Local broad sanitized compilation remains useful supporting evidence, but the held GitHub RC workflow is the authoritative final build/test source for immutable release bytes.
+
+### CP74 — CP73 qualification-harness rebase onto cf0869fc
+
+Status: **IMPLEMENTED / REQUIRES EXTERNAL RERUN**
+
+- Rebases the CP73 qualification-harness correction onto the newer authoritative
+  `cf0869fc` source without reconstructing or overwriting unrelated newer work.
+- Preserves the newer smoke-script revisions already present in `cf0869fc`;
+  their `--help` and strict unknown-option contracts already satisfy the CP73
+  interface requirement and therefore are not part of the CP74 payload.
+- Restores interpreter-first venue-parity dispatch so Python entry points are
+  invoked only with `python3`, never first through `bash`.
+- Restores the CP73 memory-analysis classification: Heaptrack retention is
+  diagnostic, fork-child leak classification cannot rewrite behavioral child
+  exit codes, and Memcheck error contexts plus top-level definite/indirect
+  ownership loss remain release failures.
+- Preserves the newer 2026-09-04 full-suite remediation record in
+  `docs/LINUX_RELEASE_QUALIFICATION.md` and appends the CP72/CP74 qualification
+  evidence instead of replacing it.
+- Focused interface/venue-parity validation is required for the checkpoint;
+  the canonical full sanitized suite and dynamic memory-analysis leg still
+  require a fresh external rerun before qualification is called green.
+
+### CP75 — immutable RC identity enforcement
+
+- **COMPLETE:** the production release workflow no longer exposes `replace=true`, deletes an existing release/tag, or force-moves a release tag.
+- **COMPLETE:** immediately before drafting, the workflow refuses an already-existing GitHub release or remote tag and creates the dispatched-SHA tag with a normal non-force push, so duplicate/racing dispatches fail closed.
+- **COMPLETE:** the existing release gate-chain contract now protects this immutable-identity boundary; the RC dispatch runbook records that workflow-side enforcement is independent of the operator's pre-dispatch availability check.
+- **PRESERVED:** the external-qualification hold remains the default and registry/public promotion remains owned by the promotion workflow after exact Windows-byte qualification.

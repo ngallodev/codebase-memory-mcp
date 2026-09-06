@@ -16,11 +16,6 @@ on:
         description: "Release notes (optional — auto-generated from commits if empty)"
         required: false
         type: string
-      replace:
-        description: "Replace existing release if it exists"
-        required: false
-        type: boolean
-        default: false
       soak_level:
         description: 'Soak: full (quick+asan) or quick (10min)'
         type: choice
@@ -228,24 +223,30 @@ jobs:
             cosign sign-blob --yes --bundle "${f}.bundle" "$f"
           done
 
-      - name: Delete existing release
-        if: ${{ inputs.replace }}
+      - name: Refuse an existing immutable release identity
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
-        run: gh release delete "$VERSION" --yes --cleanup-tag || true
+        run: |
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::release $VERSION already exists; release identities are immutable"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "::error::tag $VERSION already exists; release identities are immutable"
+            exit 1
+          fi
 
-      - name: Create tag
+      - name: Create immutable tag
         env:
           VERSION: ${{ inputs.version }}
         # Tag the DISPATCHED sha, not the checkout HEAD: the artifacts were
         # built from github.sha, and a commit pushed to main mid-run must not
-        # move the release tag. (A floating HEAD also broke the 0.8.0 release:
-        # HEAD had become a commit touching .github/workflows/, and the App
-        # token may not create refs pointing at workflow-modifying commits.)
+        # move the release tag. A duplicate/racing push is expected to fail: a
+        # release identity may never be deleted, force-moved, or reused.
         run: |
-          git tag -f "$VERSION" "$GITHUB_SHA"
-          git push origin "$VERSION" --force
+          git tag "$VERSION" "$GITHUB_SHA"
+          git push origin "refs/tags/$VERSION"
 
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v2
         with:
@@ -525,8 +526,8 @@ jobs:
 
   # ── 10. Atomic un-draft (only after npm + PyPI succeed) ───────
   # The GitHub release stays in DRAFT until both registries publish.
-  # If anything upstream fails, the draft can be deleted and the run
-  # re-tried with replace=true — no half-shipped state visible to users.
+  # If anything upstream fails, keep the failed candidate immutable, fix the
+  # source/gate, and issue a new release identity. Never delete and reuse a tag.
   publish-final:
     needs: [verify, publish-registries]
     if: ${{ !cancelled() && !failure() && needs.verify.result == 'success' && needs.publish-registries.result == 'success' }}

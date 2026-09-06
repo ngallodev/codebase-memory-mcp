@@ -122,3 +122,60 @@ Changed C surfaces compile under the repository `-Wall -Wextra -Werror` sanitize
 flags. The Windows VM manifest and build-directory safety contracts pass locally after the stale
 binary expectation is corrected. The remaining auto-index/watch and daemon-runtime assertions are
 tracked separately and are not marked resolved by this slice.
+
+## CP72 external full-run evidence and CP74 qualification-harness rebase
+
+A clean production build from the CP72 working tree completed successfully with
+`scripts/build.sh` and produced `build/c/codebase-memory-cli`. This closes the
+local optimized-link evidence gap for that source state; immutable release
+qualification still requires the GitHub-produced RC bytes described above.
+
+The canonical `scripts/test.sh` run did not reach the sanitized suite. Its
+venue-parity preflight exposed three harness/interface defects:
+
+1. the interface probe invoked every entry through `bash` before dispatching
+   Python entries through `python3`, so `generate-sbom.py --help` could execute
+   Python source as shell input and hang at `import datetime`;
+2. `scripts/smoke-test.sh` needed a `--help` contract;
+3. `scripts/smoke-invariants.sh` needed `--help` and strict unknown-option
+   behavior.
+
+The authoritative `cf0869fc` source already contains the smoke entry-point
+interface behavior from items 2 and 3. CP74 rebases the remaining CP73 intent
+onto that source without replacing those newer smoke-script revisions: the
+venue-parity probe now chooses the interpreter before execution, so Python
+entry points are never first executed through `bash`.
+
+The CP72 memory-analysis evidence also showed that the previous dynamic gate
+mixed allocation retention with leak ownership:
+
+- Heaptrack reported 85 allocations not deallocated at process exit;
+- the test suite deliberately retains process-lifetime lock-registry identity
+  tombstones so stale raw registry pointers can never become live through
+  allocator address reuse;
+- POSIX fork tests intentionally execute child paths with inherited parent
+  allocations and `_exit()`;
+- the top-level Valgrind summary reported 0 definitely lost bytes, 0 indirectly
+  lost bytes, 0 possibly lost bytes, and 0 memory-error contexts, with 2,816
+  bytes still reachable in 16 blocks from the deliberate retired-registry
+  tombstones.
+
+The three daemon-IPC test failures under Memcheck were therefore harness
+artifacts: leak findings in fork children were counted as errors and
+`--error-exitcode=99` replaced the child status that the tests intentionally
+assert. CP74 preserves CP73's corrected memory gate: leak kinds cannot rewrite
+fork-child behavioral exit codes, actual Memcheck error contexts remain fatal,
+and top-level definite/indirect loss remains a release failure. Heaptrack's raw
+retained-allocation count remains diagnostic attribution rather than an
+ownership verdict.
+
+A fresh `scripts/test.sh` and `scripts/analyze-memory.sh` run remains required
+before Linux qualification can be considered green.
+
+## CP75 immutable RC identity hardening
+
+Gate-2 review found one remaining contradiction between the release-qualification plan and the active production workflow: `release.yml` still allowed `replace=true`, deleted an existing release/tag, and force-pushed the requested release tag. That made a supposedly immutable RC identity mutable if the workflow was dispatched incorrectly or reused after a partial failure.
+
+The release workflow now fails closed. It refuses an existing GitHub release or remote tag at the draft boundary, creates the tag for the exact dispatched `GITHUB_SHA` without force, and contains no replace/delete path. A concurrent duplicate dispatch can pass the read check, but only one normal tag push can succeed; the other run therefore stops before release creation. Failed candidates are retained as immutable evidence and require a new deliberate release identity.
+
+The existing release gate-chain contract was extended rather than adding another test surface. It now rejects replacement/deletion/force-tag behavior and requires both the remote identity guards and normal dispatched-SHA tag push. This is Gate-2 readiness work and does not alter product/runtime code or change the pending need for a fresh broad Linux suite after CP74.

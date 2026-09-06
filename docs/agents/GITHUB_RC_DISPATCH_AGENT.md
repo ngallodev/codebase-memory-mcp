@@ -75,7 +75,7 @@ git ls-remote --tags https://github.com/DeusData/codebase-memory-mcp.git \
   refs/tags/v0.11.0-rc.1
 ```
 
-For a new candidate both checks must show that the tag is unused. If either exists, choose the next deliberate RC number and regenerate `rc-dispatch.json`.
+For a new candidate both checks must show that the tag is unused. If either exists, choose the next deliberate RC number and regenerate `rc-dispatch.json`. The release workflow independently repeats this invariant at the draft boundary and uses a non-force tag push, so a duplicate or racing dispatch fails closed rather than moving an existing release identity.
 
 ## Step 3 — Dispatch exactly the generated command
 

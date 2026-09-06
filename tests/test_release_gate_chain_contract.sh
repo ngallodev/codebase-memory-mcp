@@ -126,6 +126,28 @@ if not soak_input or "none" in soak_input.group("body"):
         "      The explicit bypass belongs only to dry-run; selected release\n"
         "      bytes must always complete soak before drafting.")
 
+# 2b. Release identities are immutable qualification evidence. The production
+#     workflow must never expose a replace switch, delete an existing release,
+#     or force-move a tag. It must reject an already-existing release/tag and
+#     rely on a normal tag push so races fail closed.
+if re.search(r"^      replace:\s*$", text, re.M):
+    failures.append(
+        "release: must not expose a replace input for immutable release identities.")
+
+draft_body = blocks.get("release-draft", "")
+for forbidden in ("gh release delete", "git tag -f", "git push origin \"$VERSION\" --force", "--cleanup-tag"):
+    if forbidden in draft_body:
+        failures.append(
+            f"release-draft: immutable release path contains forbidden mutation: {forbidden}")
+for required in (
+        'gh release view "$VERSION" --repo "$GITHUB_REPOSITORY"',
+        'git ls-remote --exit-code --tags origin "refs/tags/$VERSION"',
+        'git tag "$VERSION" "$GITHUB_SHA"',
+        'git push origin "refs/tags/$VERSION"'):
+    if required not in draft_body:
+        failures.append(
+            f"release-draft: immutable release identity guard is missing: {required}")
+
 # Package registries publish against the verified draft release. publish-final
 # must un-draft only after those registry jobs complete successfully.
 def needs(job):
